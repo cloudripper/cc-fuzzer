@@ -1,0 +1,50 @@
+# cc-fuzzer dictionary: C string handling edge cases
+#
+# Common patterns that trigger bugs in C/C++ string handling: format strings,
+# embedded NULs, length-vs-strlen confusion.
+
+# === Format string specifiers ===
+"%s"
+"%d"
+"%n"
+"%x"
+"%p"
+"%%n"
+"%.99999d"
+"%9999999s"
+"%s%s%s%s%s%s%s%s%s%s"
+"%99999.99999d"
+
+# === Embedded NULs (length vs strlen confusion) ===
+"a\x00b"
+"\x00\x00\x00"
+"abc\x00xyz"
+"\x00"
+"data\x00"
+
+# === String terminators in unusual positions ===
+"\x00very long string after null"
+"prefix\x00\x00\x00suffix"
+
+# === Path traversal essentials ===
+".."
+"../"
+"..\\"
+"....//"
+"%2e%2e%2f"
+"%252e%252e%252f"
+
+# === Long strings (cause buffer overflows in fixed-size handlers) ===
+"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
+# === Common shell metacharacters ===
+"$()"
+"`"
+";"
+"|"
+"&"
+"&&"
+"||"
+"$IFS"
+"\\$"

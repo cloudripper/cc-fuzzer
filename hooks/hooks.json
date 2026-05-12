@@ -1,0 +1,28 @@
+{
+  "description": "cc-fuzzer hooks: detect new crash files mid-campaign and validate the build environment at session start.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/detect-crashes.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/env-check.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

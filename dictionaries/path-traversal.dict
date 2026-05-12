@@ -1,0 +1,49 @@
+# cc-fuzzer dictionary: path traversal patterns
+#
+# Useful when fuzzing anything that accepts a path-like input: archive
+# extractors, file readers, URL parsers, archive/symlink-handling code.
+
+# === Basic traversal ===
+".."
+"../"
+"..\\"
+"../../"
+"../../../"
+"../../../../"
+
+# === Encoded traversal ===
+"%2e%2e%2f"
+"%2e%2e%5c"
+"%252e%252e%252f"   # double encoded
+"%c0%ae%c0%ae%c0%af"   # overlong UTF-8
+
+# === Mixed separators ===
+"..\\..//..\\"
+"foo/../"
+"foo\\..\\"
+
+# === Absolute paths ===
+"/etc/passwd"
+"/proc/self/environ"
+"/dev/null"
+"/dev/zero"
+"\\\\?\\C:\\"
+"C:\\windows\\system32"
+
+# === Archive-specific ===
+"/foo/bar"               # ZIP slip
+"../../../etc/cron.d/x"
+"foo/../../etc/passwd"
+
+# === Path components that look like ".." but aren't ===
+"..."
+"...."
+".\\"
+".//"
+
+# === Symlinks/special device paths ===
+"\\\\.\\COM1"
+"\\\\.\\PhysicalDrive0"
+
+# === Long paths (PATH_MAX boundary) ===
+"AAAA/AAAA/AAAA/AAAA/AAAA/AAAA/AAAA/AAAA/AAAA/AAAA/AAAA/AAAA/AAAA/AAAA/AAAA/AAAA/AAAA/AAAA/AAAA/AAAA/AAAA/AAAA/AAAA/AAAA/AAAA/AAAA/AAAA/AAAA/AAAA/AAAA/AAAA/AAAA"

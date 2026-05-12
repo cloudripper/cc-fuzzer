@@ -1,0 +1,33 @@
+# cc-fuzzer dictionary: Unicode bidirectional control characters
+#
+# Source code, comment, and string parsing bugs related to bidi controls.
+# These are at the heart of Trojan Source attacks (CVE-2021-42574) and
+# affect any tool that displays user-controlled text.
+#
+# Reference: https://trojansource.codes/
+# Reference: https://www.unicode.org/reports/tr9/
+
+# === Explicit directional formatting (deprecated but parsed) ===
+"\xe2\x80\xaa"          # LRE  Left-to-Right Embedding (U+202A)
+"\xe2\x80\xab"          # RLE  Right-to-Left Embedding (U+202B)
+"\xe2\x80\xac"          # PDF  Pop Directional Formatting (U+202C)
+"\xe2\x80\xad"          # LRO  Left-to-Right Override (U+202D)
+"\xe2\x80\xae"          # RLO  Right-to-Left Override (U+202E)
+
+# === Implicit directional formatting ===
+"\xe2\x80\x8e"          # LRM  Left-to-Right Mark (U+200E)
+"\xe2\x80\x8f"          # RLM  Right-to-Left Mark (U+200F)
+
+# === Directional isolates (Trojan Source) ===
+"\xe2\x81\xa6"          # LRI  Left-to-Right Isolate (U+2066)
+"\xe2\x81\xa7"          # RLI  Right-to-Left Isolate (U+2067)
+"\xe2\x81\xa8"          # FSI  First Strong Isolate (U+2068)
+"\xe2\x81\xa9"          # PDI  Pop Directional Isolate (U+2069)
+
+# === Arabic directional marks ===
+"\xd8\x9c"              # ARABIC LETTER MARK (U+061C)
+
+# === Common Trojan Source sequence ===
+# RLO + benign text + PDI - flips display order
+"\xe2\x80\xae"          # standalone RLO
+"\xe2\x81\xa6\xe2\x81\xa7\xe2\x81\xa9\xe2\x81\xa9"   # nested isolate sequence

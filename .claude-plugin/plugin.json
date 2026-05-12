@@ -1,0 +1,27 @@
+{
+    "$schema": "https://json.schemastore.org/claude-code-plugin.json",
+    "name": "cc-fuzzer",
+    "version": "0.15.0",
+    "description": "LLM-in-the-loop coverage-guided fuzzing for C/C++ with strict, schema-driven, deterministic state. v0.14 adds: a pinned reproducible toolchain via Nix flake (flake.nix in plugin root); FHSEnv-wrapped devShell so AFL++/SymCC/clang/llvm-cov see the FHS layout they were written for; SessionStart hook detects whether Claude is running inside the cc-fuzzer dev shell and reports cc_fuzzer_fhs_active / nix_shell_other / host_tools status; install-symcc.sh prints a banner suggesting nix as the preferred path. Layer 2 (declarative harness derivations) is on the roadmap and explicitly out of scope for this release. Schema unchanged at v6. Architecture inspired by OSS-CRS, Buttercup, OSS-Fuzz-Gen, and Atlantis-Multilang. v0.15 adds: process-based fuzzing mode (fuzzing_mode field in harness-built/v5); deterministic harness teardown via kill-harness-processes.sh; /cc-fuzzer:report command with Opus reporting-agent that re-runs reproducers and writes FINDINGS-REPORT.md; SymCC /nix/store PATH fallback. State schema bumped to v7.",
+    "author": {
+        "name": "oro"
+    },
+    "category": "security",
+    "keywords": [
+        "fuzzing",
+        "afl++",
+        "libfuzzer",
+        "security",
+        "c",
+        "cpp",
+        "llm-guided",
+        "crs",
+        "oss-fuzz",
+        "sanitizer",
+        "triage",
+        "cmplog",
+        "redqueen",
+        "nix",
+        "reproducible"
+    ]
+}
