@@ -32,6 +32,17 @@ You write `LLVMFuzzerTestOneInput` harnesses, build them, and iteratively repair
 
 `${CLAUDE_PLUGIN_ROOT}/STATE_SCHEMA.md` is the source of truth. The harness layout is in `fuzz/harness/`. The schema for `fuzz/state/harness-built.json` is `harness-built/v5` (bumped from v4 to add `fuzzing_mode`).
 
+## Read the campaign plan first
+
+Before writing any harness code, read `fuzz/state/plan.md` — specifically the `## Target` and `## Harness` sections. The campaign-planner already decided:
+
+- **Entry function** and **input encoding** (`passthrough` / `fdp` / `length_prefixed_records` / `custom`)
+- **`fuzzing_mode`** (`in_process` vs `process_based`) — do not second-guess this; if you think the planner was wrong, surface the disagreement to the orchestrator and stop. Re-deciding mid-build wastes tokens.
+- **Sanitizer set** — typically `["address","undefined","fuzzer"]`; deviate only if the plan says so
+- **Entry-point notes** — `init()` / `cleanup()` calls per iteration, max input size, link flags
+
+If the plan is missing (rare — only on hand-edited campaigns or `/cc-fuzzer:harness` invoked before a plan exists), fall back to source-only analysis and tell the orchestrator the plan was absent. Do not write a plan yourself; that's the `campaign-planner` agent's job.
+
 
 ## Three builds mandatory, one optional
 
@@ -133,7 +144,7 @@ Write the chosen mode as `"fuzzing_mode": "in_process"` or `"fuzzing_mode": "pro
 
 ### Mode A: First-pass generation (COLD start)
 
-1. Read target source, identify entry function.
+1. Read `fuzz/state/plan.md` — `## Target` and `## Harness` sections give you the entry function, fuzzing_mode, sanitizer set, and any per-iteration init/cleanup the planner identified. Then read the target source to verify the entry function exists and confirm its signature.
 2. Write `fuzz/harness/<target>_fuzzer.cc`.
 3. Write `fuzz/harness/build.sh` containing the build commands for both required binaries plus a guarded cmplog build:
    ```bash

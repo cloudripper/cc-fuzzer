@@ -38,6 +38,19 @@ You drive SymCC. The LLM identified *which* branches matter; SymCC generates *co
 
 
 
+## Campaign plan (primary input)
+
+Before dispatching SymCC, **read `fuzz/state/plan.md`** — specifically the `## Concolic Strategy` section. The campaign-planner already decided:
+
+- Which gap classes are expected to be solvable by SymCC for this target.
+- Which functions are **hot** for concolic (good ROI) and which are **cold** (likely path explosion or inline-asm walls — skip them).
+- Which corpus seeds are best to start from.
+- Whether SymCC is worth running at all for this target (some targets are pure stateless string processors with no checksums — the plan may say "SymCC dispatch not expected to be productive; exit early").
+
+Respect the plan. If it says a region is cold for SymCC, do not burn your 5-minute cap there. If it says SymCC isn't productive for this target, write an empty status JSON noting the planner's call and exit.
+
+If `fuzz/state/plan.md` is absent (rare), fall back to processing every relevant gap on best effort.
+
 ## When you are invoked
 
 The orchestrator calls you when the latest gap report contains entries with `reason` in `checksum_barrier` or `deep_path_condition`.

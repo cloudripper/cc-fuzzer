@@ -12,7 +12,7 @@ All campaign state lives under a single root directory, conventionally `./fuzz/`
 fuzz/
 ├── state/                          # all orchestrator state
 │   ├── schema-version              # plain text file, contains "v1\n"
-│   ├── plan.md                     # IMMUTABLE after cold start
+│   ├── plan.md                     # REWRITABLE-with-archival; written by campaign-planner
 │   ├── harness-built.json          # rewritten only on rebuild
 │   ├── current.json                # replaced atomically every update
 │   ├── findings.jsonl              # APPEND ONLY for new findings; in-place edit allowed for dedup count
@@ -23,7 +23,9 @@ fuzz/
 │   ├── snapshots/                  # all IMMUTABLE timestamped state lives here
 │   │   ├── coverage-<ts>.json      # IMMUTABLE once written
 │   │   ├── gaps-<ts>.json          # IMMUTABLE once written
-│   │   └── concolic-<ts>.json      # IMMUTABLE once written
+│   │   ├── concolic-<ts>.json      # IMMUTABLE once written
+│   │   ├── delta-<ts>.json         # IMMUTABLE once written (on-demand, optional)
+│   │   └── plan-<ts>.md            # IMMUTABLE archive of prior plan.md (one per revise)
 │   ├── fuzzer.pid                  # session-only, deleted on stop
 │   ├── fuzzer.engine               # session-only
 │   └── fuzzer.log                  # session-only, append while fuzzer runs
@@ -71,8 +73,9 @@ Every file in `${FUZZ_ROOT}/` falls into exactly one of these categories:
 
 | Category | Rules |
 |---|---|
-| **IMMUTABLE** | Written once. Never modified, never deleted (except by `/cc-fuzzer:reset`). Examples: `plan.md`, `coverage-<ts>.json`. |
+| **IMMUTABLE** | Written once. Never modified, never deleted (except by `/cc-fuzzer:reset`). Examples: `coverage-<ts>.json`, `gaps-<ts>.json`, `plan-<ts>.md`. |
 | **REWRITABLE** | Replaced atomically (write to `.tmp`, `mv`). Single canonical version. Examples: `harness-built.json`, `current.json`, `budget.json`. |
+| **REWRITABLE-with-archival** | Replaced atomically, but the prior version is first frozen into `snapshots/` as IMMUTABLE history. The current file is canonical; the archives preserve revision history. Example: `plan.md` (archives go to `snapshots/plan-<ts>.md`). |
 | **APPEND-ONLY** | Lines are added, never removed. Existing lines may be edited in-place ONLY for the specific cases enumerated in the schema below. Examples: `findings.jsonl`, `events.jsonl`. |
 | **SESSION** | Created when a fuzzer process starts, deleted when it stops. Examples: `fuzzer.pid`, `fuzzer.log`. |
 
@@ -91,6 +94,46 @@ v7
 A single line containing the framework schema version. The orchestrator reads this on session start and refuses to operate if it doesn't match the plugin's expected version. Migration is handled by `scripts/migrate-state.sh`.
 
 Migration chain: `v0` (pre-schema, flat layout) → `v1` (subdirectory layout, schema fields) → `v2` (mandatory coverage builds, instrumentation field) → `v3` (multiple dictionary files) → `v4` (coverage_disabled_reason required when tracking off, schema field on all events) → `v5` (findings carry verified_against_build; crashes/stale/ for rebuild-invalidated findings; fuzz-config.json for per-project settings) → `v6` (harness-built/v4 with cmplog_enabled / cmplog_binary / cmplog_disabled_reason; new gap.reason `direct_compare` for cmplog-handled branches; current.json.gaps gains `direct_compare` counter) → `v7` (harness-built/v5 adds `fuzzing_mode: in_process | process_based`; `state/FINDINGS-REPORT.md` filesystem entry; `current.json` optional `last_report_at` field).
+
+### `state/plan.md` — REWRITABLE-with-archival (campaign plan)
+
+Human-readable Markdown campaign plan produced by the `campaign-planner` subagent. Two write paths:
+
+- **Fresh** (COLD start): plan.md does not yet exist; planner composes it from scratch.
+- **Revise** (mid-campaign, user-triggered via `/cc-fuzzer:plan`): plan.md already exists; planner reads it plus the live campaign state (`current.json`, latest gap report, `findings.jsonl`, recent coverage snapshots), archives the existing plan to `fuzz/state/snapshots/plan-{ts}.md` (IMMUTABLE), then writes a revised plan that folds in what the campaign has learned. Harness-locked decisions (`fuzzing_mode`, sanitizers, `entry_function`, `cmplog_enabled`) cannot change in revise mode; the planner restates them verbatim from `harness-built.json`. If empirical state suggests one of them should change, the planner says so explicitly and recommends `/cc-fuzzer:campaign --reset`.
+
+There is no JSON schema — this is freeform Markdown. **Required H2 sections** (the validator checks for these as warnings; specialists `grep` for the headings and fall back to defaults if missing):
+
+- `## Target` — entry function, input encoding, top functions of interest
+- `## Harness` — `fuzzing_mode`, sanitizer set, entry-point notes (read by `harness-writer`)
+- `## Seed Strategy` — bootstrap pass spec, per-`reason` posture (read by `seed-generator`)
+- `## Dictionaries` — bundled and project-local dictionary picks (read by `seed-generator` and surfaced to the user)
+- `## Concolic Strategy` — hot/cold regions for SymCC, expected productivity (read by `concolic-executor`)
+- `## Coverage Targets` — high-priority files/functions (read by `coverage-analyst`)
+- `## Out-of-Scope` — explicit exclusions (read by `coverage-analyst`)
+- `## Plateau & Dispatch` — informational; orchestrator may consult for context
+- `## References` — links read by every specialist
+
+**Required in revise mode only**: `## Campaign Status & Revisions` (placed immediately after `## Target`). Three subsections: `### Status snapshot`, `### Lessons learned`, `### Revisions in this plan`. Closes with a "Harness-locked decisions" verbatim block sourced from `harness-built.json`.
+
+**Optional H2 sections** (include only if relevant): `## Delta Range`, `## Mutator Notes`, `## Known Caveats`.
+
+**Writer**: `campaign-planner` (Opus). Writes fresh at COLD; rewrites on each user-triggered `/cc-fuzzer:plan` mid-campaign. Always archives the prior plan before replacing.
+
+**Readers**:
+- `harness-writer` — `## Target` + `## Harness` (COLD step 6/HARNESS)
+- `seed-generator` — `## Seed Strategy` + `## Dictionaries` + `## Target` (bootstrap and per-tick targeted dispatch)
+- `coverage-analyst` — `## Coverage Targets` + `## Out-of-Scope` + `## Concolic Strategy` (each gap-analysis dispatch)
+- `concolic-executor` — `## Concolic Strategy` (each SymCC dispatch)
+- `reporting-agent` — may read `## Target` for context in the executive summary (optional)
+
+**Lifecycle**: REWRITABLE — replaced atomically (`.tmp` → `mv`). Each prior version is preserved in `fuzz/state/snapshots/plan-{ts}.md` (IMMUTABLE). May be deleted only by `/cc-fuzzer:reset`. The `fuzz-orchestrator` does **not** read `plan.md` on WARM ticks — the dispatched specialists read it themselves on demand.
+
+### `state/snapshots/plan-<ts>.md` — IMMUTABLE (plan archive)
+
+Frozen copy of a prior `plan.md`, made by `campaign-planner` immediately before a revise-mode rewrite. The `<ts>` is the Unix timestamp at archival time and must be unique within the directory. These archives are read-only history; they enable `diff fuzz/state/snapshots/plan-<earlier>.md fuzz/state/plan.md` to inspect how the campaign's strategy evolved.
+
+Lifecycle: IMMUTABLE once written. Never modified, never deleted (except by `/cc-fuzzer:reset`). Filename `ts` is the only convention enforced by the validator; the file itself is freeform Markdown matching whatever version of `plan.md` it captures.
 
 ### `state/harness-built.json` — REWRITABLE
 
@@ -317,14 +360,50 @@ Produced by `coverage-analyst`. Shape:
 ```
 
 **Required gap fields**: id, file, function, line_range, reason, hint, recommended_agent.
-**Allowed `reason` values**: `harness_gap | format_barrier | state_precondition | value_constraint | direct_compare | checksum_barrier | deep_path_condition | dead`.
+**Allowed `reason` values**: `harness_gap | format_barrier | state_precondition | value_constraint | direct_compare | checksum_barrier | deep_path_condition | delta_target | dead`.
 **Allowed `recommended_agent` values**: `harness-writer | seed-generator | mutator | concolic-executor | none`.
+
+The `delta_target` reason marks gaps whose enclosing function appears in the latest `state/snapshots/delta-*.json` (recently-changed code per the user's chosen git range). It's a priority signal layered on top of the underlying root cause. Only assigned when a `delta-*.json` exists; absence of a delta artifact means delta weighting is disabled.
 
 The `direct_compare` reason (introduced in v6) marks branches whose comparison operands cmplog has already observed at runtime; the operand will be present in the most recent `fuzz/state/cmplog-dict-<ts>.dict`. These gaps are reported for visibility but the orchestrator does NOT dispatch a specialist for them — `recommended_agent` must be `none`. `update-current.sh` excludes them from `for_concolic` / `for_seedgen` / `for_harness` / `for_mutator` and counts them under `gaps.direct_compare` instead.
 
 **Cap**: max 15 gaps per report. Validator enforces.
 
 Filename ts equals `timestamp` field. Immutable once written.
+
+### `state/snapshots/delta-<ts>.json` — IMMUTABLE (OPTIONAL)
+
+Produced by `scripts/find-delta-targets.sh`, invoked by `/cc-fuzzer:delta`. **On-demand only** — never auto-generated, never required. The campaign runs fine without this artifact; coverage-analyst simply skips delta weighting when none exists.
+
+Shape:
+
+```json
+{
+  "schema": "delta-targets/v1",
+  "timestamp": 1714789400,
+  "range": "main..HEAD",
+  "commits": ["abc123def456...", "789abcdef012..."],
+  "files_changed": 3,
+  "targets": [
+    {
+      "file": "src/parser.c",
+      "function_context": "static int parse_extended_chunk(buf_t *b)",
+      "lines_changed": [482, 510],
+      "kind": "modified"
+    }
+  ]
+}
+```
+
+**Required fields**: schema, timestamp, range, commits, files_changed, targets.
+
+`function_context` may be `null` when git can't determine the enclosing function (no `xfuncname` regex configured for the file's language). `kind` is one of `added | modified | deleted`. `range` accepts any git range syntax `<base>..<tip>` or `<base>...<tip>`.
+
+Lifecycle: immutable once written. The latest file (newest mtime) is the canonical source for the campaign's current "view of what changed". Re-running `/cc-fuzzer:delta` writes a fresh artifact; older ones remain on disk but are not consumed.
+
+**Consumers** (read-only):
+- `coverage-analyst` — uses `targets` to boost ranking of recently-changed unreached functions; tags gaps with `reason: delta_target` when appropriate.
+- `reporting-agent` — uses `range` to mark each finding's blamed commit as in-range or not in the FINDINGS-REPORT.
 
 ### `state/snapshots/concolic-<ts>.json` — IMMUTABLE
 
@@ -371,6 +450,8 @@ There is no JSON schema — this is freeform Markdown. Required H2 sections (the
 - `## False-Positive Analysis`
 
 The reporting-agent re-runs every reproducer in `findings.jsonl` against the current harness binary before writing this file. Findings are classified as confirmed (still crashes) or false-positive (no longer crashes). Only confirmed findings appear in `## Findings` and `## Reproducer Commands`. Unconfirmed findings appear under `## False-Positive Analysis`.
+
+**Per-finding provenance** (optional): when the project is a git repository, each finding section may carry a "Likely introduced" subsection sourced from `scripts/blame-finding.sh`. Provenance is computed at report-time only — it never lives in `findings.jsonl` (the immutable record), because blame can shift across rebases. Fields: `blamed_commit`, `blamed_date`, `blamed_author`, `blamed_summary`, `function_first_added`, `in_delta_range`, `delta_range`. `in_delta_range` is non-null only when a `delta-*.json` artifact exists at report time. When the project is not a git repository the entire provenance block is omitted; the report is still valid.
 
 Lifecycle: REWRITABLE. May be deleted only by `/cc-fuzzer:reset`.
 
@@ -489,7 +570,8 @@ For v1 (initial release), there are no migrations yet. Future versions add them.
 
 Every subagent prompt must be updated to reference this document. Specifically:
 
-- **harness-writer** writes to `fuzz/harness/`, not arbitrary paths. Builds both fuzzing binary and coverage binary by default.
+- **campaign-planner** is the only writer of `fuzz/state/plan.md` and `fuzz/state/snapshots/plan-<ts>.md`. Operates in two modes: fresh (COLD start, no prior plan) and revise (mid-campaign, `/cc-fuzzer:plan` invoked with an existing plan). In revise mode it always archives the prior `plan.md` to `snapshots/plan-<ts>.md` before replacing. Harness-locked decisions are restated verbatim from `harness-built.json` and cannot change without `/cc-fuzzer:campaign --reset`.
+- **harness-writer** writes to `fuzz/harness/`, not arbitrary paths. Builds both fuzzing binary and coverage binary by default. Reads `fuzz/state/plan.md` for harness layout decisions.
 - **seed-generator** writes to `fuzz/corpus/` for promoted seeds, `fuzz/corpus-quarantine/` for unvalidated.
 - **mutator** writes `mutator.c` to `fuzz/harness/`.
 - **coverage-analyst** writes `gaps-<ts>.json` to `fuzz/state/snapshots/`. Filename ts must equal the `timestamp` field.

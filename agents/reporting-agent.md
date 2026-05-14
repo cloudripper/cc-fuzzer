@@ -111,6 +111,28 @@ Capture and store for each finding:
 - `live_output` (first 60 lines of combined stdout+stderr)
 - `classification`: `confirmed` | `false_positive` | `category_mismatch`
 
+### Step 3.5: Compute git provenance for each finding
+
+For every finding (confirmed AND false-positive), parse the `location` field — it has the canonical shape `<function>@<file>:<line>` (e.g. `get_wchar@charset.c:661`). Run:
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/blame-finding.sh" <file> <line>
+```
+
+The script emits a single-line JSON object with these fields (any may be `null` if unknown):
+
+- `blamed_commit`, `blamed_date`, `blamed_author`, `blamed_summary` — last-touch blame on the crash line
+- `function_first_added` — date the file was added to the repo (cheap proxy for "how old is this region")
+- `in_delta_range` — `true` / `false` / `null`. Non-null only when a `fuzz/state/snapshots/delta-*.json` exists.
+- `delta_range` — the actual range string when `in_delta_range` is non-null
+- `git_repo` — `false` if the project is not in a git repo (the rest will be null)
+
+Use it for two things:
+1. The **Likely introduced** subsection in each confirmed finding's Findings entry (see template below).
+2. The false-positive analysis — when a finding no longer reproduces, the blame on the crash line often points to the commit that fixed it. Surface this in the False-Positive Analysis section.
+
+If `git_repo` is false, simply omit the provenance subsection. Don't fabricate.
+
 ### Step 4: Write FINDINGS-REPORT.md
 
 Write to `fuzz/state/FINDINGS-REPORT.md.tmp` then `mv` to `fuzz/state/FINDINGS-REPORT.md`.
@@ -156,6 +178,14 @@ most critical finding, any patterns (e.g. "3 of 4 bugs are in the UTF-8 parser")
 **Location**: `<location>`
 **Root cause**: <root_cause>
 **First seen**: <first_seen> | **Last seen**: <last_seen> | **Dedup count**: <dedup_count>
+
+<If git_repo is true AND blamed_commit is non-null, include this block. Otherwise omit entirely.>
+
+**Likely introduced**: commit `<blamed_commit>` (<blamed_date>, <blamed_author>)
+  > <blamed_summary>
+<If in_delta_range is true:> **In delta range** (`<delta_range>`): yes
+<If in_delta_range is false:> **In delta range** (`<delta_range>`): no — pre-existing bug
+<If in_delta_range is null AND function_first_added is non-null:> **File first added**: <function_first_added>
 
 <2-3 sentence description of what the bug is, why it's reachable, and what the
 impact is. Be specific — cite the function name, buffer size, index arithmetic
@@ -223,7 +253,9 @@ Full captured output for each confirmed finding (truncated to 40 lines per findi
 
 **Original claim**: <root_cause>
 **Live run result**: exit code <N>, output: `<first 3 lines or "no output">`
-**Hypothesis**: <one-line reason — e.g. "Harness rebuilt with different compiler flags eliminated the OOB", "Input relied on uninitialized memory pattern that changed between builds", "Timing-dependent race condition">
+<If blamed_commit is non-null AND blamed_date is newer than the finding's first_seen, include:>
+**Likely fixed**: the crash line was last modified in commit `<blamed_commit>` (<blamed_date>, <blamed_author>) — "<blamed_summary>". This commit landed after the finding was first recorded and is the most likely fix.
+**Hypothesis**: <one-line reason — e.g. "Harness rebuilt with different compiler flags eliminated the OOB", "Input relied on uninitialized memory pattern that changed between builds", "Timing-dependent race condition", "Patched by the 'Likely fixed' commit above">
 
 This finding has NOT been removed from `findings.jsonl` (per STATE_SCHEMA.md lifecycle rules).
 It is excluded from the Findings and Reproducer Commands sections above.
@@ -244,6 +276,7 @@ It is excluded from the Findings and Reproducer Commands sections above.
 
 - Never modify `findings.jsonl`. Never delete or move crash files.
 - Always re-run reproducers against the current harness binary. Never trust stored `sanitizer_report_excerpt` for the Evidence section — use live output.
+- Provenance is computed at report-time via `blame-finding.sh` — it lives in this report only, never in `findings.jsonl` (blame can shift across rebases, so storing it in the immutable record would lie).
 - If `harness_binary` path does not exist, write the error-state report and exit.
 - Truncate any single captured output to ≤40 lines. Add `[...truncated N lines]` if cut.
 - Use exact paths from `findings.jsonl` for reproducer commands — they are stable per STATE_SCHEMA.md.

@@ -38,16 +38,22 @@ You write bytes to disk. Cheap, fast, lots of them.
 
 
 
+## Campaign plan (primary input)
+
+Before generating any seeds, **read `fuzz/state/plan.md`** — specifically the `## Seed Strategy`, `## Dictionaries`, and `## Target` sections. The campaign-planner pinned the strategic calls so you don't have to re-derive them per dispatch:
+
+- **Bootstrap pass** (Mode A): the plan specifies how many seeds and their structural variety. Match its spec.
+- **Targeted posture per `reason`** (Mode B): the plan says, for each `format_barrier` / `value_constraint` / `delta_target` gap class, what shape of seed to produce.
+- **Input classes to emphasize** / **classes to avoid**: the plan distills these from user guidance and source analysis.
+- **Dictionary picks**: the plan lists bundled dictionaries the user has been asked to add. If a dict is named in the plan but not yet in `harness-built.json.dict_files`, you may still write seeds that exercise its operand classes — flag it for the user.
+
+If `fuzz/state/plan.md` is absent (unusual — only happens with hand-edited campaigns), fall back to source-only reasoning and tell the orchestrator the plan was missing.
+
 ## Optional project guidance
 
-If `fuzz/guidance.md` exists, **read it first** before generating any seeds. It contains user-supplied direction about:
-- Input classes to emphasize (e.g. UTF-8 edge cases, Unicode variation selectors)
-- Format expectations (encoding, framing, max sizes)
-- Known irrelevant classes to avoid
+If `fuzz/guidance.md` exists, read it as **secondary** input — the plan should already have folded its content in, but the raw guidance can fill gaps the planner abstracted away (specific CVE references, links to papers, examples of bad input bytes).
 
-Let it shape your output. If a section says "this target is text-only; binary mutations are wasted," don't generate random binary seeds. If it says "emphasize VS15/VS16 emoji presentation modifiers per the smuggling channel," include seeds that exercise that pattern (anchor character + variation selector).
-
-If `fuzz/guidance.md` does not exist, fall back to default behavior — your built-in heuristics from `harness-built.json.input_encoding` and the harness source.
+If neither plan.md nor guidance.md exists, fall back to default behavior — your built-in heuristics from `harness-built.json.input_encoding` and the harness source.
 
 The bundled dictionaries (`${CLAUDE_PLUGIN_ROOT}/dictionaries/`) are loaded by the fuzzer engine directly via `dict_files` in `harness-built.json` — you don't need to re-encode their contents as seeds. But you can read them for inspiration when the user has called them out in `fuzz/guidance.md`.
 

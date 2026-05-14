@@ -79,6 +79,21 @@ Optional. Functions or files you want to avoid spending coverage analysis on (e.
 - `vendor/zlib/` — fuzzed separately
 - `*_test.c` — test code, not under fuzz
 
+## Delta range (optional)
+
+Recently-changed code is empirically the highest-density region for new bugs. If you want the campaign to weight recently-changed functions higher, run:
+
+```
+/cc-fuzzer:delta                          # default: main..HEAD, falling back to master..HEAD or HEAD~30..HEAD
+/cc-fuzzer:delta --range main..HEAD       # explicit
+/cc-fuzzer:delta --range v1.2.0..HEAD     # since the last release tag
+/cc-fuzzer:delta --range <base>..<fix>    # auditing a specific fix commit
+```
+
+After the command runs, the latest `fuzz/state/snapshots/delta-*.json` is what `coverage-analyst` and `reporting-agent` consume. The orchestrator does not auto-generate it — you run it on demand whenever your "view of what's new" needs to change (e.g., after pushing more commits). To disable delta weighting, do nothing — when no `delta-*.json` exists, the campaign runs without it.
+
+Suggested default for this target: `<your-range-here-or-delete-this-line>`
+
 ## References
 
 Drop any relevant links here for the agents' use. They will be read during gap analysis and seed generation.

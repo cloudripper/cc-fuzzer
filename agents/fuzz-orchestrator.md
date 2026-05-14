@@ -60,16 +60,10 @@ Do this once, completely, then stop:
 
 1. Run `${CLAUDE_PLUGIN_ROOT}/scripts/migrate-state.sh` (no-op for fresh projects, sets schema-version to v2).
 2. Run `${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh`. If it fails, stop and tell the user to fix tools.
-3. **ANALYZE**: Read the target source. Identify entry function, input format, vulnerability surface. Write `fuzz/state/plan.md` with: target name, entry function, input encoding, top 5 functions of interest, sanitizer choice. This file is your future self's memory. Make it complete.
-4. **GUIDANCE CHECK**: Look for `fuzz/guidance.md`. If absent, tell the user about the optional template at `${CLAUDE_PLUGIN_ROOT}/templates/guidance.md` — they can copy it and edit if they want to steer the campaign toward specific input classes (UTF-8 edge cases, Unicode variation selectors, etc). Do **not** create the file yourself; it's user-controlled.
-5. **DICTIONARY SUGGESTION**: Based on the target's apparent input class, suggest bundled dictionaries the user might want to add via `/cc-fuzzer:dictionaries add <name>`. Heuristics:
-   - Target source mentions `wchar_t`, `mbstate_t`, `iconv`, `utf`, `unicode`, `locale` → suggest `utf-edge-cases`
-   - Target is a terminal emulator, text renderer, or processes display strings → suggest `unicode-variation-selectors`, `bidi-controls`
-   - Target accepts paths, URLs, archive entries → suggest `path-traversal`
-   - Target uses `printf`-family, fixed-size buffers, or C string handling → suggest `c-strings`
-
-   Do **not** add them automatically — print the suggestions and let the user opt in.
-6. **HARNESS**: Delegate to `harness-writer`. It writes the harness to `fuzz/harness/<target>_fuzzer.cc`, builds both the fuzzing and coverage binaries, and writes `fuzz/state/harness-built.json` with required hashes.
+3. **GUIDANCE CHECK**: Look for `fuzz/guidance.md`. If absent, tell the user about the optional template at `${CLAUDE_PLUGIN_ROOT}/templates/guidance.md` — they can copy it and edit if they want to steer the campaign toward specific input classes (UTF-8 edge cases, Unicode variation selectors, etc). Do **not** create the file yourself; it's user-controlled. If you do tell the user about the template, give them the option to pause the COLD start so they can fill it out before planning begins — the plan is IMMUTABLE once written, so this is their one chance to inject guidance cheaply.
+4. **PLAN**: Delegate to `campaign-planner` (Opus). It reads the target source, `fuzz/guidance.md` (if present), and the campaign template, and writes `fuzz/state/plan.md` — the strategy document every downstream specialist consults. The plan covers: target description, harness layout decisions, seed strategy, dictionary picks, concolic strategy, coverage targets, out-of-scope code, and references. **Do not write `plan.md` yourself.** In fresh mode (no prior plan, the COLD case), the planner composes from scratch. If a plan unexpectedly already exists (e.g. user pre-ran `/cc-fuzzer:plan` before the campaign), the planner enters revise mode — that's fine, but the COLD flow assumes fresh. The plan is REWRITABLE-with-archival; mid-campaign revisions happen via user-triggered `/cc-fuzzer:plan` and are not part of COLD.
+5. **DICTIONARY SUGGESTION**: The planner's `## Dictionaries` section is the source of truth for what to add. Surface its list to the user with `/cc-fuzzer:dictionaries add <name>` commands. Do **not** add them automatically — print the suggestions and let the user opt in. If you have additional heuristic suggestions the planner missed, mention them but defer to the plan's list.
+6. **HARNESS**: Delegate to `harness-writer`. It reads `fuzz/state/plan.md`'s `## Harness` section for the fuzzing_mode, sanitizer set, and entry-point notes the planner pinned. It writes the harness to `fuzz/harness/<target>_fuzzer.cc`, builds both the fuzzing and coverage binaries, and writes `fuzz/state/harness-built.json` with required hashes.
 
    **HARD REQUIREMENT**: If the user did not pass `--no-coverage`, the coverage binary MUST be built and `coverage_tracking: true` MUST be set in `harness-built.json`. If `harness-writer` returns without a coverage binary, do NOT proceed — print an error explaining the user can either fix the coverage build or pass `--no-coverage` to opt out explicitly. Past campaigns have silently lapsed to no-coverage and run for hours producing useless data. That's not allowed anymore.
 
@@ -81,7 +75,7 @@ Do this once, completely, then stop:
    ```
    If it exits non-zero (survivors remain — output shows `"ok": false`), do NOT delegate to `harness-writer`. Surface the still-alive PIDs to the user and ask them to kill the processes manually before retrying.
 
-7. **SEED**: Delegate to `seed-generator` for the bootstrap corpus. Seeds go to `fuzz/corpus-quarantine/`, then `${CLAUDE_PLUGIN_ROOT}/scripts/corpus-quarantine.sh` promotes the safe ones to `fuzz/corpus/`. If `fuzz/guidance.md` exists, the agent reads it and shapes seeds accordingly.
+7. **SEED**: Delegate to `seed-generator` for the bootstrap corpus. Seeds go to `fuzz/corpus-quarantine/`, then `${CLAUDE_PLUGIN_ROOT}/scripts/corpus-quarantine.sh` promotes the safe ones to `fuzz/corpus/`. The agent reads `fuzz/state/plan.md`'s `## Seed Strategy` (bootstrap pass spec) and `fuzz/guidance.md` if present.
 8. **LAUNCH**: Run `${CLAUDE_PLUGIN_ROOT}/scripts/run-fuzzer.sh fuzz/harness/<harness>`. Fuzzer goes to background.
 9. **SEED STATE**: Run `${CLAUDE_PLUGIN_ROOT}/scripts/snapshot-coverage.sh` and `${CLAUDE_PLUGIN_ROOT}/scripts/update-current.sh`.
 10. **EVENT**: `${CLAUDE_PLUGIN_ROOT}/scripts/events.sh campaign_start` (do NOT write to events.jsonl directly — go through events.sh which adds the schema field).
@@ -143,7 +137,7 @@ These all waste tokens. Do not do them unless a specific dispatched action requi
 - ❌ Reading the target source
 - ❌ Reading the harness source
 - ❌ Reading `harness-built.json`
-- ❌ Reading `plan.md`
+- ❌ Reading `plan.md` (this is for the specialists you dispatch — they read it themselves, you do not pre-load it)
 - ❌ Reading multiple snapshot files (current.json has the trend)
 - ❌ Walking `findings.jsonl` line by line — use `${CLAUDE_PLUGIN_ROOT}/scripts/findings.sh count` for the count
 - ❌ Re-validating that the harness binary exists
@@ -210,7 +204,7 @@ Append a `corpus_quarantine` event to `events.jsonl` recording what you removed 
 
 For multi-step operations (COLD start, harness rebuild, triage batch with multiple files), use the `TodoWrite` tool to track progress. Specifically:
 
-- **COLD start**: 11 sequential steps from migrate-state through campaign-started. Write a todo list at the start, mark each step `in_progress` before doing it, `completed` after. Only one step `in_progress` at a time.
+- **COLD start**: 11 sequential steps from migrate-state through campaign-started (preflight → guidance check → planner → dictionary suggestion → harness → seed → launch → seed state → event → exit). Write a todo list at the start, mark each step `in_progress` before doing it, `completed` after. Only one step `in_progress` at a time.
 - **Resume mode**: 5 steps; use a todo list.
 - **Harness rebuild**: top-level todo is "rebuild harness; delegate to harness-writer". The subagent has its own todo list internally.
 - **Triage batch**: when dispatching to crash-triager with multiple files in `fuzz/crashes/new/`, list each file as a todo item.

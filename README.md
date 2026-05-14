@@ -59,7 +59,7 @@ The LLM does not just write a harness and walk away. The campaign is split into 
 
 ```
 COLD (once per campaign)
-  ANALYZE  →  HARNESS (3 binaries + opt cmplog)  →  SEED  →  LAUNCH
+  PLAN (Opus)  →  HARNESS (3 binaries + opt cmplog)  →  SEED  →  LAUNCH
                                                               │
                                                               ▼
        ┌─────────────────────────────────────────────────────────┐
@@ -119,13 +119,14 @@ What this means in practice: the orchestrator agent owns a state machine modeled
 | Subagent | Role | Model |
 |---|---|---|
 | `fuzz-orchestrator` | Owns the campaign loop. Dispatches via `check-campaign-state.sh` into one of three modes (COLD / RESUME / WARM). On warm ticks it reads only `fuzz/state/current.json`. | sonnet |
-| `harness-writer` | Writes the libFuzzer/AFL++ harness and builds **three** binaries (fuzzing, coverage, verify) plus an optional cmplog binary. Iteratively repairs build failures (OSS-Fuzz-Gen pattern). | sonnet |
+| `campaign-planner` | Writes `fuzz/state/plan.md`: target description, harness layout, seed strategy, dictionary picks, concolic strategy, coverage targets. Two modes — fresh (COLD start) and revise (mid-campaign, folds in live coverage / findings / gap data; archives prior plan to `snapshots/plan-{ts}.md`). Every downstream specialist consults this plan. | **opus** |
+| `harness-writer` | Writes the libFuzzer/AFL++ harness and builds **three** binaries (fuzzing, coverage, verify) plus an optional cmplog binary. Iteratively repairs build failures (OSS-Fuzz-Gen pattern). Reads `plan.md` for harness layout decisions. | sonnet |
 | `seed-generator` | Bootstrap corpus + targeted seeds aimed at specific gaps. | haiku |
 | `mutator` | Writes a `LLVMFuzzerCustomMutator` for highly-structured inputs the default mutator can't reach. | haiku |
-| `coverage-analyst` | Turns coverage snapshots + cmplog dictionary into a ranked `gaps-report/v1` with gap classes (`magic_bytes`, `direct_compare`, `checksum_barrier`, `deep_path_condition`, …). | sonnet |
+| `coverage-analyst` | Turns coverage snapshots + cmplog dictionary into a ranked `gaps-report/v1` with gap classes (`magic_bytes`, `direct_compare`, `checksum_barrier`, `deep_path_condition`, `delta_target`, …). Reads the latest `delta-*.json` when present to weight recently-changed code higher. | sonnet |
 | `concolic-executor` | Drives SymCC against `checksum_barrier` / `deep_path_condition` gaps. Models Atlantis-Multilang's `concolic_input_gen`. | haiku |
 | `crash-triager` | Two-stage triage: Stage 1 reproduces in the fuzzer harness (2/3), Stage 2 reproduces in `verify_binary` (2/3). Stage-2 failures are routed to `crashes/flaky/` and never recorded. | **opus** |
-| `reporting-agent` | Re-runs every recorded reproducer against the current harness and writes `fuzz/state/FINDINGS-REPORT.md` with confirmed vs. false-positive classification. | **opus** |
+| `reporting-agent` | Re-runs every recorded reproducer against the current harness and writes `fuzz/state/FINDINGS-REPORT.md` with confirmed vs. false-positive classification. Annotates each finding with `git blame`-based provenance (likely-introduced commit, in-delta-range flag) when the project is a git repo. | **opus** |
 
 ### Slash commands
 
@@ -134,6 +135,7 @@ All commands are prefixed `/cc-fuzzer:`.
 | Command | Purpose |
 |---|---|
 | `/cc-fuzzer:campaign <target>` | **Headline.** Auto-detects state and either starts (COLD), resumes (RESUME), or reports (WARM). |
+| `/cc-fuzzer:plan <target>` | Run the Opus `campaign-planner`. Fresh mode at COLD; revise mode mid-campaign (folds live coverage / findings / gap data into a revised plan and archives the prior version to `snapshots/plan-{ts}.md`). Auto-detects which mode. |
 | `/cc-fuzzer:resume` | Force-resume a stopped campaign without re-analyzing. |
 | `/cc-fuzzer:tick` | Advance the loop by one iteration manually. |
 | `/cc-fuzzer:stop` | Clean shutdown (uses PGID-aware `kill-harness-processes.sh`). |
@@ -146,6 +148,7 @@ All commands are prefixed `/cc-fuzzer:`.
 | `/cc-fuzzer:report` | Re-run every reproducer and write `FINDINGS-REPORT.md`. |
 | `/cc-fuzzer:run` | Launch a built harness in the background without the LLM loop. |
 | `/cc-fuzzer:dictionaries [list\|add\|remove\|show]` | Manage bundled and project-local libFuzzer/AFL++ dictionaries. |
+| `/cc-fuzzer:delta [--range <git-range>]` | Compute git-diff delta targets (on demand, no LLM). Biases `coverage-analyst` toward recently-changed code. |
 | `/cc-fuzzer:doctor` | Read-only diagnostic for state corruption, modified plugin files, stray processes, etc. |
 | `/cc-fuzzer:validate` | Validate `fuzz/state/` against `STATE_SCHEMA.md`. |
 | `/cc-fuzzer:reset` | Wipe campaign state (backs up findings to `fuzz/reset-backup-<ts>.tar.gz`). |
@@ -160,6 +163,8 @@ All commands are prefixed `/cc-fuzzer:`.
 | `scripts/kill-harness-processes.sh` | Deterministic teardown of harness processes by process group. Used before any relaunch. |
 | `scripts/snapshot-coverage.sh` | Materializes a `coverage-<ts>.json` snapshot for the LLM. |
 | `scripts/extract-cmplog-dict.sh` | Harvests AFL++ cmplog runtime observations into a libFuzzer-format dict for `coverage-analyst` and `seed-generator`. |
+| `scripts/find-delta-targets.sh` | On-demand: parses `git diff <range>` into per-hunk records (file + line range + function context). Consumed by `coverage-analyst` for `delta_target` gap priority. |
+| `scripts/blame-finding.sh` | On-demand (called by `reporting-agent`): runs `git blame` on a finding's crash line, returns commit/date/author plus whether the blamed commit is inside the latest delta range. |
 | `scripts/install-symcc.sh` | One-shot installer for SymCC (build from source) with `/nix/store` PATH fallback. |
 | `scripts/build-symcc-target.sh` | Build a SymCC-instrumented harness binary. |
 | `scripts/run-concolic.sh` | Run SymCC against a single seed (called by `concolic-executor`). |
@@ -179,6 +184,7 @@ Authoritative spec: `STATE_SCHEMA.md` at the plugin root. Current schema version
 | File | Lifecycle | Purpose |
 |---|---|---|
 | `schema-version` | plain text | Pinned schema version for migrations. |
+| `plan.md` | rewritable-with-archival | Campaign strategy document. Written by `campaign-planner` (Opus) at COLD; can be revised mid-campaign via `/cc-fuzzer:plan` — each prior version is archived to `snapshots/plan-{ts}.md`. Read by every specialist on dispatch. |
 | `current.json` | rewritable | Compact, agent-friendly campaign snapshot. The orchestrator reads **only this** on warm ticks. |
 | `harness-built.json` | rewritable (`harness-built/v5`) | Records the three built binaries, `fuzzing_mode` (`in_process` \| `process_based`), `cmplog_enabled`, `verify_binary`. |
 | `findings.jsonl` | append-only | Two-stage-verified unique crashes. Only `scripts/findings.sh` writes here. |
@@ -404,11 +410,11 @@ The check is non-fatal — campaigns continue regardless. But the warning means 
 
 Expected token mix during a typical campaign:
 
-- ~65% Haiku (seed generation each tick, mutator scaffolding, concolic dispatch)
+- ~60% Haiku (seed generation each tick, mutator scaffolding, concolic dispatch)
 - ~25% Sonnet (orchestrator decisions, harness writing, coverage analysis)
-- ~10% Opus (crash triage on unique crashes, findings report generation)
+- ~15% Opus (one-shot `campaign-planner` at COLD, `crash-triager` per unique crash, `reporting-agent` per `/cc-fuzzer:report`)
 
-Roughly an order of magnitude cheaper than running everything on Opus, with Opus reserved for the two places its quality really matters: root-cause analysis on unique crashes (`crash-triager`) and the final reproducer-verified report (`reporting-agent`).
+Roughly an order of magnitude cheaper than running everything on Opus, with Opus reserved for the three places its quality really matters: the initial campaign plan (`campaign-planner`, one shot at COLD start), root-cause analysis on unique crashes (`crash-triager`), and the final reproducer-verified report (`reporting-agent`). The planner's cost is amortized across the entire campaign because every downstream specialist reads its output.
 
 The `--budget` flag (default $20) caps total LLM spend for the campaign. When approaching the cap, the orchestrator skips lower-priority specialist calls and continues with the fuzzer alone.
 
