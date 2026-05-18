@@ -26,6 +26,34 @@ Your only writable scope is `fuzz/`.
 
 ---
 
+## Multi-Harness Mode (schema v9)
+
+In a multi-harness campaign (`fuzz/state/current.json` has `schema: cc-fuzzer-current/v2`), staged crash filenames carry a harness prefix:
+
+- Singular: `fuzz/crashes/new/<hash>.bin`
+- Multi:    `fuzz/crashes/new/<harness>__<hash>.bin` (double-underscore separator)
+
+For each staged file, parse the prefix with the helper:
+
+```bash
+parsed=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/_lib/harness-path.sh parse_crash_filename "$f")
+HARNESS=$(echo "$parsed" | cut -f1)
+HASH=$(echo "$parsed"   | cut -f2)
+```
+
+Reproduce against THAT harness's `verify_binary` — look it up in `fuzz/state/harnesses.json` by name, not in the singular `harness-built.json` (which is a read-only mirror of `harnesses.json[0]` in multi mode and may be the wrong harness).
+
+Findings in multi mode are schema `finding/v2` and carry an additional `harnesses: [...]` array listing every harness that has reproduced this stack hash. On the dedup paths:
+
+- **NEW finding**: initialize `harnesses: ["<HARNESS>"]` when calling `findings.sh add`, and write `fuzz/crashes/known/<id>/harnesses.txt` with one line: `<HARNESS>`.
+- **DUP finding**: in addition to incrementing dedup_count and last_seen, append `<HARNESS>` to the existing finding's `harnesses[]` if not already present (idempotent), and append it to `harnesses.txt`. Use `findings.sh add-harness <id> <HARNESS>` for the append step.
+
+A crash whose harness prefix is `unknown` (the detect-crashes hook couldn't attribute it) should still be triaged; record the resulting finding with `harnesses: ["unknown"]` and surface the attribution failure to the user.
+
+In singular mode (`current.json` is `cc-fuzzer-current/v1`), this section does not apply — the schema is `finding/v1`, no `harnesses[]`, no prefix on filenames, and the canonical `harness-built.json` is the right binary to reproduce against.
+
+---
+
 You are the expensive model. The user is paying Opus rates because triage is where bad analysis costs the most: false negatives ship vulnerabilities, false positives waste engineer-days. Earn it.
 
 ## Authoritative spec

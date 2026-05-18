@@ -21,7 +21,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/_lib/path-anchor.sh"
 FUZZ_ROOT="${FUZZ_ROOT:-fuzz}"
 STATE_DIR="$FUZZ_ROOT/state"
-EXPECTED_SCHEMA_VERSION="v7"
+EXPECTED_SCHEMA_VERSION="v9"
 
 if [ ! -d "$STATE_DIR" ]; then
   echo "no state directory at $STATE_DIR - nothing to migrate"
@@ -44,13 +44,22 @@ echo "Migrating state from $CURRENT to $EXPECTED_SCHEMA_VERSION"
 echo ""
 
 # Backup
-BACKUP_DIR="$STATE_DIR/migrations"
-mkdir -p "$BACKUP_DIR"
-BACKUP_FILE="$BACKUP_DIR/${CURRENT}-${EXPECTED_SCHEMA_VERSION}-backup-$(date +%Y%m%d-%H%M%S).tar.gz"
-echo "Creating backup at $BACKUP_FILE"
-tar --exclude="$BACKUP_DIR" -czf "$BACKUP_FILE" -C "$FUZZ_ROOT" state/ 2>/dev/null || {
-  echo "WARNING: backup creation failed - continuing anyway"
-}
+# Skip the backup tarball when the only transition is v8 -> v9, because that
+# transition is a no-op: it only rewrites state/schema-version. A backup would
+# just duplicate the current state into a tarball with no recovery value. Any
+# multi-step chain (e.g. v6 -> v9) still gets a backup.
+BACKUP_FILE=""
+if [ "$CURRENT" = "v8" ] && [ "$EXPECTED_SCHEMA_VERSION" = "v9" ]; then
+  echo "(skipping backup tarball - v8 -> v9 transition is a no-op version bump)"
+else
+  BACKUP_DIR="$STATE_DIR/migrations"
+  mkdir -p "$BACKUP_DIR"
+  BACKUP_FILE="$BACKUP_DIR/${CURRENT}-${EXPECTED_SCHEMA_VERSION}-backup-$(date +%Y%m%d-%H%M%S).tar.gz"
+  echo "Creating backup at $BACKUP_FILE"
+  tar --exclude="$BACKUP_DIR" -czf "$BACKUP_FILE" -C "$FUZZ_ROOT" state/ 2>/dev/null || {
+    echo "WARNING: backup creation failed - continuing anyway"
+  }
+fi
 
 #------------------------------------------------------------------------------
 # v0 -> v1: flat layout to schema/v1
@@ -552,6 +561,223 @@ EOF
   echo "v6 -> v7 migration complete."
 }
 
+#------------------------------------------------------------------------------
+# v7 -> v8:
+#   1. findings.jsonl: tombstone legacy/malformed records to a sidecar so the
+#      main file passes v7 strict validation. Records that fail any of these
+#      checks get moved verbatim to findings-legacy.jsonl:
+#        - JSON parse error
+#        - schema != "finding/v1"
+#        - id does not match ^f[0-9]{3,}$
+#        - missing any required v7 field
+#        - has any unrecognized v7 field
+#   2. Multi-fuzzer file/state layout (added by task #17 — see below).
+#------------------------------------------------------------------------------
+migrate_v7_to_v8() {
+  echo "Running v7 -> v8 migration..."
+
+  # --- Step 1: findings.jsonl tombstone pass ---
+  if [ -f "$STATE_DIR/findings.jsonl" ]; then
+    python3 - <<PY
+import json, os, re
+ID_RE = re.compile(r'^f[0-9]{3,}$')
+REQUIRED = {"schema","id","stack_hash","category","location","exploitability",
+            "root_cause","reproducer","first_seen","last_seen","dedup_count"}
+ALLOWED  = REQUIRED | {"subcategory","sanitizer_report_excerpt","verified_against_build"}
+
+src = '$STATE_DIR/findings.jsonl'
+legacy_path = '$STATE_DIR/findings-legacy.jsonl'
+tmp = src + '.migrating'
+
+valid_lines, legacy_lines = [], []
+with open(src) as f:
+    for ln, raw in enumerate(f, 1):
+        raw = raw.rstrip('\n')
+        if not raw.strip():
+            continue
+        # Try to parse
+        try:
+            d = json.loads(raw)
+        except Exception:
+            legacy_lines.append(raw)
+            continue
+        # Check schema string
+        if d.get('schema') != 'finding/v1':
+            legacy_lines.append(raw); continue
+        # Check id format
+        if not ID_RE.match(str(d.get('id',''))):
+            legacy_lines.append(raw); continue
+        # Check required + recognized fields
+        keys = set(d.keys())
+        missing = REQUIRED - keys
+        unrecognized = keys - ALLOWED
+        if missing or unrecognized:
+            legacy_lines.append(raw); continue
+        valid_lines.append(raw)
+
+if legacy_lines:
+    # Append (don't overwrite) — tombstones accumulate across migrations
+    from datetime import datetime, timezone
+    ts = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    mode = 'a' if os.path.exists(legacy_path) else 'w'
+    with open(legacy_path, mode) as f:
+        if mode == 'a':
+            f.write('\n')
+        f.write(f'# === tombstoned by v7->v8 migration on {ts} ===\n')
+        for line in legacy_lines:
+            f.write(line + '\n')
+    print(f'  tombstoned {len(legacy_lines)} legacy/malformed findings record(s) to findings-legacy.jsonl')
+
+with open(tmp, 'w') as f:
+    for line in valid_lines:
+        f.write(line + '\n')
+os.replace(tmp, src)
+print(f'  retained {len(valid_lines)} valid findings record(s) in findings.jsonl')
+PY
+  fi
+
+  # --- Step 2: rename legacy fuzzer.* files to fuzzer-main.* layout ---
+  # Pre-v0.17 had a single fuzzer.pid/.engine/.log; v0.17 has one set per
+  # slot. The migration renames the legacy files into "main" slot and
+  # leaves the original paths as symlinks for the brief transition window
+  # so anything still reading fuzzer.pid keeps working.
+  LEGACY_PID="$STATE_DIR/fuzzer.pid"
+  LEGACY_ENG="$STATE_DIR/fuzzer.engine"
+  LEGACY_LOG="$STATE_DIR/fuzzer.log"
+  if [ -f "$LEGACY_PID" ] && [ ! -L "$LEGACY_PID" ]; then
+    mv "$LEGACY_PID" "$STATE_DIR/fuzzer-main.pid"
+    ln -sf "fuzzer-main.pid" "$LEGACY_PID"
+    echo "  renamed fuzzer.pid -> fuzzer-main.pid (legacy path is now a symlink)"
+  fi
+  if [ -f "$LEGACY_ENG" ] && [ ! -L "$LEGACY_ENG" ]; then
+    mv "$LEGACY_ENG" "$STATE_DIR/fuzzer-main.engine"
+    ln -sf "fuzzer-main.engine" "$LEGACY_ENG"
+    echo "  renamed fuzzer.engine -> fuzzer-main.engine (legacy path is now a symlink)"
+  fi
+  if [ -f "$LEGACY_LOG" ] && [ ! -L "$LEGACY_LOG" ]; then
+    mv "$LEGACY_LOG" "$STATE_DIR/fuzzer-main.log"
+    ln -sf "fuzzer-main.log" "$LEGACY_LOG"
+    echo "  renamed fuzzer.log -> fuzzer-main.log (legacy path is now a symlink)"
+  fi
+
+  # --- Step 3: bump fuzz-config.json to v2, backfill fuzzer_slots = [main] ---
+  CONFIG="$STATE_DIR/fuzz-config.json"
+  if [ ! -f "$CONFIG" ]; then
+    # No config — write a fresh v2 with sensible defaults
+    cat > "$CONFIG" <<EOF
+{
+  "schema": "fuzz-config/v2",
+  "fuzz_forks": 2,
+  "fuzzer_slots": [
+    {"slot": "main", "engine": "libfuzzer"}
+  ]
+}
+EOF
+    echo "  created $CONFIG (fuzz-config/v2, default single 'main' slot)"
+  else
+    # Existing config — preserve user settings, bump schema, backfill slots
+    DETECTED_ENGINE="libfuzzer"
+    if [ -f "$STATE_DIR/fuzzer-main.engine" ]; then
+      DETECTED_ENGINE=$(cat "$STATE_DIR/fuzzer-main.engine" 2>/dev/null | tr -d ' \n')
+      [ -z "$DETECTED_ENGINE" ] && DETECTED_ENGINE="libfuzzer"
+    fi
+    python3 - <<PY
+import json, os
+path = '$CONFIG'
+try:
+    d = json.load(open(path))
+except Exception as e:
+    print(f'  WARN: could not read $CONFIG: {e}')
+    raise SystemExit(0)
+changed = False
+if d.get('schema') != 'fuzz-config/v2':
+    d['schema'] = 'fuzz-config/v2'
+    changed = True
+if not d.get('fuzzer_slots'):
+    d['fuzzer_slots'] = [{'slot': 'main', 'engine': '$DETECTED_ENGINE'}]
+    changed = True
+if changed:
+    with open(path + '.tmp','w') as f:
+        json.dump(d, f, indent=2)
+    os.replace(path + '.tmp', path)
+    print('  bumped fuzz-config.json to v2 and backfilled fuzzer_slots=[main]')
+else:
+    print('  fuzz-config.json already at v2 with slots')
+PY
+  fi
+
+  # --- Step 4: create fuzzers.json manifest from the live fuzzer-main pid file ---
+  MANIFEST="$STATE_DIR/fuzzers.json"
+  if [ ! -f "$MANIFEST" ] && [ -f "$STATE_DIR/fuzzer-main.pid" ]; then
+    HARNESS_BIN=""
+    if [ -f "$STATE_DIR/harness-built.json" ]; then
+      HARNESS_BIN=$(python3 -c "
+import json
+try: print(json.load(open('$STATE_DIR/harness-built.json')).get('harness_binary',''))
+except: pass" 2>/dev/null)
+    fi
+    DETECTED_ENGINE="libfuzzer"
+    if [ -f "$STATE_DIR/fuzzer-main.engine" ]; then
+      DETECTED_ENGINE=$(cat "$STATE_DIR/fuzzer-main.engine" 2>/dev/null | tr -d ' \n')
+      [ -z "$DETECTED_ENGINE" ] && DETECTED_ENGINE="libfuzzer"
+    fi
+    SLOT_PID=$(cat "$STATE_DIR/fuzzer-main.pid" 2>/dev/null | tr -d ' \n')
+    [ -z "$SLOT_PID" ] && SLOT_PID="0"
+    SLOT_PGID="$SLOT_PID"
+    NOW_ISO=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    cat > "$MANIFEST" <<EOF
+{
+  "schema": "fuzzers/v1",
+  "slots": [
+    {
+      "slot": "main",
+      "engine": "$DETECTED_ENGINE",
+      "binary": "$HARNESS_BIN",
+      "pid": "$SLOT_PID",
+      "pgid": "$SLOT_PGID",
+      "started_at": "$NOW_ISO",
+      "log_file": "$STATE_DIR/fuzzer-main.log",
+      "pid_file": "$STATE_DIR/fuzzer-main.pid",
+      "engine_file": "$STATE_DIR/fuzzer-main.engine",
+      "role": null,
+      "afl_power_schedule": null,
+      "restart_count": 0,
+      "last_restart_at": null
+    }
+  ]
+}
+EOF
+    echo "  created $MANIFEST (backfilled from fuzzer-main.pid)"
+  fi
+
+  echo "v8" > "$STATE_DIR/schema-version"
+  echo "  wrote schema-version = v8"
+  echo ""
+  echo "v7 -> v8 migration complete."
+}
+
+#------------------------------------------------------------------------------
+# v8 -> v9: multi-harness mode (opt-in).
+#
+# This migration is intentionally a no-op for singular-mode campaigns: it only
+# rewrites state/schema-version. Multi-mode activation is a separate, explicit
+# user action (/cc-fuzzer:campaign --add-harness <name> --entry <fn>), which
+# performs the file moves and schema upgrades in place at that time. Why:
+# forcing every existing campaign to wrap itself as harnesses=[<one>] would be
+# a destructive surprise. Keep singular as-is; let the user opt in.
+#------------------------------------------------------------------------------
+migrate_v8_to_v9() {
+  echo "Running v8 -> v9 migration..."
+  echo "  (no-op for singular-mode campaigns - schema-version bump only)"
+  echo "  to enable multi-harness mode after this migration, run:"
+  echo "    /cc-fuzzer:campaign --add-harness <name> --entry <fn>"
+
+  echo "v9" > "$STATE_DIR/schema-version"
+  echo "  wrote schema-version = v9"
+  echo ""
+  echo "v8 -> v9 migration complete."
+}
+
 case "$CURRENT" in
   v0)
     migrate_v0_to_v1; CURRENT="v1"
@@ -560,7 +786,9 @@ case "$CURRENT" in
     migrate_v3_to_v4; CURRENT="v4"
     migrate_v4_to_v5; CURRENT="v5"
     migrate_v5_to_v6; CURRENT="v6"
-    migrate_v6_to_v7
+    migrate_v6_to_v7; CURRENT="v7"
+    migrate_v7_to_v8; CURRENT="v8"
+    migrate_v8_to_v9
     ;;
   v1)
     migrate_v1_to_v2; CURRENT="v2"
@@ -568,44 +796,67 @@ case "$CURRENT" in
     migrate_v3_to_v4; CURRENT="v4"
     migrate_v4_to_v5; CURRENT="v5"
     migrate_v5_to_v6; CURRENT="v6"
-    migrate_v6_to_v7
+    migrate_v6_to_v7; CURRENT="v7"
+    migrate_v7_to_v8; CURRENT="v8"
+    migrate_v8_to_v9
     ;;
   v2)
     migrate_v2_to_v3; CURRENT="v3"
     migrate_v3_to_v4; CURRENT="v4"
     migrate_v4_to_v5; CURRENT="v5"
     migrate_v5_to_v6; CURRENT="v6"
-    migrate_v6_to_v7
+    migrate_v6_to_v7; CURRENT="v7"
+    migrate_v7_to_v8; CURRENT="v8"
+    migrate_v8_to_v9
     ;;
   v3)
     migrate_v3_to_v4; CURRENT="v4"
     migrate_v4_to_v5; CURRENT="v5"
     migrate_v5_to_v6; CURRENT="v6"
-    migrate_v6_to_v7
+    migrate_v6_to_v7; CURRENT="v7"
+    migrate_v7_to_v8; CURRENT="v8"
+    migrate_v8_to_v9
     ;;
   v4)
     migrate_v4_to_v5; CURRENT="v5"
     migrate_v5_to_v6; CURRENT="v6"
-    migrate_v6_to_v7
+    migrate_v6_to_v7; CURRENT="v7"
+    migrate_v7_to_v8; CURRENT="v8"
+    migrate_v8_to_v9
     ;;
   v5)
     migrate_v5_to_v6; CURRENT="v6"
-    migrate_v6_to_v7
+    migrate_v6_to_v7; CURRENT="v7"
+    migrate_v7_to_v8; CURRENT="v8"
+    migrate_v8_to_v9
     ;;
   v6)
-    migrate_v6_to_v7
+    migrate_v6_to_v7; CURRENT="v7"
+    migrate_v7_to_v8; CURRENT="v8"
+    migrate_v8_to_v9
     ;;
   v7)
-    echo "already at v7"
+    migrate_v7_to_v8; CURRENT="v8"
+    migrate_v8_to_v9
+    ;;
+  v8)
+    migrate_v8_to_v9
+    ;;
+  v9)
+    echo "already at v9"
     ;;
   *)
     echo "ERROR: unknown source version '$CURRENT'" >&2
-    echo "Supported migrations: v0 -> v1 -> v2 -> v3 -> v4 -> v5 -> v6 -> v7" >&2
-    echo "Backup is at $BACKUP_FILE; restore manually if needed." >&2
+    echo "Supported migrations: v0 -> v1 -> v2 -> v3 -> v4 -> v5 -> v6 -> v7 -> v8 -> v9" >&2
+    [ -n "$BACKUP_FILE" ] && echo "Backup is at $BACKUP_FILE; restore manually if needed." >&2
     exit 1
     ;;
 esac
 
 echo ""
-echo "Migration complete. Backup at $BACKUP_FILE"
+if [ -n "$BACKUP_FILE" ]; then
+  echo "Migration complete. Backup at $BACKUP_FILE"
+else
+  echo "Migration complete. (no backup tarball was needed for this transition)"
+fi
 echo "Run 'scripts/validate-state.sh' to verify."

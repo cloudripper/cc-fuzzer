@@ -1,8 +1,8 @@
 {
     "$schema": "https://json.schemastore.org/claude-code-plugin.json",
     "name": "cc-fuzzer",
-    "version": "0.16.0",
-    "description": "LLM-in-the-loop coverage-guided fuzzing for C/C++ with strict, schema-driven, deterministic state. v0.16 adds: (1) Opus-based campaign-planner subagent that writes an IMMUTABLE fuzz/state/plan.md at COLD start covering harness layout, seed strategy, dictionary picks, concolic strategy, coverage targets, and out-of-scope code; every downstream specialist (harness-writer, seed-generator, coverage-analyst, concolic-executor) reads the plan for direction. (2) /cc-fuzzer:plan standalone command for pre-build plan inspection. (3) /cc-fuzzer:delta on-demand git-diff delta targeting consumed by coverage-analyst (delta_target gap reason) and reporting-agent (in-delta-range flag on findings). (4) Per-finding git-blame provenance in FINDINGS-REPORT.md via blame-finding.sh. v0.15: process-based fuzzing mode (fuzzing_mode field in harness-built/v5); deterministic harness teardown via kill-harness-processes.sh; /cc-fuzzer:report command with Opus reporting-agent. v0.14: pinned reproducible toolchain via Nix flake; FHSEnv-wrapped devShell for AFL++/SymCC. Schema still at v7. Architecture inspired by OSS-CRS, Buttercup, OSS-Fuzz-Gen, and Atlantis-Multilang.",
+    "version": "0.17.0",
+    "description": "LLM-in-the-loop coverage-guided fuzzing for C/C++ with strict, schema-driven, deterministic state. v0.17 adds: (1) Multi-fuzzer campaigns — schema v8 supports an engine-agnostic per-slot model (fuzz-config/v2 fuzzer_slots[], fuzzers/v1 manifest); each slot has its own pid/log/engine files; check-slot-liveness.sh per-slot auto-restart with anti-flap. Single-fuzzer campaigns are unchanged (default \"main\" slot). (2) Seed-safety scanner (check-seed-safety.sh) rejects unambiguously destructive payloads (rm -rf /, fork bombs, mkfs on real devices, dd to block devices, etc) before they enter the corpus. (3) write-harness-built.sh wrapper computes real SHA-256 hashes for target_source_hash / build_command_hash, replacing the v0.15 placeholder-stub bug. (4) migrate-state.sh v7->v8 tombstones legacy findings/v1 records with malformed IDs to findings-legacy.jsonl. v0.16: Opus-based campaign-planner + /cc-fuzzer:plan + /cc-fuzzer:delta + blame-finding.sh. v0.15: process-based fuzzing, two-stage triage, /cc-fuzzer:report. Architecture inspired by OSS-CRS, Buttercup, OSS-Fuzz-Gen, and Atlantis-Multilang.",
     "author": {
         "name": "oro"
     },
@@ -22,6 +22,7 @@
         "cmplog",
         "redqueen",
         "nix",
-        "reproducible"
+        "reproducible",
+        "multi-fuzzer"
     ]
 }

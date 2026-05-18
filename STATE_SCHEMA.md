@@ -2,7 +2,9 @@
 
 This document is the **single source of truth** for the cc-fuzzer plugin's filesystem layout, JSON schemas, and lifecycle rules. Every subagent, command, and script must conform to what's defined here. If a subagent's prompt and this document disagree, this document wins.
 
-Schema version: **v7** (cc-fuzzer plugin v0.15+)
+Schema version: **v9** (cc-fuzzer plugin v0.17+)
+
+v9 introduces **multi-harness mode** — a single campaign may target several entry functions in the same library, each with its own harness binary, corpus, and coverage state, while sharing a single findings DB, plan, and budget. Multi-harness mode is **opt-in**: it activates only when `state/fuzz-config.json` declares `harnesses[]`. Campaigns without that declaration continue to run in singular mode exactly as they did in v8 — no filesystem changes, no schema differences. See [Multi-Harness Mode](#multi-harness-mode-schema-v9) for the full contract.
 
 ## Filesystem Layout
 
@@ -20,15 +22,18 @@ fuzz/
 │   ├── events.jsonl                # APPEND ONLY, never edited
 │   ├── budget.json                 # replaced atomically
 │   ├── cmplog-dict-<ts>.dict       # IMMUTABLE per timestamp; cmplog runtime observations
+│   ├── fuzz-config.json            # REWRITABLE; user-editable launch config (incl. fuzzer_slots)
+│   ├── fuzzers.json                # REWRITABLE; live per-slot manifest (pid, role, started_at)
+│   ├── findings-legacy.jsonl       # APPEND-ONLY; tombstoned legacy findings records
 │   ├── snapshots/                  # all IMMUTABLE timestamped state lives here
 │   │   ├── coverage-<ts>.json      # IMMUTABLE once written
 │   │   ├── gaps-<ts>.json          # IMMUTABLE once written
 │   │   ├── concolic-<ts>.json      # IMMUTABLE once written
 │   │   ├── delta-<ts>.json         # IMMUTABLE once written (on-demand, optional)
 │   │   └── plan-<ts>.md            # IMMUTABLE archive of prior plan.md (one per revise)
-│   ├── fuzzer.pid                  # session-only, deleted on stop
-│   ├── fuzzer.engine               # session-only
-│   └── fuzzer.log                  # session-only, append while fuzzer runs
+│   ├── fuzzer-<slot>.pid           # session-only, one per slot ("main" by default)
+│   ├── fuzzer-<slot>.engine        # session-only, one per slot
+│   └── fuzzer-<slot>.log           # session-only, append while slot runs
 │
 ├── harness/                        # all build artifacts
 │   ├── <target>_fuzzer.cc          # harness source (or .c)
@@ -88,12 +93,12 @@ All schemas use a `schema` field at the top level identifying the schema name an
 ### `state/schema-version` (plain text)
 
 ```
-v7
+v9
 ```
 
 A single line containing the framework schema version. The orchestrator reads this on session start and refuses to operate if it doesn't match the plugin's expected version. Migration is handled by `scripts/migrate-state.sh`.
 
-Migration chain: `v0` (pre-schema, flat layout) → `v1` (subdirectory layout, schema fields) → `v2` (mandatory coverage builds, instrumentation field) → `v3` (multiple dictionary files) → `v4` (coverage_disabled_reason required when tracking off, schema field on all events) → `v5` (findings carry verified_against_build; crashes/stale/ for rebuild-invalidated findings; fuzz-config.json for per-project settings) → `v6` (harness-built/v4 with cmplog_enabled / cmplog_binary / cmplog_disabled_reason; new gap.reason `direct_compare` for cmplog-handled branches; current.json.gaps gains `direct_compare` counter) → `v7` (harness-built/v5 adds `fuzzing_mode: in_process | process_based`; `state/FINDINGS-REPORT.md` filesystem entry; `current.json` optional `last_report_at` field).
+Migration chain: `v0` (pre-schema, flat layout) → `v1` (subdirectory layout, schema fields) → `v2` (mandatory coverage builds, instrumentation field) → `v3` (multiple dictionary files) → `v4` (coverage_disabled_reason required when tracking off, schema field on all events) → `v5` (findings carry verified_against_build; crashes/stale/ for rebuild-invalidated findings; fuzz-config.json for per-project settings) → `v6` (harness-built/v4 with cmplog_enabled / cmplog_binary / cmplog_disabled_reason; new gap.reason `direct_compare` for cmplog-handled branches; current.json.gaps gains `direct_compare` counter) → `v7` (harness-built/v5 adds `fuzzing_mode: in_process | process_based`; `state/FINDINGS-REPORT.md` filesystem entry; `current.json` optional `last_report_at` field) → `v8` (multi-fuzzer slots: `fuzz-config/v2` adds `fuzzer_slots[]`, new `fuzzers/v1` live manifest at `state/fuzzers.json`, per-slot `state/fuzzer-<slot>.{pid,engine,log}`, `current/v1` gains `fuzzers[]`; legacy malformed findings tombstoned to `findings-legacy.jsonl`) → `v9` (multi-harness mode opt-in: new `harness-set/v1` at `state/harnesses.json`, `harness-built/v6` adds `name`, `current/v2` adds `harnesses[]` + `active_harness`, `fuzz-config/v3` adds top-level `harnesses[]` + `fuzzer_slots[].harness`, `fuzzers/v2` slot entries gain `harness`, `finding/v2` gains `harnesses[]`, per-harness snapshot filename prefixes).
 
 ### `state/plan.md` — REWRITABLE-with-archival (campaign plan)
 
@@ -197,6 +202,10 @@ The single file the orchestrator reads on warm ticks. Schema is already document
     "running": true,
     "engine": "libfuzzer"
   },
+  "fuzzers": [
+    {"slot": "main",        "engine": "libfuzzer", "pid": "13014", "running": true, "started_at": "2026-05-14T08:00:00Z", "restart_count": 0},
+    {"slot": "afl-explore", "engine": "aflpp",     "pid": "13050", "running": true, "started_at": "2026-05-14T08:00:01Z", "restart_count": 1}
+  ],
   "harness": {
     "binary": "fuzz/harness/less_fuzzer",
     "symcc_binary": "fuzz/harness/less_fuzzer_symcc",
@@ -243,7 +252,75 @@ The single file the orchestrator reads on warm ticks. Schema is already document
 
 **Optional fields**: `last_report_at` (integer unix timestamp, set by reporting-agent after writing `FINDINGS-REPORT.md`).
 
+**Multi-fuzzer (v8)**:
+- `fuzzers` is the canonical per-slot status array. Every running slot appears here with its current pid + liveness.
+- `fuzzer` (singular) is a **backward-compat convenience** for legacy readers — it always mirrors the first slot. New code reads `fuzzers[]`; the singular field will be removed in a future schema bump.
+- `fuzzer_stats` is **aggregated across all slots** when multiple are running. The orchestrator's recommendation logic doesn't distinguish slot ownership; if any single slot finds a new crash, `new_crashes_since_previous` reflects that, and triage runs once for the combined crash set.
+- `recommendation.branch="restart_fuzzer"` fires only when *all* slots are dead. Per-slot restarts happen invisibly via `check-slot-liveness.sh` and never reach the recommendation field.
+
 The orchestrator dispatches based on this field exactly.
+
+### `state/fuzz-config.json` — REWRITABLE (user-editable)
+
+Schema: **`fuzz-config/v2`** (introduced by schema-version v8 / plugin v0.17). Bumped from v1 to add `fuzzer_slots`.
+
+```json
+{
+  "schema": "fuzz-config/v2",
+  "fuzz_forks": 2,
+  "fuzzer_slots": [
+    {"slot": "main",        "engine": "libfuzzer"},
+    {"slot": "afl-explore", "engine": "aflpp", "role": "secondary", "afl_power_schedule": "explore"},
+    {"slot": "afl-fast",    "engine": "aflpp", "role": "secondary", "afl_power_schedule": "fast"}
+  ]
+}
+```
+
+**Required**: `schema`, `fuzz_forks`.
+**Optional**: `fuzzer_slots` — when missing or empty, `run-fuzzer.sh` falls back to launching a single slot named `main` with engine auto-detected from the harness binary (preserving v0.15/v0.16 behavior). When present, every entry launches a separate fuzzer process.
+
+**Per-slot fields**:
+- `slot` (required, kebab-case) — unique identifier within this campaign. Must match `^[a-z0-9-]{1,32}$`. Used in file names (`fuzzer-<slot>.pid`) and the manifest.
+- `engine` (required) — one of `libfuzzer | aflpp`.
+- `role` (optional, AFL++ only) — one of `master | secondary`. AFL++ multi-fuzzer requires exactly one master per shared-corpus campaign; secondaries pull from the master's queue. Default `null` (single-instance AFL++ run).
+- `afl_power_schedule` (optional, AFL++ only) — one of `explore | exploit | fast | coe | quad | lin | seek | rare`. Maps to AFL++'s `-p` flag.
+- `libfuzzer_forks` (optional, libFuzzer only) — overrides the top-level `fuzz_forks` for this slot. Useful when one slot should be single-process while another uses fork-mode.
+
+**Lifecycle**: REWRITABLE. Single canonical version. Replaced atomically.
+
+### `state/fuzzers.json` — REWRITABLE (live manifest)
+
+Schema: **`fuzzers/v1`** (introduced by schema-version v8 / plugin v0.17). Records the *live* state of each running slot — what `fuzz-config.json` declared is what *should* run; this file records what *is* running.
+
+```json
+{
+  "schema": "fuzzers/v1",
+  "slots": [
+    {
+      "slot": "main",
+      "engine": "libfuzzer",
+      "binary": "fuzz/harness/<target>_fuzzer",
+      "pid": "13014",
+      "pgid": "13014",
+      "started_at": "2026-05-14T08:00:00Z",
+      "log_file": "fuzz/state/fuzzer-main.log",
+      "pid_file": "fuzz/state/fuzzer-main.pid",
+      "engine_file": "fuzz/state/fuzzer-main.engine",
+      "role": null,
+      "afl_power_schedule": null,
+      "restart_count": 0,
+      "last_restart_at": null
+    }
+  ]
+}
+```
+
+**Required per slot**: `slot`, `engine`, `binary`, `pid`, `pgid`, `started_at`, `log_file`, `pid_file`, `engine_file`, `restart_count`.
+**Optional per slot**: `role`, `afl_power_schedule`, `last_restart_at`.
+
+**Writer**: `launch-fuzzer-slot.sh` writes/updates entries on each (re)launch. `check-slot-liveness.sh` updates `restart_count` and `last_restart_at` on each detected death-and-relaunch.
+
+**Lifecycle**: REWRITABLE. Slot entries are removed only when the user runs `stop-fuzzer.sh --slot <name>` (or `/cc-fuzzer:reset` for the whole manifest). A slot whose PID is dead but whose entry remains is just "expected slot, currently down" — the next `check-slot-liveness.sh` tick will relaunch it.
 
 ### `state/findings.jsonl` — APPEND-ONLY (with one in-place edit case)
 
@@ -473,6 +550,432 @@ Lifecycle: REWRITABLE. May be deleted only by `/cc-fuzzer:reset`.
   "last_updated": 1714789234
 }
 ```
+
+## Multi-Harness Mode (schema v9)
+
+A "campaign" in multi-harness mode targets N entry functions in the same library, each with its own harness binary, corpus, and coverage state, while sharing a single findings DB, plan, and budget. Multi-harness mode is **opt-in**: it activates only when `state/fuzz-config.json` declares a non-empty `harnesses[]` array. Without that declaration, the campaign runs in singular mode exactly as it did in v8 — same filesystem layout, same schemas, same behavior. The two modes coexist; singular mode remains the default and is supported indefinitely.
+
+### Activation
+
+Multi-harness mode is on iff `fuzz-config.json:harnesses` is a non-empty array. Every plugin script and agent dispatches on this single signal via the helper `_lib/harness-path.sh is_multi`.
+
+### Singular → multi upgrade (in-place)
+
+A singular campaign can be upgraded at any time via:
+
+```
+/cc-fuzzer:campaign --add-harness <new-name> --entry <new-fn>   \
+                    [--rename-existing <name>]
+```
+
+The upgrade is mechanical, idempotent, and reversible until new artifacts are written:
+
+1. Existing singular paths are moved under a per-harness bundle:
+   - `fuzz/harness/`   → `fuzz/harnesses/<existing-name>/harness/`
+   - `fuzz/corpus/`    → `fuzz/harnesses/<existing-name>/corpus/`
+   - `fuzz/corpus-quarantine/` → `fuzz/harnesses/<existing-name>/corpus-quarantine/`
+   - `fuzz/coverage/`  → `fuzz/harnesses/<existing-name>/coverage/`
+2. `state/harness-built.json` is wrapped into `state/harnesses.json` as the first entry, gaining a `name` field.
+3. `state/fuzz-config.json` gains `harnesses: [{name: "<existing>", entry_function: "<existing-entry>"}, {name: "<new>", entry_function: "<new-fn>"}]`.
+4. Existing snapshot files (`coverage-<ts>.json`, `gaps-<ts>.json`, `concolic-<ts>.json`, `cmplog-dict-<ts>.dict`) are renamed in place to insert the existing harness name: `coverage-<existing>-<ts>.json`, etc.
+5. Existing crashes under `fuzz/crashes/known/f*/repro.bin` keep their location; each finding line gets `harnesses: ["<existing>"]` appended via the standard in-place finding update.
+6. The new harness is then built by `harness-writer --harness <new-name>`.
+7. `state/harness-built.json` becomes a back-compat **mirror file** of `harnesses.json[0]` (read-only — writes go to `harnesses.json`).
+
+`<existing-name>` defaults to the entry function name from the prior `harness-built.json`. The user may override with `--rename-existing`.
+
+The reverse (multi → singular) is not supported; once a campaign has multiple harnesses with attributed findings, collapsing back loses information. The user can `/cc-fuzzer:reset` if they want to start over.
+
+### Filesystem Layout (multi-harness mode)
+
+```
+fuzz/
+├── state/                          # campaign-level shared state
+│   ├── schema-version              # "v9"
+│   ├── plan.md                     # one plan, ## Targets enumerates harnesses
+│   ├── harnesses.json              # NEW: harness-set/v1, array of harness-built/v6
+│   ├── harness-built.json          # back-compat MIRROR of harnesses.json[0] (read-only)
+│   ├── fuzz-config.json            # fuzz-config/v3: harnesses[] + fuzzer_slots[].harness
+│   ├── fuzzers.json                # fuzzers/v2: slot entries gain `harness`
+│   ├── current.json                # current/v2: harnesses[] + active_harness
+│   ├── findings.jsonl              # GLOBAL; each finding gains harnesses[]
+│   ├── findings-legacy.jsonl       # unchanged
+│   ├── FINDINGS-REPORT.md          # unchanged (rewritten by reporting-agent; per-harness breakdowns)
+│   ├── events.jsonl                # unchanged
+│   ├── budget.json                 # unchanged (campaign-level)
+│   ├── snapshots/
+│   │   ├── coverage-<harness>-<ts>.json      # per-harness; filename prefix
+│   │   ├── gaps-<harness>-<ts>.json          # per-harness
+│   │   ├── concolic-<harness>-<ts>.json      # per-harness
+│   │   └── plan-<ts>.md                      # unchanged (campaign-level plan archive)
+│   ├── cmplog-dict-<harness>-<ts>.dict       # per-harness
+│   ├── fuzzer-<slot>.{pid,engine,log}        # unchanged (slot names already unique)
+│   └── delta-<ts>.json                       # unchanged (campaign-level; tags gaps for all harnesses)
+│
+├── harnesses/                      # per-harness bundles
+│   ├── <name-1>/
+│   │   ├── harness/                # source + binaries + build.sh + dict.txt
+│   │   │   ├── <name-1>_fuzzer.cc
+│   │   │   ├── <name-1>_fuzzer
+│   │   │   ├── <name-1>_fuzzer_cov
+│   │   │   ├── <name-1>_fuzzer_verify
+│   │   │   ├── <name-1>_fuzzer_cmplog          (optional)
+│   │   │   ├── <name-1>_fuzzer_symcc           (optional)
+│   │   │   ├── build.sh
+│   │   │   ├── cov_main.c
+│   │   │   └── dict.txt                        (optional, harness-local)
+│   │   ├── corpus/                 # per-harness; seeds aren't interchangeable across entries
+│   │   ├── corpus-quarantine/
+│   │   └── coverage/               # per-harness profdata
+│   │       ├── default.profraw
+│   │       └── default.profdata
+│   └── <name-2>/                   # ...same structure
+│
+└── crashes/                        # GLOBAL — a library bug is one bug regardless of source
+    ├── new/                        # filename: <harness>__<sha256>.bin (double-underscore separator)
+    ├── known/
+    │   └── f<NNN>/
+    │       ├── repro.bin
+    │       ├── harnesses.txt       # NEW: one-line-per-harness mirror of finding.harnesses[]
+    │       └── duplicates/         # filenames keep <harness>__ prefix
+    ├── flaky/                      # filenames keep <harness>__ prefix
+    └── stale/                      # unchanged (rebuild-invalidated)
+```
+
+**Singular-mode layout is unchanged** from v8. The validator dispatches on activation: if multi mode is on, the singular paths `fuzz/harness/`, `fuzz/corpus/`, etc. must NOT exist as regular directories (the upgrade moves them); if multi mode is off, the `fuzz/harnesses/` directory must NOT exist.
+
+### `state/harnesses.json` — REWRITABLE
+
+Schema: **`harness-set/v1`** (introduced by schema-version v9 / plugin v0.17).
+
+```json
+{
+  "schema": "harness-set/v1",
+  "harnesses": [
+    {
+      "schema": "harness-built/v6",
+      "name": "parser",
+      "harness_source": "fuzz/harnesses/parser/harness/parser_fuzzer.cc",
+      "harness_binary": "fuzz/harnesses/parser/harness/parser_fuzzer",
+      "coverage_binary": "fuzz/harnesses/parser/harness/parser_fuzzer_cov",
+      "verify_binary":   "fuzz/harnesses/parser/harness/parser_fuzzer_verify",
+      "coverage_tracking": true,
+      "cmplog_binary": "fuzz/harnesses/parser/harness/parser_fuzzer_cmplog",
+      "cmplog_enabled": true,
+      "symcc_binary": null,
+      "mutator_source": null,
+      "build_script": "fuzz/harnesses/parser/harness/build.sh",
+      "dict_files": ["fuzz/dictionaries/png-magic.dict"],
+      "entry_function": "parse_extended_chunk",
+      "input_encoding": "passthrough",
+      "sanitizers": ["address","undefined","fuzzer"],
+      "fuzzing_mode": "in_process",
+      "target_source": "/abs/path/src/parser.c",
+      "target_source_hash": "abc123def4567890",
+      "build_command_hash": "0123456789abcdef",
+      "harness_attempts": 1,
+      "built_at": "2026-05-17T09:00:00Z"
+    }
+  ]
+}
+```
+
+**Required**: `schema`, `harnesses` (non-empty array).
+
+Each element is a `harness-built/v6` record (see below). The `name` field is the per-harness identifier; it must be unique within the campaign and match `^[a-z0-9][a-z0-9_-]{0,31}$`. It is referenced from `fuzz-config.json:fuzzer_slots[].harness`, from snapshot filenames, from finding records, and from per-harness paths.
+
+**Writer**: `harness-writer` is the only writer. It performs atomic read-modify-write — reads current `harnesses.json`, modifies the targeted entry (or appends a new one for `--add-harness`), writes atomically.
+
+**Back-compat mirror**: `state/harness-built.json` is rewritten to mirror `harnesses[0]` after every change. Singular-mode-only readers continue to work transparently. **Do not write to the mirror directly in multi mode** — the validator detects mirror drift and reports it as an error.
+
+### `harness-built/v6` (per-harness record)
+
+Identical to v5 except for the addition of the **required** `name` field:
+
+```diff
++ "name": "<kebab-case-slug>",
+  "schema": "harness-built/v6",
+  "harness_source": "...",
+  ...
+```
+
+In singular mode, `state/harness-built.json` continues to be a top-level `harness-built/v5` record (no `name` field). In multi mode, every record inside `harnesses.json:harnesses[]` is `v6` and carries `name`; the mirror file at `state/harness-built.json` is also v6 (it carries the `name` of `harnesses[0]`).
+
+The migration v8 → v9 does NOT rewrite existing `harness-built/v5` files; it only sets `schema-version` to v9. A singular-mode campaign keeps using v5 forever.
+
+### `state/fuzz-config.json` — `fuzz-config/v3`
+
+```json
+{
+  "schema": "fuzz-config/v3",
+  "fuzz_forks": 2,
+  "harnesses": [
+    {"name": "parser",  "entry_function": "parse_extended_chunk"},
+    {"name": "encoder", "entry_function": "encode_chunk"}
+  ],
+  "fuzzer_slots": [
+    {"slot": "parser-main", "harness": "parser",  "engine": "libfuzzer"},
+    {"slot": "parser-afl",  "harness": "parser",  "engine": "aflpp", "role": "secondary", "afl_power_schedule": "explore"},
+    {"slot": "encoder-main","harness": "encoder", "engine": "libfuzzer"}
+  ]
+}
+```
+
+**Required when multi mode is active**: `harnesses` (non-empty array, each entry has `name` + `entry_function`); every `fuzzer_slots[].harness` must reference an existing `harnesses[].name`.
+
+**Required when multi mode is inactive**: `harnesses` is absent or empty; `fuzzer_slots[].harness` is absent (the implicit harness is the campaign's only one).
+
+**Per-harness fields** (under `harnesses[]`): `name`, `entry_function`. Optional: `target_source` (defaults to whatever harness-writer infers if absent).
+
+**Validator rule**: `harnesses[].name` matches `^[a-z0-9][a-z0-9_-]{0,31}$` and is unique within the array.
+
+### `state/fuzzers.json` — `fuzzers/v2`
+
+Each slot entry gains a **required** `harness` field in multi mode (omitted in singular mode):
+
+```diff
+{
+  "slot": "parser-main",
++ "harness": "parser",
+  "engine": "libfuzzer",
+  "binary": "fuzz/harnesses/parser/harness/parser_fuzzer",
+  ...
+}
+```
+
+`launch-fuzzer-slot.sh` resolves `binary` from `harnesses[<harness>].harness_binary` rather than from the singular `harness-built.json`. The `--harness <name>` flag is required when multi mode is on.
+
+### `state/current.json` — `current/v2`
+
+```json
+{
+  "schema": "cc-fuzzer-current/v2",
+  "now": 1714789234,
+  "tick_number": 14,
+  "active_harness": "parser",
+  "harnesses": [
+    {
+      "name": "parser",
+      "harness": {
+        "binary":       "fuzz/harnesses/parser/harness/parser_fuzzer",
+        "symcc_binary": null,
+        "symcc_available": false
+      },
+      "coverage": {
+        "snapshot_file": "fuzz/state/snapshots/coverage-parser-1714789200.json",
+        "snapshot_ts":   1714789200,
+        "lines_covered": 845, "lines_total": 4613, "line_pct": 18.3,
+        "plateau": true, "seconds_since_progress": 1800
+      },
+      "fuzzer_stats": {
+        "execs": 158653, "execs_per_sec": 603, "paths": 890,
+        "crashes_total": 7, "new_crashes_since_previous": 0
+      },
+      "gaps": {
+        "latest_report": "fuzz/state/snapshots/gaps-parser-1714789100.json",
+        "total_pending": 6, "for_concolic": 2, "for_seedgen": 3,
+        "for_harness": 1, "for_mutator": 0, "direct_compare": 0
+      },
+      "recommendation": {
+        "branch": "concolic",
+        "reason": "plateau, 2 concolic-eligible gaps, SymCC available"
+      }
+    },
+    {
+      "name": "encoder",
+      "harness": { ... },
+      "coverage": { ... },
+      "fuzzer_stats": { ... },
+      "gaps": { ... },
+      "recommendation": { "branch": "sleep", "reason": "still climbing" }
+    }
+  ],
+  "fuzzers": [
+    {"slot": "parser-main",  "harness": "parser",  "engine": "libfuzzer", "pid": "13014", "running": true,  "started_at": "...", "restart_count": 0},
+    {"slot": "parser-afl",   "harness": "parser",  "engine": "aflpp",     "pid": "13050", "running": true,  "started_at": "...", "restart_count": 0},
+    {"slot": "encoder-main", "harness": "encoder", "engine": "libfuzzer", "pid": "13099", "running": true,  "started_at": "...", "restart_count": 0}
+  ],
+  "findings": {
+    "unique_count": 2,
+    "file": "fuzz/state/findings.jsonl",
+    "by_harness": {"parser": 2, "encoder": 0}
+  },
+  "recommendation": {
+    "branch": "concolic",
+    "reason": "plateau on parser, 2 concolic-eligible gaps, SymCC available",
+    "harness": "parser"
+  },
+  "last_report_at": 1714789999,
+
+  "coverage":       "<mirror of harnesses[active].coverage — back-compat>",
+  "fuzzer_stats":   "<mirror of harnesses[active].fuzzer_stats — back-compat>",
+  "gaps":           "<mirror of harnesses[active].gaps — back-compat>",
+  "fuzzer":         "<mirror of fuzzers[0] — back-compat>"
+}
+```
+
+**New fields**:
+- `active_harness` — the harness whose recommendation the orchestrator should act on this tick. Picked by `update-current.sh` as the harness whose recommendation has the highest priority (see "Tick discipline" below).
+- `harnesses[]` — per-harness state (coverage, fuzzer_stats, gaps, recommendation).
+- `recommendation.harness` — which harness this tick's dispatch should target.
+- `findings.by_harness` — count of unique findings attributed to each harness (a finding attributed to multiple harnesses counts once per harness).
+
+**Back-compat shims** (read-only mirrors of `harnesses[active]`): `coverage`, `fuzzer_stats`, `gaps`, `fuzzer`. These exist so v8-era readers keep working without immediate rewriting. They are removed in schema v10.
+
+**Single-harness in multi mode**: a multi-mode campaign with exactly one harness still emits `harnesses[]` (with one element). `active_harness` is set; `recommendation.harness` is set. The shims mirror `harnesses[0]`.
+
+### `state/findings.jsonl` — `finding/v2`
+
+Each finding gains a **required** `harnesses` array listing every harness that has reproduced this stack hash:
+
+```diff
+{
+  "schema": "finding/v2",
+  "id": "f001",
+  "stack_hash": "a1b2c3d4e5f6g7h8",
++ "harnesses": ["parser", "encoder"],
+  "category": "heap-buffer-overflow",
+  ...
+}
+```
+
+In singular mode (no `harnesses.json`), each finding remains `finding/v1`; `harnesses[]` is absent. In multi mode, every finding line is `finding/v2`; `harnesses[]` is non-empty and every entry is an existing harness name.
+
+**In-place edit rule, extended**: when a duplicate crash from harness X arrives for an existing finding f<NNN>, the triager updates the finding line:
+1. Increment `dedup_count` by 1.
+2. Update `last_seen`.
+3. If `X` is not in `harnesses[]`, append it.
+4. Atomic rewrite.
+
+If `harnesses[]` grows, `fuzz/crashes/known/f<NNN>/harnesses.txt` is also rewritten to match (one harness name per line).
+
+**Upgrade migration**: when singular → multi runs, existing `finding/v1` records are rewritten in place to `finding/v2` with `harnesses: ["<original-name>"]`. Back-compat for v1 records in multi mode is NOT supported — the upgrade is atomic.
+
+### Per-Harness Snapshot Filename Rules
+
+In multi mode, all per-harness state files carry the harness name as a filename prefix:
+
+| Singular filename | Multi-mode filename |
+|---|---|
+| `coverage-<ts>.json` | `coverage-<harness>-<ts>.json` |
+| `gaps-<ts>.json` | `gaps-<harness>-<ts>.json` |
+| `concolic-<ts>.json` | `concolic-<harness>-<ts>.json` |
+| `cmplog-dict-<ts>.dict` | `cmplog-dict-<harness>-<ts>.dict` |
+
+Each multi-mode snapshot file additionally carries a top-level `"harness": "<name>"` field. The validator checks that the prefix matches the JSON field and that both reference a declared harness.
+
+`fuzz/state/snapshots/plan-<ts>.md` is **not** per-harness — the plan is campaign-level.
+`fuzz/state/snapshots/delta-<ts>.json` is **not** per-harness — delta target weighting applies across the campaign; `coverage-analyst` filters per harness at gap-classification time.
+
+### Crash Lifecycle (multi-harness deltas)
+
+The flow in [Crash Lifecycle](#crash-lifecycle-the-canonical-flow) below is the canonical singular-mode flow. In multi mode, the following deltas apply:
+
+**Step 1 (fuzzer detects crash)** — unchanged. libFuzzer slots write to `./crash-*`, AFL++ slots write to their per-slot staging dir.
+
+**Step 2 (detect-crashes.sh)** — the slot's `harness` field (resolved from `fuzzers.json`) becomes a filename prefix on the staged file:
+
+```
+fuzz/crashes/new/<harness>__<sha256>.bin     # double-underscore separator
+```
+
+The harness is determined from the slot directory (libFuzzer cwd → slot → harness) or the AFL++ output path. The detect-crashes hook resolves this via the helper `_lib/harness-path.sh slot_to_harness <slot>`.
+
+**Step 3 (update-current.sh)** — `new_crashes_since_previous` is computed per-harness from the prefix. The crash counter under `harnesses[*].fuzzer_stats` is updated for the source harness only.
+
+**Step 5 (crash-triager)** — for each `<harness>__<hash>.bin`:
+- Parse the harness prefix.
+- Reproduce against `harnesses[<harness>].verify_binary` (NOT the singular path).
+- Compute stack hash from the sanitizer output.
+- Look up in `findings.jsonl`:
+  - **MATCH (existing finding f<NNN>)**: increment dedup_count, update last_seen, append `<harness>` to `harnesses[]` if not present, rewrite `f<NNN>/harnesses.txt`. Move staged file to `f<NNN>/duplicates/<harness>__<hash>.bin` (prefix retained for forensic value).
+  - **NO MATCH (new finding)**: allocate `f<NNN+1>`, initialize `harnesses: ["<harness>"]`, write `harnesses.txt` with that one line, move staged file to `f<NNN+1>/repro.bin`. (The repro file itself has no prefix — `harnesses.txt` carries the source.)
+
+The triager dispatches per-harness verify-binary lookups; a crash from a no-longer-declared harness (e.g. user removed it from `fuzz-config.json` mid-campaign) is moved to `fuzz/crashes/flaky/<harness>__<hash>.bin` with an event `{"event":"crash_orphaned_harness", ...}`.
+
+### Slot ↔ Harness Binding
+
+Every entry in `fuzz-config.json:fuzzer_slots[]` MUST declare a `harness` in multi mode. The (slot, harness) tuple is the unit of:
+
+- Liveness checking and auto-restart (`check-slot-liveness.sh`).
+- Stats attribution (each slot's execs/sec etc. roll up under `harnesses[<harness>].fuzzer_stats`).
+- Crash provenance (the harness prefix on staged crash files).
+
+There is no fixed N:1 mapping between slots and harnesses. A campaign may declare 4 libFuzzer slots on a hot harness and 1 AFL++ master on a cold one. AFL++ master/secondary roles are scoped per-harness — each harness has at most one master across its own slots, but two different harnesses each have their own master.
+
+### Plan Structure (multi-harness)
+
+`plan.md` in multi mode has a required `## Targets` section instead of the singular `## Target` / `## Harness` / `## Seed Strategy` / `## Dictionaries` / `## Concolic Strategy` / `## Coverage Targets` / `## Out-of-Scope` sections. Each harness gets one H3 block:
+
+```markdown
+## Targets
+
+### parser (entry: parse_extended_chunk)
+
+#### Harness
+fuzzing_mode: in_process; sanitizers: address+undefined+fuzzer; ...
+
+#### Seed Strategy
+...
+
+#### Dictionaries
+...
+
+#### Concolic Strategy
+...
+
+#### Coverage Targets
+...
+
+#### Out-of-Scope
+...
+
+### encoder (entry: encode_chunk)
+...
+```
+
+Campaign-level sections that remain at top-level: `## Plateau & Dispatch`, `## References`. Optional sections (`## Delta Range`, `## Mutator Notes`, `## Known Caveats`) may be top-level or per-harness as appropriate.
+
+The campaign-planner is the sole writer; specialists `grep` for their own section under the targeted harness. In revise mode the `## Campaign Status & Revisions` block stays at top level.
+
+### Tick Discipline (cost cap)
+
+A multi-harness tick still dispatches **at most one specialist** (across all harnesses). `update-current.sh` selects `active_harness` as the harness with the highest-priority recommendation per a fixed priority table:
+
+```
+triage           > restart_fuzzer > fix_instrumentation >
+analyze_gaps     > reanalyze_gaps > concolic >
+generate_seeds   > mutator         > stop > sleep
+```
+
+Ties broken by `harnesses[]` declaration order. Other harnesses' recommendations are recorded in `current.json:harnesses[*].recommendation` but not acted on this tick — they get their turn next tick. This preserves the v8 cost discipline: a 5-harness campaign does not 5x the LLM cost per tick.
+
+The orchestrator may consult the per-harness recommendations to surface a brief status line to the user, but its dispatch decision is always `recommendation.harness` + `recommendation.branch` at the top level.
+
+### Validation (multi mode adds)
+
+`validate-state.sh` in multi mode additionally enforces:
+
+- `harnesses.json` is well-formed `harness-set/v1`; `harnesses[]` is non-empty; every `name` matches the slug pattern and is unique.
+- `state/harness-built.json` is a byte-or-field mirror of `harnesses.json[0]`. Mirror drift is an error.
+- `state/harnesses/` does not exist (typo guard — the directory is `fuzz/harnesses/`, not under state).
+- For every declared harness, `fuzz/harnesses/<name>/harness/`, `fuzz/harnesses/<name>/corpus/`, `fuzz/harnesses/<name>/coverage/` exist (warn if missing for a harness that has not yet been built).
+- Every `fuzz-config.json:fuzzer_slots[].harness` references an existing harness name.
+- Every per-harness snapshot file's filename prefix references an existing harness name; the file's `harness` field matches the prefix.
+- Every `findings.jsonl` record is `finding/v2`; `harnesses[]` is non-empty; every entry is an existing harness name.
+- `fuzz/crashes/new/*` filenames have the `<harness>__<sha256>.bin` shape with a known harness prefix.
+
+In singular mode, these checks are skipped; the existing v8 validator runs unchanged.
+
+### Migration v8 → v9
+
+By default the migration is a **no-op for singular campaigns**: it only bumps `state/schema-version` from `v8` to `v9`. Nothing else changes on disk. Existing campaigns continue running in singular mode indefinitely; their `harness-built.json` stays at `harness-built/v5`; their snapshots keep their existing filenames; their findings stay at `finding/v1`.
+
+There is **no auto-upgrade**. The transition to multi mode is always explicit, via `/cc-fuzzer:campaign --add-harness <name> --entry <fn>` (see "Singular → multi upgrade" above). That command performs the file moves, wraps `harness-built/v5` into a `harness-built/v6` record inside `harnesses.json`, rewrites findings to `finding/v2`, renames existing snapshots to insert the harness prefix, and updates `fuzz-config.json` to `fuzz-config/v3`.
+
+The migration backup (`state/migrations/v8-v9-backup-<ts>.tar.gz`) is written by `migrate-state.sh` only if the upgrade command actually runs file moves; the version-only bump produces no backup tarball.
+
+---
 
 ## Crash Lifecycle (the canonical flow)
 

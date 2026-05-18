@@ -26,6 +26,22 @@ Your only writable scope is `fuzz/`.
 
 ---
 
+## Multi-Harness Mode (schema v9)
+
+In multi mode, all your writes target a specific harness's corpus, not the campaign-wide one. Read the target harness from `--harness <name>` if passed, or from `current.json:recommendation.harness`:
+
+- **Quarantine**: `fuzz/harnesses/<HARNESS>/corpus-quarantine/` (use `bash ${CLAUDE_PLUGIN_ROOT}/scripts/_lib/harness-path.sh quarantine_dir "$HARNESS"`)
+- **Promoted corpus**: `fuzz/harnesses/<HARNESS>/corpus/` (use `corpus_dir "$HARNESS"`)
+- **Promotion command**: `${CLAUDE_PLUGIN_ROOT}/scripts/corpus-quarantine.sh --harness <HARNESS>`
+
+Read seed strategy from the harness's `### <name>` block under `## Targets` in `plan.md` — specifically `#### Seed Strategy`, `#### Dictionaries`, `#### Target` — these subsections moved under the per-harness H3.
+
+The cmplog dict to consult is per-harness: pick the newest `fuzz/state/cmplog-dict-<HARNESS>-*.dict`.
+
+In singular mode, fall back to the v8 paths: `fuzz/corpus-quarantine/` and `fuzz/corpus/`; top-level `## Seed Strategy` / `## Dictionaries` / `## Target` in `plan.md`.
+
+---
+
 You write bytes to disk. Cheap, fast, lots of them.
 
 ## Authoritative spec
@@ -97,6 +113,38 @@ Workflow:
 2. Construct the seed file. Name: `seed_target_<gap-id>.bin` (e.g. `seed_target_g003.bin`).
 3. Write to `fuzz/corpus/`. The fuzzer will pick it up automatically.
 
+## Safety: never write destructive payloads
+
+When the target involves a shell, eval context, or any command interpreter
+(bash subst, awk, sh-style parsers, expression evaluators, command-line
+flag parsers), **do not hand-craft destructive payloads in seeds** — even
+when escaping looks airtight. Single-quote escaping is famously easy to
+defeat with `$(...)`, backticks, control characters, or quote-state
+confusion that only manifests at certain lengths. The fuzzer's mutations
+will explore around your seed; if it can escape your quoting, it will.
+
+Use harmless markers instead:
+
+- `echo CCFUZZ_REACHED` to verify a reached code path
+- `touch /tmp/ccfuzz_marker_<id>` for filesystem-side marker checks
+- printable sentinel strings (`AAAA`, `CCFUZZ_HIT`, `0xDEADBEEF`)
+
+**Banned primitives** (the quarantine pipeline will reject these via
+`scripts/check-seed-safety.sh` before they enter `fuzz/corpus/`):
+`rm -rf /...`, `mkfs`/`dd` against `/dev/sd*` and friends, fork bombs,
+`>/proc/sysrq-trigger`, `chmod 777 /`, `shred` against a real block
+device. If a seed is rejected, the file moves to
+`fuzz/corpus-quarantine/rejected/` and is not promoted — fix it and try
+again.
+
+If the campaign legitimately needs destructive payloads (rare —
+sandbox-only research), the user can set
+`CCFUZZ_ALLOW_DESTRUCTIVE_SEEDS=1` to bypass the scanner. Do not set
+this yourself; surface the request to the user and let them opt in.
+
+Always assume the harness is running with your privileges. Sandbox the
+campaign before exploring destructive payloads, even with the safety net.
+
 ## Hard rules
 
 - Files are bytes, not JSON descriptions of bytes. Use `printf '\x...'` or small Python snippets.
@@ -106,6 +154,7 @@ Workflow:
 - If you do not know the format, read 1-2 spec/example files. Do not invent format details.
 - All paths must be inside `fuzz/corpus/`. Never write outside.
 - Do not write or modify any file in `fuzz/state/`.
+- Never hand-craft a destructive payload (`rm -rf /`, fork bombs, etc). The quarantine scanner will reject it and the campaign loses a tick. Use harmless markers — see the Safety section above.
 
 ## Output
 

@@ -30,20 +30,21 @@ set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/_lib/path-anchor.sh"
+. "$SCRIPT_DIR/_lib/harness-path.sh"
 
 FUZZ_ROOT="${FUZZ_ROOT:-fuzz}"
 STATE_DIR="$FUZZ_ROOT/state"
-OUT_DIR_DEFAULT="${FUZZ_OUT_DIR:-$PROJECT_ROOT/out}/default"
 TS=$(date +%s)
-OUTPUT_DEFAULT="$STATE_DIR/cmplog-dict-${TS}.dict"
 
-AFLPP_OUT="$OUT_DIR_DEFAULT"
-OUTPUT="$OUTPUT_DEFAULT"
+HARNESS=""
+AFLPP_OUT=""
+OUTPUT=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --aflpp-out) AFLPP_OUT="$2"; shift 2;;
     --output) OUTPUT="$2"; shift 2;;
+    --harness) HARNESS="$2"; shift 2;;
     -h|--help)
       sed -n '2,30p' "$0"
       exit 0
@@ -51,6 +52,33 @@ while [[ $# -gt 0 ]]; do
     *) echo "ERROR: unknown arg: $1" >&2; exit 2;;
   esac
 done
+
+# Multi-mode dispatch: with no --harness in multi mode, recurse once per
+# declared harness so callers get a fresh dict for each.
+if is_multi && [ -z "$HARNESS" ] && [ -z "$AFLPP_OUT" ]; then
+  RC=0
+  while IFS= read -r h; do
+    [ -n "$h" ] || continue
+    bash "$0" --harness "$h" || RC=$?
+  done < <(declared_harnesses)
+  exit "$RC"
+fi
+
+# Default harness in singular mode (ignored by helpers); in multi mode the
+# --harness arg has been honored already.
+[ -z "$HARNESS" ] && HARNESS=$(default_harness)
+
+# Resolve defaults if not given on CLI
+if [ -z "$AFLPP_OUT" ]; then
+  if is_multi; then
+    AFLPP_OUT="$FUZZ_ROOT/harnesses/$HARNESS/aflpp-out/default"
+  else
+    AFLPP_OUT="${FUZZ_OUT_DIR:-$PROJECT_ROOT/out}/default"
+  fi
+fi
+if [ -z "$OUTPUT" ]; then
+  OUTPUT="$STATE_DIR/$(cmplog_dict_name "$HARNESS" "$TS")"
+fi
 
 mkdir -p "$(dirname "$OUTPUT")"
 

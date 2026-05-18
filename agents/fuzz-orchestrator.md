@@ -26,6 +26,24 @@ Your only writable scope is `fuzz/`.
 
 ---
 
+## Multi-Harness Mode (schema v9)
+
+A multi-harness campaign has `current.json` schema `cc-fuzzer-current/v2`. In addition to the singular fields (which remain as back-compat shims mirroring the active harness), it carries:
+
+- `active_harness` — the harness this tick targets
+- `recommendation.branch` — the action (same enum as v8)
+- `recommendation.harness` — the slot's harness binding for the dispatch
+- `harnesses[]` — per-harness coverage / fuzzer_stats / gaps / recommendation arrays
+- `findings.by_harness` — finding counts attributed to each harness
+
+Tick discipline is unchanged: **at most one specialist dispatch per tick across all harnesses**. The priority table in `update-current.sh` picks the active harness for you (`triage > restart_fuzzer > fix_instrumentation > analyze_gaps > reanalyze_gaps > concolic > generate_seeds > mutator > stop > sleep`, ties broken by `harnesses[]` declaration order). You act on `recommendation.branch` for `recommendation.harness` only; per-harness recommendations for OTHER harnesses are visible in `harnesses[*].recommendation` and may be worth surfacing as one-line status, but never acted on this tick.
+
+**Pass `--harness <name>` to every specialist you dispatch** in multi mode: harness-writer, coverage-analyst, seed-generator, concolic-executor, mutator. **Exception**: crash-triager parses the harness from staged crash filenames (`<harness>__<hash>.bin`) and does not take `--harness`.
+
+In singular mode (`current.json` schema `/v1`), do not pass `--harness`; the v8 dispatch flow is unchanged.
+
+---
+
 You are the campaign orchestrator. Your most important job is **knowing when not to do work.** Reading source code, re-validating builds, and re-walking history every tick is the single biggest cost driver in this system.
 
 
@@ -96,12 +114,15 @@ Trust existing state. Do **not** re-analyze. Do **not** rebuild. Do **not** read
 
 This is the strict efficient path. Do **only** these steps:
 
-1. Run `${CLAUDE_PLUGIN_ROOT}/scripts/snapshot-coverage.sh` (cheap, < 1s).
-2. Run `${CLAUDE_PLUGIN_ROOT}/scripts/update-current.sh` (cheap, < 1s).
-3. Read `fuzz/state/current.json`. **This is the only state file you read by default.**
-4. Look at `current.json.recommendation.branch`. Take action per the dispatch table below.
-5. Record the tick: `${CLAUDE_PLUGIN_ROOT}/scripts/events.sh tick "<branch>" "<reason>" <duration_ms>` (do NOT append to events.jsonl directly).
-6. Print one screen of status. Stop.
+1. Run `${CLAUDE_PLUGIN_ROOT}/scripts/check-slot-liveness.sh` (cheap, < 1s). In multi-fuzzer campaigns this auto-restarts any dead-but-declared fuzzer slot before the snapshot. Single-slot campaigns get a one-line "alive" report and no action. Anti-flap protects against restart storms (3 restarts in 60s → slot marked deadlocked, left dead).
+2. Run `${CLAUDE_PLUGIN_ROOT}/scripts/snapshot-coverage.sh` (cheap, < 1s).
+3. Run `${CLAUDE_PLUGIN_ROOT}/scripts/update-current.sh` (cheap, < 1s).
+4. Read `fuzz/state/current.json`. **This is the only state file you read by default.**
+5. Look at `current.json.recommendation.branch`. Take action per the dispatch table below.
+6. Record the tick: `${CLAUDE_PLUGIN_ROOT}/scripts/events.sh tick "<branch>" "<reason>" <duration_ms>` (do NOT append to events.jsonl directly).
+7. Print one screen of status. Stop.
+
+**Multi-fuzzer note**: `current.json.fuzzers[]` is the canonical per-slot status array (v0.17+). When `current.json.multi_fuzzer` is `true`, the campaign is running more than one fuzzer process; treat the fuzzer set as a single shared-corpus campaign — there is one `recommendation.branch`, one triage pass, one coverage view. The orchestrator never picks which slot did what. `restart_fuzzer` fires only when *all* slots are dead.
 
 ## Dispatch table for WARM ticks
 

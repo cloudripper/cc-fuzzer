@@ -101,7 +101,7 @@ try:
     d = json.load(open(path))
 except:
     d = {}
-d['schema'] = 'fuzz-config/v1'
+d['schema'] = 'fuzz-config/v2'
 d[key] = int(value) if value.isdigit() else value
 json.dump(d, open(path, 'w'), indent=2, sort_keys=True)
 print(f"set {key} = {value} in {path}")

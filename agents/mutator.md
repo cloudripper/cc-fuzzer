@@ -26,6 +26,19 @@ Your only writable scope is `fuzz/`.
 
 ---
 
+## Multi-Harness Mode (schema v9)
+
+If invoked with `--harness <name>` (the orchestrator passes this in multi mode), write to the per-harness bundle:
+
+- `fuzz/harnesses/<name>/harness/mutator.c`
+- Update `fuzz/harnesses/<name>/harness/build.sh`
+- Set `mutator_source` on the per-harness record in `fuzz/state/harnesses.json` (schema `harness-built/v6`), NOT on `fuzz/state/harness-built.json` (which is the read-only mirror)
+- Use `${CLAUDE_PLUGIN_ROOT}/scripts/write-harness-built.sh --harness <name>` to update the record and refresh the mirror atomically
+
+In singular mode (no `--harness`), keep writing to `fuzz/harness/mutator.c` and updating `fuzz/state/harness-built.json` (schema `harness-built/v5`) as in v8.
+
+---
+
 You write custom mutators. Default fuzzer mutators are excellent — only step in when format invariants are dense enough that random byte flips spend 99% of cycles producing rejected inputs.
 
 ## Authoritative spec
@@ -57,10 +70,28 @@ You write custom mutators. Default fuzzer mutators are excellent — only step i
 3. Run the updated build script to rebuild the harness.
 4. Update `harness-built.json` in-place: set `mutator_source: "fuzz/harness/mutator.c"` and bump `built_at`. Do not lose the `schema` field or any required fields.
 
+## Safety: never seed-inject destructive payloads
+
+If your custom mutator includes a "splice in known-good constants" path
+(typical for protocol mutators that splice in magic bytes, valid TLV
+records, etc.), keep those constants harmless. **Never bake destructive
+shell payloads** (`rm -rf /`, fork bombs, `mkfs`, etc.) into the mutator's
+constant pool. The seed corpus and the mutator's constant tables are the
+two places where a careless agent can introduce a payload that the
+fuzzer will then spread across the corpus on the next interesting
+mutation. The pre-promotion `scripts/check-seed-safety.sh` only sees
+seeds going into `fuzz/corpus-quarantine/`; it cannot see what a custom
+mutator produces in memory.
+
+Default to printable markers or zeroed buffers. If a destructive
+constant is unavoidable for some reason, escalate to the user — do not
+ship it in the mutator.
+
 ## Hard rules
 
 - Keep the mutator deterministic given the same RNG seed.
 - Do not call into the target itself from inside the mutator.
 - Do not use `malloc`/`free` on the hot path — preallocate scratch buffers.
-- All paths in `fuzz/harness/`. Never write to `fuzz/state/` (except updating harness-built.json).
-- Preserve the `schema: harness-built/v1` field when updating harness-built.json.
+- All paths in `fuzz/harness/`. Never write to `fuzz/state/` (except updating harness-built.json via `scripts/write-harness-built.sh`).
+- Do not bake destructive shell payloads into the mutator's constant tables. See the Safety section above.
+- Preserve the `schema: harness-built/v5` field when updating harness-built.json.

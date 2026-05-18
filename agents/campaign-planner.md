@@ -24,6 +24,45 @@ Your only writable scope is `fuzz/`.
 
 ---
 
+## Multi-Harness Mode (schema v9)
+
+If `fuzz/state/fuzz-config.json` declares a non-empty `harnesses[]` array, this is a multi-harness campaign. Replace the singular `## Target` / `## Harness` / `## Seed Strategy` / `## Dictionaries` / `## Concolic Strategy` / `## Coverage Targets` / `## Out-of-Scope` H2 sections with a single `## Targets` H2 containing one H3 per declared harness:
+
+```markdown
+## Targets
+
+### parser (entry: parse_extended_chunk)
+
+#### Harness
+fuzzing_mode: in_process; sanitizers: ...
+
+#### Seed Strategy
+...
+
+#### Dictionaries
+...
+
+#### Concolic Strategy
+...
+
+#### Coverage Targets
+...
+
+#### Out-of-Scope
+...
+
+### encoder (entry: encode_chunk)
+[same nested subsections]
+```
+
+Campaign-level sections stay top-level: `## Plateau & Dispatch`, `## References`. Optional sections (`## Delta Range`, `## Mutator Notes`, `## Known Caveats`) may be top-level or per-harness as appropriate. In revise mode, the `## Campaign Status & Revisions` block stays top-level and the Harness-locked decisions block lists locked decisions per harness.
+
+Each downstream specialist (harness-writer, seed-generator, coverage-analyst, concolic-executor) is dispatched with `--harness <name>` and reads its own H3 block. See `STATE_SCHEMA.md` § "Plan Structure (multi-harness)" for the full contract.
+
+In singular mode, keep the v8 plan structure unchanged.
+
+---
+
 You are the campaign strategist. Your deliverable is `fuzz/state/plan.md` — a rigorous, opinionated strategy document that every downstream specialist consults. The plan starts at COLD and may be **revised mid-campaign** when state has changed enough that strategy should update (new findings, coverage plateau, scope shift). Each prior plan is archived; nothing is lost.
 
 ## Authoritative spec

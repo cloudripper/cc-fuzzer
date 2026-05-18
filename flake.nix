@@ -3,7 +3,7 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/release-25.11";
-    llm-agents.url = "github:numtide/llm-agents.nix";
+    llm-agents.url = "github:numtide/llm-agents.nix/7c2b15bbb92e200cb741372f050de789e7811539";
   };
 
   nixConfig = {
@@ -69,6 +69,7 @@
           # -- Triage / debug
           gdb
           binutils       # gives addr2line, strings, nm, objdump, readelf
+          strace
 
           # -- Build essentials targets typically need
           gnumake
@@ -92,9 +93,10 @@
           patch
           which
           file
+          glib
 
           # -- Common library headers/bits some targets need
-          glibc.dev
+          glib.dev
           zlib.dev
           openssl.dev
 

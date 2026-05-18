@@ -32,6 +32,7 @@ done
 # Path anchor - refuses cwd inside fuzz/, refuses recursive fuzz/fuzz/
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/_lib/path-anchor.sh"
+. "$SCRIPT_DIR/_lib/harness-path.sh"
 cat >/dev/null || true   # consume stdin to avoid SIGPIPE
 
 FUZZ_ROOT="${FUZZ_ROOT:-fuzz}"
@@ -40,12 +41,57 @@ NEW_DIR="$FUZZ_ROOT/crashes/new"
 KNOWN_DIR="$FUZZ_ROOT/crashes/known"
 FLAKY_DIR="$FUZZ_ROOT/crashes/flaky"
 
-# Only act when a campaign is running
-[ -f "$STATE_DIR/fuzzer.pid" ] || exit 0
-PID=$(cat "$STATE_DIR/fuzzer.pid" 2>/dev/null)
-[ -n "$PID" ] && kill -0 "$PID" 2>/dev/null || exit 0
+# Only act when at least one fuzzer slot is alive. In singular mode we check
+# the legacy fuzzer.pid; in multi mode we check fuzzers.json for any live slot.
+any_slot_alive() {
+  if [ -f "$STATE_DIR/fuzzers.json" ]; then
+    MF="$STATE_DIR/fuzzers.json" python3 - <<'PY' 2>/dev/null
+import json, os, sys
+try:
+    doc = json.load(open(os.environ['MF']))
+    for s in doc.get('slots', []):
+        pid = s.get('pid','')
+        try:
+            if pid and int(pid) > 0:
+                os.kill(int(pid), 0)
+                sys.exit(0)
+        except (ValueError, OSError, ProcessLookupError):
+            continue
+except Exception:
+    pass
+sys.exit(1)
+PY
+    return $?
+  fi
+  if [ -f "$STATE_DIR/fuzzer.pid" ]; then
+    local pid
+    pid=$(cat "$STATE_DIR/fuzzer.pid" 2>/dev/null)
+    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+    return $?
+  fi
+  return 1
+}
+any_slot_alive || exit 0
 
 mkdir -p "$NEW_DIR"
+
+# Map a found crash file path to its source harness (multi mode only). The
+# launcher arranges per-harness output paths so the harness name is recoverable
+# from the path's components:
+#   fuzz/harnesses/<harness>/.libfuzzer-cwd/crash-*
+#   fuzz/harnesses/<harness>/aflpp-out/...
+# Returns the harness name on stdout, or empty if not derivable.
+path_to_harness() {
+  local p="$1"
+  # Strip leading ./ for stable matching
+  p="${p#./}"
+  if [[ "$p" =~ ^(.*/)?fuzz/harnesses/([a-z0-9][a-z0-9_-]{0,31})/ ]]; then
+    echo "${BASH_REMATCH[2]}"
+    return 0
+  fi
+  echo ""
+  return 1
+}
 
 # Find new crash files in canonical engine locations modified in the last 5 min.
 # We use mmin -5 (not -1) to avoid races with the hook firing rate.
@@ -60,9 +106,24 @@ while IFS= read -r f; do
     "$FLAKY_DIR"/*) continue;;
   esac
 
-  # Compute content hash and queue
+  # Compute content hash and the staged filename. In multi mode prepend the
+  # source harness so the triager can attribute the crash; in singular mode
+  # the filename is just <hash>.bin.
   HASH=$(sha256sum "$f" | cut -c1-16)
-  TARGET="$NEW_DIR/$HASH.bin"
+  STAGE_NAME=""
+  if is_multi; then
+    H=$(path_to_harness "$f")
+    if [ -z "$H" ]; then
+      # We can't attribute the crash. In multi mode, an unattributable crash
+      # is an evidentiary problem — stage it anyway under a sentinel harness
+      # name "unknown" so it isn't dropped, and let the triager flag it.
+      H="unknown"
+    fi
+    STAGE_NAME=$(crash_filename "$H" "$HASH")
+  else
+    STAGE_NAME="$HASH.bin"
+  fi
+  TARGET="$NEW_DIR/$STAGE_NAME"
 
   if [ -f "$TARGET" ]; then
     continue   # already queued
@@ -70,7 +131,7 @@ while IFS= read -r f; do
 
   # Skip if hash matches an already-known finding's repro or duplicate
   if [ -d "$KNOWN_DIR" ]; then
-    if find "$KNOWN_DIR" -name "$HASH.bin" -o -name "repro.bin" 2>/dev/null \
+    if find "$KNOWN_DIR" -name "*$HASH*.bin" -o -name "repro.bin" 2>/dev/null \
          | xargs -I{} sha256sum {} 2>/dev/null \
          | grep -q "^$(sha256sum "$f" | awk '{print $1}')"; then
       continue
@@ -80,7 +141,7 @@ while IFS= read -r f; do
   # Hard-link if same fs, copy as fallback
   ln "$f" "$TARGET" 2>/dev/null || cp "$f" "$TARGET"
   QUEUED=$((QUEUED + 1))
-done < <(find . -maxdepth 5 \( \
+done < <(find . -maxdepth 6 \( \
     -path '*/crashes/id:*' -o \
     -name 'crash-*' -o \
     -name 'leak-*' -o \

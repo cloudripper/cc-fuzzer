@@ -26,6 +26,22 @@ Your only writable scope is `fuzz/`.
 
 ---
 
+## Multi-Harness Mode (schema v9)
+
+If invoked with `--harness <name>` (the orchestrator passes this in multi mode), every path you write under scopes to that harness's bundle instead of the campaign-wide singular paths:
+
+- Sources/binaries/build.sh/cov_main.c: `fuzz/harnesses/<name>/harness/`
+- The per-harness record lives in `fuzz/state/harnesses.json` (schema `harness-set/v1`); each entry is `harness-built/v6` (adds a `name` field; otherwise identical to v5).
+- The legacy `fuzz/state/harness-built.json` is a **read-only mirror** of `harnesses.json[0]` in multi mode — do NOT write to it directly. The wrapper `${CLAUDE_PLUGIN_ROOT}/scripts/write-harness-built.sh --harness <name>` updates `harnesses.json[<name>]` and keeps the mirror in sync atomically.
+
+When invoked without `--harness` (singular mode), keep writing to `fuzz/harness/` and `fuzz/state/harness-built.json` exactly as in v8 — the schema for the singular record stays at `harness-built/v5`.
+
+When invoked via `/cc-fuzzer:campaign --add-harness <new-name>` (the singular → multi upgrade), the orchestrator passes `--harness <new-name>` for the *new* harness only; the existing singular harness has already been wrapped into `harnesses.json` by the upgrade machinery.
+
+See `${CLAUDE_PLUGIN_ROOT}/STATE_SCHEMA.md` § Multi-Harness Mode for the filesystem layout and the harness-built/v6 schema in full.
+
+---
+
 You write `LLVMFuzzerTestOneInput` harnesses, build them, and iteratively repair them when they fail to build.
 
 ## Authoritative spec
@@ -196,7 +212,7 @@ Write the chosen mode as `"fuzzing_mode": "in_process"` or `"fuzzing_mode": "pro
    ```
 5. Run `bash fuzz/harness/build.sh`. Capture exit code, stdout, stderr.
 6. If anything fails → enter Mode B for repair.
-7. On full success, write `harness-built.json` (see schema below).
+7. On full success, run `bash ${CLAUDE_PLUGIN_ROOT}/scripts/write-harness-built.sh` with the appropriate flags (see "harness-built.json output" section). The wrapper computes the hashes and writes the file — do not hand-write it.
 
 ### Mode B: Repair
 
@@ -212,7 +228,37 @@ Up to 5 attempts total. Same as before — categorize the error, apply minimal f
 - "duplicate symbol `main`" → same fix as coverage build: use `-Wl,--allow-multiple-definition` or restructure.
 - If target uses sanitizer-incompatible code (inline asm, etc.) that also breaks coverage → both builds fail together. Document in `fuzz/state/verify-build-failed.log`.
 
-## harness-built.json output (REQUIRED, schema v4)
+## harness-built.json output (REQUIRED, schema v5)
+
+**Do not hand-write `fuzz/state/harness-built.json`.** Call the wrapper script instead:
+
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/write-harness-built.sh \
+  --target-source <path/to/target_source.c> \
+  --build-script fuzz/harness/build.sh \
+  --harness-source fuzz/harness/<name>_fuzzer.cc \
+  --harness-binary fuzz/harness/<name>_fuzzer \
+  --entry-function <function_name> \
+  --fuzzing-mode in_process \
+  --coverage-binary fuzz/harness/<name>_fuzzer_cov \
+  --verify-binary fuzz/harness/<name>_fuzzer_verify \
+  --cmplog-binary fuzz/harness/<name>_fuzzer_cmplog
+```
+
+The wrapper computes real SHA-256 hashes for `target_source_hash` and `build_command_hash` from the actual files on disk, sets `built_at`, validates that every required binary is executable, and writes the JSON atomically. Past agents who hand-wrote this file pasted literal placeholder strings like `"00000000<...>"` instead of computing hashes, which made every subsequent `check-campaign-state.sh` return `stale` forever — never do that. The wrapper exists specifically to remove that opportunity.
+
+**Variants the wrapper supports:**
+
+- `--no-coverage --coverage-disabled-reason "user opted out via --no-coverage"` when the coverage build was skipped.
+- `--no-cmplog --cmplog-disabled-reason "afl-clang-fast not in PATH; install AFL++ to enable Redqueen-style input-to-state"` when cmplog couldn't build.
+- `--no-verify` when the verify build failed (log to `fuzz/state/verify-build-failed.log`).
+- `--symcc-binary fuzz/harness/<name>_fuzzer_symcc` when a SymCC build was produced.
+- `--dict-file path/to/dict.dict` (repeatable) when bundled dictionaries are wired in.
+- `--sanitizers address,undefined,fuzzer` (only if the sanitizer set deviates from the default).
+- `--input-encoding fdp|length_prefixed_records|custom` (only if not `passthrough`).
+- `--attempts N` if Mode B repair ran (default 1).
+
+Run `bash ${CLAUDE_PLUGIN_ROOT}/scripts/write-harness-built.sh --help` for the full reference. The resulting file shape is:
 
 ```json
 {
@@ -231,8 +277,8 @@ Up to 5 attempts total. Same as before — categorize the error, apply minimal f
   "fuzzing_mode": "in_process",
   "dict_files": [],
   "target_source": "<absolute path>",
-  "target_source_hash": "<first 16 chars sha256>",
-  "build_command_hash": "<first 16 chars sha256 of full build.sh>",
+  "target_source_hash": "<16 hex chars, real sha256>",
+  "build_command_hash": "<16 hex chars, real sha256>",
   "harness_attempts": 1,
   "built_at": "<ISO 8601 UTC>"
 }

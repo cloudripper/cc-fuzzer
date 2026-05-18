@@ -26,6 +26,27 @@ Your only writable scope is `fuzz/`.
 
 ---
 
+## Multi-Harness Mode (schema v9)
+
+In multi mode the orchestrator dispatches you with a target harness — read it from `current.json:recommendation.harness` (or the `--harness <name>` arg if you were invoked directly):
+
+```bash
+HARNESS="${HARNESS:-$(python3 -c "import json; print(json.load(open('fuzz/state/current.json')).get('recommendation',{}).get('harness',''))")}"
+```
+
+Your scope changes:
+
+- **Input snapshot**: read `current.json:harnesses[<active>].coverage.snapshot_file` (per-harness latest), not the singular `current.json.coverage.snapshot_file`.
+- **Cmplog dict**: invoke `extract-cmplog-dict.sh --harness <HARNESS>`; the dict lands at `fuzz/state/cmplog-dict-<HARNESS>-<ts>.dict`.
+- **Output filename**: `fuzz/state/snapshots/gaps-<HARNESS>-<ts>.json` (use `bash ${CLAUDE_PLUGIN_ROOT}/scripts/_lib/harness-path.sh gaps_snapshot_name "$HARNESS" "$TS"` to compute the basename). Include a top-level `"harness": "<HARNESS>"` field in the JSON.
+- **Plan source**: read the harness's `### <name>` block under `## Targets` in `plan.md` for its `#### Coverage Targets`, `#### Out-of-Scope`, and `#### Concolic Strategy` subsections — these have moved under the H3 in multi mode.
+
+The 15-gap cap is still per-report (so per-harness). Multiple harnesses get separate gap reports.
+
+In singular mode, all of the above falls back to v8: read `current.json.coverage.snapshot_file`, write `gaps-<ts>.json`, no `harness` field, read the top-level `## Coverage Targets`/`## Out-of-Scope` sections.
+
+---
+
 You read coverage data and produce a strictly-schemaed gap report. You are the bridge between "the fuzzer is stuck" and "the LLM knows what to do next."
 
 ## Authoritative spec

@@ -23,12 +23,48 @@ set -u
 # Path anchor - refuses cwd inside fuzz/, refuses recursive fuzz/fuzz/
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/_lib/path-anchor.sh"
+. "$SCRIPT_DIR/_lib/harness-path.sh"
 FUZZ_ROOT="${FUZZ_ROOT:-fuzz}"
 STATE_DIR="$FUZZ_ROOT/state"
 FINDINGS="$STATE_DIR/findings.jsonl"
 
 mkdir -p "$STATE_DIR"
 [ -f "$FINDINGS" ] || touch "$FINDINGS"
+
+# Multi-harness context: `add` callers may set $HARNESS to attribute the
+# finding. `add-harness` takes the harness as a positional arg. In singular
+# mode $HARNESS is empty and finding/v1 is written.
+HARNESS_CTX="${HARNESS:-}"
+
+# Helper: rewrite fuzz/crashes/known/<id>/harnesses.txt with the current
+# finding.harnesses[] (one harness per line, sorted-and-uniqued).
+_write_harnesses_txt() {
+  local id="$1"
+  local harnesses_dir="$FUZZ_ROOT/crashes/known/$id"
+  [ -d "$harnesses_dir" ] || return 0   # finding's repro dir not created yet
+  local list
+  list=$(FINDINGS="$FINDINGS" ID="$id" python3 - <<'PY' 2>/dev/null
+import json, os
+target = os.environ['ID']
+with open(os.environ['FINDINGS']) as f:
+    for line in f:
+        line = line.strip()
+        if not line: continue
+        try:
+            d = json.loads(line)
+        except Exception:
+            continue
+        if d.get('id') == target:
+            for h in sorted(set(d.get('harnesses') or [])):
+                print(h)
+            break
+PY
+)
+  if [ -n "$list" ]; then
+    echo "$list" > "$harnesses_dir/harnesses.txt.tmp"
+    mv "$harnesses_dir/harnesses.txt.tmp" "$harnesses_dir/harnesses.txt"
+  fi
+}
 
 cmd="${1:-help}"
 shift || true
@@ -121,13 +157,18 @@ EOF
         exit 2
       fi
 
-      # Find the harness binary from harness-built.json
-      HARNESS_BIN=$(python3 -c "
+      # Find the harness binary. In multi mode with $HARNESS set, look up the
+      # per-harness record; otherwise read from the singular harness-built.json.
+      if [ -n "$HARNESS_CTX" ] && is_multi; then
+        HARNESS_BIN=$(harness_binary "$HARNESS_CTX")
+      else
+        HARNESS_BIN=$(python3 -c "
 import json, sys
 try:
     print(json.load(open('$STATE_DIR/harness-built.json')).get('harness_binary', ''))
 except: pass
 " 2>/dev/null)
+      fi
 
       if [ -z "$HARNESS_BIN" ] || [ ! -x "$HARNESS_BIN" ]; then
         echo "ERROR: cannot find harness_binary in $STATE_DIR/harness-built.json" >&2
@@ -173,13 +214,18 @@ except: pass
       # as a plain main() shim. If the crash does not reproduce here, it only
       # exists inside libFuzzer's infrastructure — it is a harness artifact, not
       # a real target bug.
-      VERIFY_BIN=$(python3 -c "
+      if [ -n "$HARNESS_CTX" ] && is_multi; then
+        VERIFY_BIN=$(harness_field "$HARNESS_CTX" verify_binary)
+        [ "$VERIFY_BIN" = "None" ] && VERIFY_BIN=""
+      else
+        VERIFY_BIN=$(python3 -c "
 import json, sys
 try:
     v = json.load(open('$STATE_DIR/harness-built.json')).get('verify_binary') or ''
     print(v)
 except: pass
 " 2>/dev/null)
+      fi
 
       if [ -n "$VERIFY_BIN" ] && [ -x "$VERIFY_BIN" ]; then
         S2_CRASHES=0
@@ -259,11 +305,16 @@ except: pass
 
     NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-    # Build JSON line atomically with python so escaping is correct
-    NEW_LINE=$(python3 -c "
-import json, sys
+    # Build JSON line atomically with python so escaping is correct.
+    # In multi mode write finding/v2 with harnesses:[<HARNESS>]; in singular
+    # mode write finding/v1 (unchanged from v8).
+    IS_MULTI_FLAG=0
+    if is_multi && [ -n "$HARNESS_CTX" ]; then IS_MULTI_FLAG=1; fi
+    NEW_LINE=$(IS_MULTI="$IS_MULTI_FLAG" HARNESS="$HARNESS_CTX" python3 - "$LOCATION" "$ROOT_CAUSE" "$REPRODUCER" "$EXCERPT" <<PY
+import json, os, sys
+is_multi = os.environ.get('IS_MULTI','0') == '1'
 d = {
-  'schema': 'finding/v1',
+  'schema': 'finding/v2' if is_multi else 'finding/v1',
   'id': '$NEW_ID',
   'stack_hash': '$STACK_HASH',
   'category': '$CATEGORY',
@@ -276,14 +327,25 @@ d = {
   'last_seen': '$NOW',
   'dedup_count': 1,
 }
+if is_multi:
+    d['harnesses'] = [os.environ['HARNESS']]
 excerpt = sys.argv[4]
 if excerpt:
     d['sanitizer_report_excerpt'] = excerpt
 print(json.dumps(d, separators=(',', ':')))
-" "$LOCATION" "$ROOT_CAUSE" "$REPRODUCER" "$EXCERPT")
+PY
+)
 
     # Append atomically
     echo "$NEW_LINE" >> "$FINDINGS"
+
+    # In multi mode, also write the harnesses.txt sidecar so analysts see
+    # provenance without parsing JSON. (The triager calls this after mv'ing
+    # the repro file into fuzz/crashes/known/<id>/; we write the file then.)
+    if [ "$IS_MULTI_FLAG" -eq 1 ]; then
+      _write_harnesses_txt "$NEW_ID"
+    fi
+
     echo "$NEW_ID"
     ;;
 
@@ -297,11 +359,18 @@ print(json.dumps(d, separators=(',', ':')))
     NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     TMP="$FINDINGS.tmp"
 
-    # Read each line, update the matching one in-place, write atomically
-    python3 - <<PY > "$TMP" 2>/dev/null
-import json
+    # Read each line, update the matching one in-place, write atomically.
+    # In multi mode with $HARNESS set, append HARNESS to the finding's
+    # harnesses[] if not already present.
+    HARNESS_TO_APPEND=""
+    if is_multi && [ -n "$HARNESS_CTX" ]; then
+      HARNESS_TO_APPEND="$HARNESS_CTX"
+    fi
+    HARNESS_APPEND="$HARNESS_TO_APPEND" python3 - <<PY > "$TMP" 2>/dev/null
+import json, os
 target = "$STACK_HASH"
 now = "$NOW"
+append_harness = os.environ.get('HARNESS_APPEND','')
 with open("$FINDINGS") as f:
     for line in f:
         line = line.strip()
@@ -315,22 +384,81 @@ with open("$FINDINGS") as f:
         if d.get("stack_hash") == target:
             d["dedup_count"] = d.get("dedup_count", 1) + 1
             d["last_seen"] = now
+            if append_harness:
+                hs = d.get('harnesses') or []
+                if append_harness not in hs:
+                    hs.append(append_harness)
+                    d['harnesses'] = hs
         print(json.dumps(d, separators=(',', ':')))
 PY
 
     if [ -s "$TMP" ]; then
       mv "$TMP" "$FINDINGS"
       # Print the matching id for the caller
-      grep "\"stack_hash\":\"$STACK_HASH\"" "$FINDINGS" \
+      MATCH_ID=$(grep "\"stack_hash\":\"$STACK_HASH\"" "$FINDINGS" \
         | python3 -c "import sys,json
 for line in sys.stdin:
     line = line.strip()
     if line:
         print(json.loads(line).get('id', ''))
-        break"
+        break")
+      echo "$MATCH_ID"
+      # In multi mode, refresh the harnesses.txt sidecar so it stays in sync.
+      if [ -n "$HARNESS_TO_APPEND" ] && [ -n "$MATCH_ID" ]; then
+        _write_harnesses_txt "$MATCH_ID"
+      fi
     else
       rm -f "$TMP"
       echo "ERROR: dedup produced empty file - aborted" >&2
+      exit 1
+    fi
+    ;;
+
+  add-harness)
+    # Append a harness to an existing finding's harnesses[] (idempotent).
+    # Used by the triager when a known stack-hash crash arrives from a
+    # different harness than the finding was originally attributed to.
+    ID="${1:?finding id required (e.g. f005)}"
+    HARNESS_NAME="${2:?harness name required}"
+
+    if ! grep -q "\"id\":\"$ID\"" "$FINDINGS" 2>/dev/null; then
+      echo "ERROR: no finding with id $ID" >&2
+      exit 1
+    fi
+
+    TMP="$FINDINGS.tmp"
+    FINDINGS_PATH="$FINDINGS" APPEND_ID="$ID" APPEND_HARNESS="$HARNESS_NAME" python3 - <<'PY' > "$TMP" 2>/dev/null
+import json, os
+target = os.environ['APPEND_ID']
+harness = os.environ['APPEND_HARNESS']
+appended = False
+with open(os.environ['FINDINGS_PATH']) as f:
+    for line in f:
+        line = line.strip()
+        if not line: continue
+        try:
+            d = json.loads(line)
+        except Exception:
+            print(line); continue
+        if d.get('id') == target:
+            hs = d.get('harnesses') or []
+            if harness not in hs:
+                hs.append(harness)
+                d['harnesses'] = hs
+                appended = True
+        print(json.dumps(d, separators=(',', ':')))
+import sys
+sys.stderr.write('appended\n' if appended else 'noop\n')
+PY
+    RC=$?
+
+    if [ -s "$TMP" ]; then
+      mv "$TMP" "$FINDINGS"
+      _write_harnesses_txt "$ID"
+      echo "$ID"
+    else
+      rm -f "$TMP"
+      echo "ERROR: add-harness produced empty file - aborted" >&2
       exit 1
     fi
     ;;

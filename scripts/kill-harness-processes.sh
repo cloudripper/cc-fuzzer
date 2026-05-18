@@ -25,9 +25,21 @@ log() { [ "$QUIET" -eq 1 ] || echo "$@" >&2; }
 SELF_PID=$$
 SELF_PPID=$PPID
 
-# Step 1: Read fuzzer.pid (the recorded master)
+# Step 1: Read every slot's pid file. The v0.17 multi-fuzzer layout writes
+# fuzzer-<slot>.pid (one per slot). The legacy single-slot fuzzer.pid is a
+# symlink to fuzzer-main.pid when slot=main, so we read by globbing the
+# typed files first and fall back to the legacy path only if no typed files
+# exist (very old campaigns pre-v0.17 that haven't been migrated yet).
 PRIMARY_PIDS=()
-if [ -f "$STATE_DIR/fuzzer.pid" ]; then
+TYPED_PIDS_FOUND=0
+for pidf in "$STATE_DIR"/fuzzer-*.pid; do
+  [ -f "$pidf" ] || continue
+  TYPED_PIDS_FOUND=1
+  P=$(cat "$pidf" 2>/dev/null | tr -d ' \n')
+  [ -n "$P" ] && PRIMARY_PIDS+=("$P")
+done
+if [ "$TYPED_PIDS_FOUND" -eq 0 ] && [ -f "$STATE_DIR/fuzzer.pid" ]; then
+  # Legacy pre-v0.17 layout — single pid file at fuzzer.pid (not a symlink).
   P=$(cat "$STATE_DIR/fuzzer.pid" 2>/dev/null | tr -d ' \n')
   [ -n "$P" ] && PRIMARY_PIDS+=("$P")
 fi
@@ -140,7 +152,9 @@ for p in "${ALL_PIDS[@]}"; do
   kill -0 "$p" 2>/dev/null && STILL_ALIVE+=("$p")
 done
 
-# Step 10: Remove PID file regardless
+# Step 10: Remove all PID files regardless of how Step 9 fared.
+# fuzzer.pid is the legacy alias / symlink; fuzzer-*.pid are the typed files.
+rm -f "$STATE_DIR"/fuzzer-*.pid
 rm -f "$STATE_DIR/fuzzer.pid"
 
 # Step 11: Emit JSON result

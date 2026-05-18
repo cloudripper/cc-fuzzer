@@ -23,34 +23,71 @@ set -u
 # Path anchor - refuses cwd inside fuzz/, refuses recursive fuzz/fuzz/
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/_lib/path-anchor.sh"
+. "$SCRIPT_DIR/_lib/harness-path.sh"
 FUZZ_ROOT="${FUZZ_ROOT:-fuzz}"
 STATE_DIR="$FUZZ_ROOT/state"
-CORPUS_DIR="$FUZZ_ROOT/corpus"
-QUAR_DIR="$FUZZ_ROOT/corpus-quarantine"
 CRASHES_NEW="$FUZZ_ROOT/crashes/new"
 FLAKY="$FUZZ_ROOT/crashes/flaky"
-HARNESS_INFO="$STATE_DIR/harness-built.json"
 
-mkdir -p "$CORPUS_DIR" "$QUAR_DIR" "$CRASHES_NEW" "$FLAKY"
+# Parse --harness early; remaining positional args are explicit input files.
+HARNESS_NAME=""
+INPUT_ARGS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --harness) HARNESS_NAME="${2:-}"; shift 2 ;;
+    -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \?//'; exit 0 ;;
+    *)         INPUT_ARGS+=("$1"); shift ;;
+  esac
+done
 
-# Resolve the harness binary
-if [ ! -f "$HARNESS_INFO" ]; then
-  echo "ERROR: $HARNESS_INFO not found - no campaign" >&2
-  exit 1
+# In multi mode, resolve target harness from --harness (or current.json's
+# active_harness as fallback). In singular mode, ignore the arg.
+if is_multi; then
+  if [ -z "$HARNESS_NAME" ] && [ -f "$STATE_DIR/current.json" ]; then
+    HARNESS_NAME=$(python3 -c "
+import json
+try: print(json.load(open('$STATE_DIR/current.json')).get('active_harness',''))
+except: pass" 2>/dev/null)
+  fi
+  if [ -z "$HARNESS_NAME" ]; then
+    echo "ERROR: multi mode but --harness <name> not provided and current.json has no active_harness" >&2
+    exit 1
+  fi
+  if ! is_known_harness "$HARNESS_NAME"; then
+    echo "ERROR: harness '$HARNESS_NAME' is not declared in fuzz-config.json:harnesses[]" >&2
+    exit 1
+  fi
 fi
-HARNESS=$(python3 -c "
+
+CORPUS_DIR=$(corpus_dir   "$HARNESS_NAME")
+QUAR_DIR=$(quarantine_dir "$HARNESS_NAME")
+REJECTED_DIR="$QUAR_DIR/rejected"
+
+mkdir -p "$CORPUS_DIR" "$QUAR_DIR" "$REJECTED_DIR" "$CRASHES_NEW" "$FLAKY"
+
+# Resolve the harness binary — per-harness in multi mode
+if is_multi; then
+  HARNESS=$(harness_binary "$HARNESS_NAME")
+else
+  HARNESS_INFO="$STATE_DIR/harness-built.json"
+  if [ ! -f "$HARNESS_INFO" ]; then
+    echo "ERROR: $HARNESS_INFO not found - no campaign" >&2
+    exit 1
+  fi
+  HARNESS=$(python3 -c "
 import json
 try: print(json.load(open('$HARNESS_INFO')).get('harness_binary', ''))
 except: pass
 " 2>/dev/null)
+fi
 if [ -z "$HARNESS" ] || [ ! -x "$HARNESS" ]; then
   echo "ERROR: harness binary missing or not executable: $HARNESS" >&2
   exit 1
 fi
 
 # Determine input set
-if [ "$#" -gt 0 ]; then
-  inputs=("$@")
+if [ "${#INPUT_ARGS[@]}" -gt 0 ]; then
+  inputs=("${INPUT_ARGS[@]}")
 else
   inputs=()
   while IFS= read -r f; do
@@ -67,9 +104,29 @@ fi
 PROMOTED=0
 CRASHED=0
 HUNG=0
+REJECTED=0
 
 for f in "${inputs[@]}"; do
   [ -f "$f" ] || continue
+
+  # Pre-flight: seed-safety scan. If the file contains an unambiguous
+  # destructive payload (rm -rf /, fork bomb, mkfs on a real block device,
+  # dd to a real block device, etc), refuse to run the harness on it and
+  # move it to corpus-quarantine/rejected/. The scanner is conservative —
+  # ordinary parser-fuzz inputs won't trip it. Override with the env var
+  # CCFUZZ_ALLOW_DESTRUCTIVE_SEEDS=1 if you have a sandboxed campaign that
+  # legitimately needs destructive payloads.
+  set +e
+  SAFETY_OUT=$(bash "$SCRIPT_DIR/check-seed-safety.sh" "$f" 2>/dev/null)
+  SAFETY_RC=$?
+  set -e
+  if [ "$SAFETY_RC" -eq 3 ]; then
+    base=$(basename "$f")
+    mv "$f" "$REJECTED_DIR/$base"
+    echo "$SAFETY_OUT" | sed "s|^|REJECTED: |"
+    REJECTED=$((REJECTED + 1))
+    continue
+  fi
 
   # Run with a tight timeout. ASan output goes to stderr; we don't capture
   # it here but the exit code tells us what happened.
@@ -101,10 +158,13 @@ for f in "${inputs[@]}"; do
       HUNG=$((HUNG + 1))
       ;;
     *)
-      # Crashed - hard-link content-addressable into crashes/new/
+      # Crashed - hard-link content-addressable into crashes/new/. In multi
+      # mode the filename carries the harness prefix so the triager attributes
+      # the crash to the right harness (matches detect-crashes.sh's shape).
       base=$(basename "$f")
       hash=$(sha256sum "$f" | cut -c1-16)
-      target="$CRASHES_NEW/$hash.bin"
+      stage_name=$(crash_filename "$HARNESS_NAME" "$hash")
+      target="$CRASHES_NEW/$stage_name"
       if [ ! -f "$target" ]; then
         ln "$f" "$target" 2>/dev/null || cp "$f" "$target"
       fi
@@ -114,5 +174,5 @@ for f in "${inputs[@]}"; do
   esac
 done
 
-echo "promoted=$PROMOTED   crashed=$CRASHED (-> crashes/new/)   hung=$HUNG (-> flaky/)"
+echo "promoted=$PROMOTED   crashed=$CRASHED (-> crashes/new/)   hung=$HUNG (-> flaky/)   rejected=$REJECTED (-> corpus-quarantine/rejected/)"
 exit 0

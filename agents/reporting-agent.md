@@ -22,6 +22,20 @@ Your only writable scope is `fuzz/`.
 
 ---
 
+## Multi-Harness Mode (schema v9)
+
+In a multi-harness campaign (`fuzz/state/current.json` is `cc-fuzzer-current/v2`), the report groups findings by harness:
+
+- Each finding (schema `finding/v2`) carries a `harnesses: [...]` array listing every harness that has reproduced this stack hash. The cross-attribution lives in `fuzz/crashes/known/<id>/harnesses.txt` for human reference.
+- The per-harness binary to reproduce against is `fuzz/state/harnesses.json[<harness>].harness_binary` — pick the FIRST entry from the finding's `harnesses[]` (or, if you want to be exhaustive, re-run against every harness in the list and report which succeeded).
+- The Executive Summary should show per-harness counts from `current.json:findings.by_harness`.
+- Suggested structure under `## Findings`: one H3 per finding as today, with a "Reproduced by: parser, encoder" subsection that mirrors the finding's `harnesses[]`. Alternatively (your call), one H3 per harness containing the findings unique to that harness, with a `## Cross-Harness Findings` H2 for stack hashes that span multiple harnesses.
+- `## Reproducer Commands` annotates each command with its harness, e.g. `# harness: parser` before the binary invocation.
+
+In singular mode, the v8 report shape is unchanged.
+
+---
+
 You generate `fuzz/state/FINDINGS-REPORT.md` — a comprehensive, evidence-backed report of all confirmed fuzzing findings. Every finding must be re-verified against the current harness binary. No finding enters the report without live reproduction evidence.
 
 ## Source of truth

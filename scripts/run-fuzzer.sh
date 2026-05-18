@@ -1,18 +1,31 @@
 #!/usr/bin/env bash
 # run-fuzzer.sh
 #
-# Launches a fuzzer in the background, records the PID, and tees stdout/stderr
-# into fuzz/state/fuzzer.log. The orchestrator never blocks on this.
+# Launches the campaign's fuzzer(s). In v0.17+ this script is a dispatcher
+# that reads fuzz/state/fuzz-config.json (schema fuzz-config/v2) and, for
+# each entry in `fuzzer_slots`, invokes scripts/launch-fuzzer-slot.sh.
+#
+# Backward-compat:
+#   - When `fuzzer_slots` is missing or empty, a single slot named "main"
+#     is launched with engine auto-detected from the binary. This matches
+#     v0.15/v0.16 single-fuzzer behavior exactly.
+#   - The legacy CLI `run-fuzzer.sh <binary> [corpus]` still works and
+#     forces single-slot mode using the given binary.
 #
 # Usage:
-#   run-fuzzer.sh <harness-binary> [corpus-dir]
+#   run-fuzzer.sh                          # use harness-built.json + config slots
+#   run-fuzzer.sh <binary> [corpus-dir]    # legacy single-binary form (slot=main)
+#   run-fuzzer.sh --slot <name> --binary <path> [--corpus <dir>]
+#                                          # explicit per-slot form (does NOT
+#                                          # touch other slots — safe for
+#                                          # running two harnesses side by side)
 #
-# Engine detection:
+# Engine detection (auto):
 #   - If the binary itself is a libFuzzer runner (has LLVMFuzzerTestOneInput),
 #     run it directly with libFuzzer flags.
 #   - Else if afl-fuzz is available, use AFL++.
 #
-# Forbidden flags (refused at startup):
+# Forbidden flags (refused at startup by launch-fuzzer-slot.sh):
 #   -ignore_crashes=1     suppresses crash recording, defeats the whole point
 #   -detect_leaks=0       disables ASan leak detection
 #   -detect_odr_violation=0
@@ -24,194 +37,160 @@
 
 set -u
 
-# Path anchor - refuses cwd inside fuzz/, refuses recursive fuzz/fuzz/
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/_lib/path-anchor.sh"
-
-BIN="${1:-}"
-CORPUS="${2:-fuzz/corpus}"
+. "$SCRIPT_DIR/_lib/harness-path.sh"
 STATE_DIR="${FUZZ_STATE_DIR:-$FUZZ_ROOT/state}"
-OUT_DIR="${FUZZ_OUT_DIR:-$PROJECT_ROOT/out}"
-mkdir -p "$STATE_DIR" "$OUT_DIR" "$CORPUS"
+mkdir -p "$STATE_DIR"
 
-# Refuse forbidden flags if anyone tries to inject them via env
-for env_var in ASAN_OPTIONS UBSAN_OPTIONS; do
-  val="${!env_var:-}"
-  case "$val" in
-    *abort_on_error=0*|*detect_leaks=0*|*halt_on_error=0*)
-      echo "ERROR: $env_var contains a safety-defeating option: $val" >&2
-      echo "       refusing to launch. Unset or fix $env_var and retry." >&2
+# Parse args. Supports the legacy positional form `<binary> [corpus]` as well
+# as the explicit `--slot N --binary P --corpus C` form. The slot flag is the
+# escape hatch that lets a caller launch a second harness without killing the
+# first one (see commit history / v0.17.0 release notes).
+CLI_BIN=""
+CLI_CORPUS=""
+CLI_SLOT=""
+EXPLICIT_SLOT=false
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --slot)    CLI_SLOT="${2:-}";   EXPLICIT_SLOT=true; shift 2 ;;
+    --binary)  CLI_BIN="${2:-}";    shift 2 ;;
+    --corpus)  CLI_CORPUS="${2:-}"; shift 2 ;;
+    --help|-h)
+      sed -n '2,/^$/p' "$0" | sed 's/^# \?//'
+      exit 0
+      ;;
+    --*)
+      echo "ERROR: unknown flag '$1' (expected --slot|--binary|--corpus)" >&2
       exit 2
+      ;;
+    *)
+      # Legacy positional: first positional is binary, second is corpus.
+      if [ -z "$CLI_BIN" ]; then CLI_BIN="$1"
+      elif [ -z "$CLI_CORPUS" ]; then CLI_CORPUS="$1"
+      else echo "ERROR: unexpected positional arg '$1'" >&2; exit 2
+      fi
+      shift
       ;;
   esac
 done
+CLI_CORPUS="${CLI_CORPUS:-fuzz/corpus}"
 
-if [ -z "$BIN" ] || [ ! -x "$BIN" ]; then
-  echo "ERROR: harness binary missing or not executable: '$BIN'" >&2
-  echo "       run /fuzz:harness first" >&2
-  exit 1
-fi
-
-# Stop any existing fuzzer first — use kill-harness-processes.sh to also
-# catch bash-forked child processes that a simple PID kill would miss.
-if [ -f "$STATE_DIR/fuzzer.pid" ] || [ -f "$STATE_DIR/harness-built.json" ]; then
+# Stop existing slots before launching.
+#   - Explicit per-slot form (--slot or legacy positional with single binary):
+#     stop ONLY that slot, leaving other running slots intact. This is what
+#     makes side-by-side multi-binary campaigns work.
+#   - No CLI binary (config-driven reload): wipe everything and rebuild from
+#     fuzz-config.json. This preserves the v0.16 kill-all semantics for the
+#     config-replacement code path.
+TARGET_SLOT="${CLI_SLOT:-main}"
+if [ -n "$CLI_BIN" ]; then
+  # Single-slot stop. stop-fuzzer.sh --slot handles "no such slot" cleanly.
+  if [ -x "$SCRIPT_DIR/stop-fuzzer.sh" ]; then
+    bash "$SCRIPT_DIR/stop-fuzzer.sh" --slot "$TARGET_SLOT" >/dev/null 2>&1 || true
+  fi
+elif [ -f "$STATE_DIR/fuzzers.json" ] || ls "$STATE_DIR"/fuzzer-*.pid >/dev/null 2>&1 \
+     || [ -f "$STATE_DIR/fuzzer.pid" ] || [ -f "$STATE_DIR/harness-built.json" ]; then
   bash "$SCRIPT_DIR/kill-harness-processes.sh" --quiet >/dev/null 2>&1 || true
 fi
 
-ENGINE=""
-if nm "$BIN" 2>/dev/null | grep -q LLVMFuzzerTestOneInput; then
-  ENGINE="libfuzzer"
-fi
-
-# Read fuzzing_mode from harness-built.json (default: in_process)
-FUZZING_MODE="in_process"
-if [ -f "$STATE_DIR/harness-built.json" ]; then
-  FUZZING_MODE=$(python3 -c "
-import json
-try: print(json.load(open('$STATE_DIR/harness-built.json')).get('fuzzing_mode','in_process'))
-except: print('in_process')" 2>/dev/null)
-fi
-echo "fuzzing_mode=$FUZZING_MODE" >&2
-
-# Read dict_files from harness-built.json. Both libFuzzer and AFL++ accept
-# multiple dictionaries; libFuzzer takes one -dict= per entry; AFL++ takes
-# repeated -x. We build the appropriate flag list.
-DICT_FLAGS=()
-if [ -f "$STATE_DIR/harness-built.json" ]; then
-  DICT_FILES=$(python3 -c "
-import json
-try:
-    d = json.load(open('$STATE_DIR/harness-built.json'))
-    files = d.get('dict_files') or ([d['dict_file']] if d.get('dict_file') else [])
-    for f in files:
-        if f: print(f)
-except Exception:
-    pass
-" 2>/dev/null)
-  if [ -n "$DICT_FILES" ]; then
-    while IFS= read -r df; do
-      [ -f "$df" ] || continue
-      if [ "$ENGINE" = "libfuzzer" ]; then
-        DICT_FLAGS+=("-dict=$df")
-      else
-        # For AFL++, we'll concatenate later
-        DICT_FLAGS+=("$df")
-      fi
-    done <<< "$DICT_FILES"
-  fi
-fi
-
-if [ "$ENGINE" = "libfuzzer" ]; then
-  # Resolve fork count from config (env > override > project file > default 2)
-  . "$SCRIPT_DIR/_lib/fuzz-config.sh"
-  FORKS=$(resolve_fuzz_forks)
-
-  # libFuzzer with -fork=N: master coordinates N worker processes. Each worker
-  # dies on crash and is respawned by master. The master saves crash artifacts
-  # to the corpus directory's parent. Crash recording is ON (no -ignore_crashes;
-  # that flag is forbidden, see header).
-  # fuzz_forks=0 means single-process mode (no -fork flag); fork workers can
-  # deadlock on popen/read blocking calls that survive SIGALRM via pclose retry.
-  FORK_FLAGS=()
-  if [ "$FORKS" -gt 0 ] 2>/dev/null; then
-    echo "launching libFuzzer with -fork=$FORKS (mode=$FUZZING_MODE)" >&2
-    FORK_FLAGS=("-fork=$FORKS")
-  else
-    echo "launching libFuzzer single-process (fuzz_forks=0, mode=$FUZZING_MODE)" >&2
-  fi
-
-  # Extra flags for process_based mode:
-  #   -close_fd_mask=3  — suppress child process stdio noise
-  #   higher rss limit  — allow headroom for exec'd child processes
-  LF_RSZ_MB=2048
-  EXTRA_LF_FLAGS=()
-  if [ "$FUZZING_MODE" = "process_based" ]; then
-    EXTRA_LF_FLAGS+=("-close_fd_mask=3")
-    LF_RSZ_MB=4096
-    echo "  process_based: -close_fd_mask=3, rss_limit_mb=4096" >&2
-  fi
-
-  nohup "$BIN" "$CORPUS" \
-    "${DICT_FLAGS[@]}" \
-    "${FORK_FLAGS[@]}" \
-    "${EXTRA_LF_FLAGS[@]}" \
-    -print_final_stats=1 \
-    -timeout=10 \
-    -rss_limit_mb="$LF_RSZ_MB" \
-    -print_pcs=0 \
-    > "$STATE_DIR/fuzzer.log" 2>&1 &
-  PID=$!
-elif command -v afl-fuzz >/dev/null 2>&1; then
-  ENGINE="aflpp"
-  # AFL++ takes a single dict file; concatenate ours into one.
-  AFL_DICT_FLAG=()
-  if [ "${#DICT_FLAGS[@]}" -gt 0 ]; then
-    MERGED="$STATE_DIR/merged-dict.dict"
-    : > "$MERGED"
-    for df in "${DICT_FLAGS[@]}"; do
-      echo "# === $df ===" >> "$MERGED"
-      cat "$df" >> "$MERGED"
-      echo "" >> "$MERGED"
-    done
-    AFL_DICT_FLAG=("-x" "$MERGED")
-  fi
-
-  # If a cmplog binary was built (harness-writer wrote it to harness-built.json
-  # under cmplog_binary, with cmplog_enabled=true), pass it via -c so AFL++
-  # uses Redqueen-style input-to-state on top of regular coverage feedback.
-  # This is the runtime side of v0.13's I2S integration; the dictionary
-  # extraction (extract-cmplog-dict.sh) is the offline side that surfaces
-  # cmplog observations to the LLM agents.
-  CMPLOG_FLAG=()
+# Resolve harness binary. In singular mode (or legacy CLI form), this is a
+# single campaign-wide binary. In multi mode, each slot binds to its own
+# harness and resolves its own binary — so we don't compute one here.
+HARNESS_BIN=""
+if [ -n "$CLI_BIN" ]; then
+  HARNESS_BIN="$CLI_BIN"
+elif ! is_multi; then
   if [ -f "$STATE_DIR/harness-built.json" ]; then
-    CMPLOG_INFO=$(python3 -c "
+    HARNESS_BIN=$(python3 -c "
 import json
-try:
-    d = json.load(open('$STATE_DIR/harness-built.json'))
-    enabled = d.get('cmplog_enabled', False)
-    binp = d.get('cmplog_binary', '') or ''
-    print(f'{enabled}|{binp}')
-except Exception:
-    print('False|')
-" 2>/dev/null)
-    CMPLOG_ENABLED="${CMPLOG_INFO%%|*}"
-    CMPLOG_BIN="${CMPLOG_INFO#*|}"
-    if [ "$CMPLOG_ENABLED" = "True" ] && [ -n "$CMPLOG_BIN" ] && [ -x "$CMPLOG_BIN" ]; then
-      CMPLOG_FLAG=("-c" "$CMPLOG_BIN")
-      echo "cmplog: enabled, using $CMPLOG_BIN" >&2
-    elif [ "$CMPLOG_ENABLED" = "True" ] && [ -n "$CMPLOG_BIN" ]; then
-      echo "WARN: cmplog_enabled=true but binary not executable: $CMPLOG_BIN" >&2
-      echo "      continuing without cmplog" >&2
-    fi
+try: print(json.load(open('$STATE_DIR/harness-built.json')).get('harness_binary',''))
+except: pass" 2>/dev/null)
   fi
-
-  # For process_based: AFL++ passes the input file path via @@
-  # For in_process: AFL++ uses persistent mode (__AFL_LOOP) reading from AFL's buffer
-  if [ "$FUZZING_MODE" = "process_based" ]; then
-    AFL_TARGET_ARGS=("@@")
-    echo "  AFL++ process_based mode: target invoked as '$BIN @@'" >&2
-  else
-    AFL_TARGET_ARGS=()
-    echo "  AFL++ in_process mode: persistent harness reads AFL buffer" >&2
+  if [ -z "$HARNESS_BIN" ] || [ ! -x "$HARNESS_BIN" ]; then
+    echo "ERROR: harness binary missing or not executable: '$HARNESS_BIN'" >&2
+    echo "       run /fuzz:harness first, or pass a binary as the first arg" >&2
+    exit 1
   fi
-
-  nohup afl-fuzz "${AFL_DICT_FLAG[@]}" "${CMPLOG_FLAG[@]}" -i "$CORPUS" -o "$OUT_DIR" -- "$BIN" "${AFL_TARGET_ARGS[@]}" \
-    > "$STATE_DIR/fuzzer.log" 2>&1 &
-  PID=$!
-else
-  echo "ERROR: no usable fuzzing engine found." >&2
-  echo "       binary is not a libFuzzer runner and afl-fuzz is not in PATH" >&2
-  exit 1
 fi
 
-echo "$PID" > "$STATE_DIR/fuzzer.pid"
-echo "$ENGINE" > "$STATE_DIR/fuzzer.engine"
-echo "Fuzzer started: engine=$ENGINE PID=$PID"
-echo "Logs:           $STATE_DIR/fuzzer.log"
-echo "Stop with:      kill \$(cat $STATE_DIR/fuzzer.pid)"
+CORPUS="$CLI_CORPUS"
+
+# Resolve slot list. If CLI arg was passed, force single-slot mode.
+SLOTS_JSON=""
+if [ -z "$CLI_BIN" ] && [ -f "$STATE_DIR/fuzz-config.json" ]; then
+  SLOTS_JSON=$(python3 -c "
+import json
+try:
+    d = json.load(open('$STATE_DIR/fuzz-config.json'))
+    slots = d.get('fuzzer_slots') or []
+    print(json.dumps(slots))
+except Exception:
+    print('[]')
+" 2>/dev/null)
+fi
+
+# Default to single 'main' slot if no slot config
+NUM_SLOTS=$(python3 -c "import json,sys; print(len(json.loads(sys.argv[1] or '[]')))" "${SLOTS_JSON:-[]}" 2>/dev/null || echo 0)
+if [ "$NUM_SLOTS" -eq 0 ]; then
+  # No fuzzer_slots[] declared → single 'main' slot.
+  # In multi mode this branch shouldn't usually fire (fuzz-config.json:
+  # fuzzer_slots[] should be populated for any multi-harness campaign), but
+  # if it does, default to launching on the first declared harness.
+  args=(--slot "$TARGET_SLOT" --engine auto --corpus "$CORPUS")
+  if is_multi; then
+    fallback=$(default_harness)
+    if [ -z "$fallback" ]; then
+      echo "ERROR: multi mode but no slots declared and no default harness resolvable" >&2
+      exit 1
+    fi
+    args+=(--harness "$fallback")
+  else
+    args+=(--binary "$HARNESS_BIN")
+  fi
+  bash "$SCRIPT_DIR/launch-fuzzer-slot.sh" "${args[@]}"
+  RC=$?
+else
+  RC=0
+  python3 -c "import json,sys; print(json.dumps(json.loads(sys.argv[1])))" "$SLOTS_JSON" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for entry in data:
+    print('|'.join([
+        entry.get('slot','main'),
+        entry.get('engine','auto'),
+        entry.get('role','') or '',
+        entry.get('afl_power_schedule','') or '',
+        str(entry.get('libfuzzer_forks','') if entry.get('libfuzzer_forks') is not None else ''),
+        entry.get('harness','') or '',
+    ]))
+" | while IFS='|' read -r slot engine role schedule lf_forks slot_harness; do
+    args=(--slot "$slot" --engine "$engine" --corpus "$CORPUS")
+    # In multi mode the slot's binary is per-harness; pass --harness and let
+    # launch-fuzzer-slot.sh resolve. In singular mode pass --binary directly.
+    if is_multi; then
+      if [ -z "$slot_harness" ]; then
+        echo "ERROR: slot=$slot has no harness binding in multi mode" >&2
+        RC=1
+        continue
+      fi
+      args+=(--harness "$slot_harness")
+    else
+      args+=(--binary "$HARNESS_BIN")
+    fi
+    [ -n "$role" ]      && args+=(--role "$role")
+    [ -n "$schedule" ]  && args+=(--power-schedule "$schedule")
+    [ -n "$lf_forks" ]  && args+=(--libfuzzer-forks "$lf_forks")
+    if ! bash "$SCRIPT_DIR/launch-fuzzer-slot.sh" "${args[@]}"; then
+      echo "WARN: launch failed for slot=$slot${slot_harness:+ harness=$slot_harness}" >&2
+      RC=1
+    fi
+  done
+fi
 
 # Refresh current.json so the orchestrator sees the new state on its next tick
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ -x "$SCRIPT_DIR/update-current.sh" ]; then
   FUZZ_STATE_DIR="$STATE_DIR" bash "$SCRIPT_DIR/update-current.sh" >/dev/null 2>&1 || true
 fi
+
+exit "$RC"

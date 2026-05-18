@@ -1,6 +1,6 @@
 ---
 description: Run an existing harness binary in the background (no LLM). Used internally by fuzz-orchestrator; available standalone for manual use.
-argument-hint: <harness-binary> [corpus-dir] [forks=N]
+argument-hint: <harness-binary> [corpus-dir] [forks=N] | --slot <name> --binary <path>
 allowed-tools: Bash
 ---
 
@@ -16,7 +16,16 @@ Otherwise just:
 ${CLAUDE_PLUGIN_ROOT}/scripts/run-fuzzer.sh $ARGUMENTS
 ```
 
-This launches the fuzzer in the **background** (nohup), records the PID to `fuzz/state/fuzzer.pid`, and tees stdout/stderr to `fuzz/state/fuzzer.log`. Stop with `/cc-fuzzer:stop`.
+This launches the fuzzer in the **background** (nohup), records the PID to `fuzz/state/fuzzer-<slot>.pid` (slot defaults to `main`), and tees stdout/stderr to `fuzz/state/fuzzer-<slot>.log`. Stop with `/cc-fuzzer:stop`.
+
+**Running two harnesses side by side (manual multi-slot)**: invoke once per harness with an explicit `--slot` name and the surgical stop semantics will preserve any other running slot:
+
+```
+${CLAUDE_PLUGIN_ROOT}/scripts/run-fuzzer.sh --slot main  --binary fuzz/harness/<harness-a>
+${CLAUDE_PLUGIN_ROOT}/scripts/run-fuzzer.sh --slot alt   --binary fuzz/harness/<harness-b>
+```
+
+Without `--slot`, the legacy positional form (`run-fuzzer.sh <binary>`) implicitly uses `slot=main` and will replace whatever is currently running under that slot — but it no longer kills other named slots (v0.17.0 change). The blessed way to declare multi-fuzzer campaigns is still `fuzz/state/fuzz-config.json` `fuzzer_slots[]`; the `--slot` flag is the manual escape hatch.
 
 Fork count resolution (highest priority first):
 1. `forks=N` argument to this command

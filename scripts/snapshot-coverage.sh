@@ -22,16 +22,45 @@ set -u
 # Path anchor - refuses cwd inside fuzz/, refuses recursive fuzz/fuzz/
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/_lib/path-anchor.sh"
+. "$SCRIPT_DIR/_lib/harness-path.sh"
+
+# Multi-harness dispatch: with no --harness argument in multi mode, recurse
+# once per declared harness so the orchestrator gets a fresh per-harness
+# snapshot in a single call.
+HARNESS=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --harness) HARNESS="${2:-}"; shift 2 ;;
+    -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \?//'; exit 0 ;;
+    *) echo "ERROR: unknown arg '$1'" >&2; exit 2 ;;
+  esac
+done
+
+if is_multi && [ -z "$HARNESS" ]; then
+  RC=0
+  while IFS= read -r h; do
+    [ -n "$h" ] || continue
+    bash "$0" --harness "$h" || RC=$?
+  done < <(declared_harnesses)
+  exit "$RC"
+fi
+
+# Resolve the per-harness paths. In singular mode the helpers ignore $HARNESS
+# and return the canonical singular paths; in multi mode they return paths
+# under fuzz/harnesses/<harness>/.
+if [ -z "$HARNESS" ]; then
+  HARNESS=$(default_harness)
+fi
 
 TS=$(date +%s)
 STATE_DIR="${FUZZ_STATE_DIR:-fuzz/state}"
 SNAPSHOTS_DIR="$STATE_DIR/snapshots"
 HARNESS_INFO="$STATE_DIR/harness-built.json"
-COV_DIR="${FUZZ_COV_DIR:-fuzz/coverage}"
-CORPUS_DIR="${FUZZ_CORPUS_DIR:-fuzz/corpus}"
+COV_DIR="${FUZZ_COV_DIR:-$(coverage_dir "$HARNESS")}"
+CORPUS_DIR="${FUZZ_CORPUS_DIR:-$(corpus_dir "$HARNESS")}"
 mkdir -p "$STATE_DIR" "$SNAPSHOTS_DIR" "$COV_DIR"
 
-OUT_FILE="$SNAPSHOTS_DIR/coverage-$TS.json"
+OUT_FILE="$SNAPSHOTS_DIR/$(coverage_snapshot_name "$HARNESS" "$TS")"
 
 #------------------------------------------------------------------------------
 # 1. LLVM tool probe
@@ -59,26 +88,15 @@ LLVM_COV_AVAILABLE=false
 [ -n "$LLVM_COV_BIN" ] && [ -n "$LLVM_PROFDATA_BIN" ] && LLVM_COV_AVAILABLE=true
 
 #------------------------------------------------------------------------------
-# 2. Read harness-built.json for coverage_binary path
+# 2. Read per-harness record (multi) or harness-built.json (singular) for paths
 #------------------------------------------------------------------------------
-COVERAGE_BINARY=""
-HARNESS_BIN=""
+COVERAGE_BINARY=$(harness_field "$HARNESS" coverage_binary)
+[ "$COVERAGE_BINARY" = "None" ] && COVERAGE_BINARY=""
+HARNESS_BIN=$(harness_field "$HARNESS" harness_binary)
+[ "$HARNESS_BIN" = "None" ] && HARNESS_BIN=""
+TRACKING=$(harness_field "$HARNESS" coverage_tracking)
 COVERAGE_TRACKING_ENABLED=true
-if [ -f "$HARNESS_INFO" ]; then
-  COVERAGE_BINARY=$(python3 -c "
-import json
-try: print(json.load(open('$HARNESS_INFO')).get('coverage_binary') or '')
-except: pass" 2>/dev/null)
-  HARNESS_BIN=$(python3 -c "
-import json
-try: print(json.load(open('$HARNESS_INFO')).get('harness_binary') or '')
-except: pass" 2>/dev/null)
-  TRACKING=$(python3 -c "
-import json
-try: print(json.load(open('$HARNESS_INFO')).get('coverage_tracking', True))
-except: print(True)" 2>/dev/null)
-  [ "$TRACKING" = "False" ] && COVERAGE_TRACKING_ENABLED=false
-fi
+[ "$TRACKING" = "False" ] && COVERAGE_TRACKING_ENABLED=false
 
 COVERAGE_BUILD_PRESENT=false
 [ -n "$COVERAGE_BINARY" ] && [ -x "$COVERAGE_BINARY" ] && COVERAGE_BUILD_PRESENT=true
@@ -95,7 +113,27 @@ EXEC_RATE=0
 PARSED_ENGINE_LOG=false
 FORK_MODE=false
 
-OUT_DIR="${FUZZ_OUT_DIR:-out}"
+# In multi mode, the AFL++ output dir and libFuzzer logs are per-harness.
+# In singular mode, fall back to the legacy locations.
+if is_multi; then
+  OUT_DIR="${FUZZ_OUT_DIR:-$FUZZ_ROOT/harnesses/$HARNESS/aflpp-out}"
+  # Pick the first libFuzzer slot whose harness matches; use its log file.
+  LIBFUZZER_LOG=$(MF="$STATE_DIR/fuzzers.json" H="$HARNESS" python3 - <<'PY' 2>/dev/null
+import json, os
+try:
+    doc = json.load(open(os.environ['MF']))
+    for s in doc.get('slots', []):
+        if s.get('engine') == 'libfuzzer' and s.get('harness') == os.environ['H']:
+            print(s.get('log_file',''))
+            break
+except Exception:
+    pass
+PY
+)
+else
+  OUT_DIR="${FUZZ_OUT_DIR:-out}"
+  LIBFUZZER_LOG="${LIBFUZZER_LOG:-$STATE_DIR/fuzzer.log}"
+fi
 
 if [ -f "$OUT_DIR/default/fuzzer_stats" ]; then
   ENGINE="aflpp"
@@ -105,7 +143,7 @@ if [ -f "$OUT_DIR/default/fuzzer_stats" ]; then
   HANGS=$(awk -F': *' '/^saved_hangs/{print $2; exit}' "$OUT_DIR/default/fuzzer_stats" 2>/dev/null || echo 0)
   EXEC_RATE=$(awk -F': *' '/^execs_per_sec/{print $2; exit}' "$OUT_DIR/default/fuzzer_stats" 2>/dev/null || echo 0)
   PARSED_ENGINE_LOG=true
-elif [ -f "$STATE_DIR/fuzzer.log" ]; then
+elif [ -n "$LIBFUZZER_LOG" ] && [ -f "$LIBFUZZER_LOG" ]; then
   ENGINE="libfuzzer"
 
   # Detect fork mode multiple ways - the fuzzer.log doesn't always capture the
@@ -113,14 +151,33 @@ elif [ -f "$STATE_DIR/fuzzer.log" ]; then
   #   1. Look in the log for explicit fork-mode markers
   #   2. Check if the running process has -fork= in its cmdline (most reliable)
   #   3. Check if a libFuzzerTemp.FuzzWithFork<PID>.dir exists
-  if grep -q -- '-fork=' "$STATE_DIR/fuzzer.log" 2>/dev/null \
-     || grep -qE 'fuzzing in separate process|INFO: fork_mode|Job [0-9]+ exited' "$STATE_DIR/fuzzer.log" 2>/dev/null; then
+  if grep -q -- '-fork=' "$LIBFUZZER_LOG" 2>/dev/null \
+     || grep -qE 'fuzzing in separate process|INFO: fork_mode|Job [0-9]+ exited' "$LIBFUZZER_LOG" 2>/dev/null; then
     FORK_MODE=true
   fi
 
+  # In multi mode, the relevant pid is the matched slot's pid_file (resolved
+  # at LIBFUZZER_LOG selection time). In singular mode, fall back to the
+  # legacy fuzzer.pid.
   FUZZER_PID=""
-  if [ -f "$STATE_DIR/fuzzer.pid" ]; then
-    FUZZER_PID=$(cat "$STATE_DIR/fuzzer.pid" 2>/dev/null)
+  PID_FILE_TO_READ=""
+  if is_multi; then
+    PID_FILE_TO_READ=$(MF="$STATE_DIR/fuzzers.json" H="$HARNESS" python3 - <<'PY' 2>/dev/null
+import json, os
+try:
+    doc = json.load(open(os.environ['MF']))
+    for s in doc.get('slots', []):
+        if s.get('engine') == 'libfuzzer' and s.get('harness') == os.environ['H']:
+            print(s.get('pid_file',''))
+            break
+except Exception:
+    pass
+PY
+)
+  fi
+  [ -z "$PID_FILE_TO_READ" ] && PID_FILE_TO_READ="$STATE_DIR/fuzzer.pid"
+  if [ -f "$PID_FILE_TO_READ" ]; then
+    FUZZER_PID=$(cat "$PID_FILE_TO_READ" 2>/dev/null)
     if [ -n "$FUZZER_PID" ] && [ -r "/proc/$FUZZER_PID/cmdline" ]; then
       if tr '\0' ' ' < "/proc/$FUZZER_PID/cmdline" 2>/dev/null | grep -q -- '-fork='; then
         FORK_MODE=true
@@ -156,7 +213,7 @@ elif [ -f "$STATE_DIR/fuzzer.log" ]; then
   }
 
   # Try the parent log
-  LAST_PARENT=$(grep -E '^#[0-9]+' "$STATE_DIR/fuzzer.log" 2>/dev/null | tail -1)
+  LAST_PARENT=$(grep -E '^#[0-9]+' "$LIBFUZZER_LOG" 2>/dev/null | tail -1)
   if [ -n "$LAST_PARENT" ]; then
     read P_EXECS P_PATHS P_RATE <<< "$(parse_status_line "$LAST_PARENT")"
     if _is_int "$P_EXECS" && [ "$P_EXECS" -gt 0 ]; then
@@ -198,7 +255,7 @@ elif [ -f "$STATE_DIR/fuzzer.log" ]; then
   # Final fallback: parse any "Job <PID> exited" lines for an at-least-something
   # signal. These don't carry exec stats but they DO confirm the master is alive.
   if [ "$PARSED_ENGINE_LOG" = "false" ]; then
-    if grep -qE 'Job [0-9]+ exited' "$STATE_DIR/fuzzer.log" 2>/dev/null; then
+    if grep -qE 'Job [0-9]+ exited' "$LIBFUZZER_LOG" 2>/dev/null; then
       # Master is running fork batches but no #N lines visible. This happens
       # when no worker has emitted a status line yet (campaign just started)
       # or when every worker crashed before its first status emit.
@@ -271,7 +328,18 @@ if [ "$COVERAGE_TRACKING_ENABLED" = "true" ] && [ "$COVERAGE_BUILD_PRESENT" = "t
 
     if [ -f "$PROFRAW" ]; then
       if "$LLVM_PROFDATA_BIN" merge -sparse "$PROFRAW" -o "$PROFDATA" 2>/dev/null; then
+        # Include any shared libraries the coverage binary dynamically links to
+        # that live under workspace-local build dirs (_build_cov, _build_fuzz, etc.)
+        # so llvm-cov sees the library's coverage mapping, not just the harness'.
+        EXTRA_OBJ_ARGS=()
+        while IFS= read -r so_path; do
+          [ -n "$so_path" ] && [ -f "$so_path" ] && EXTRA_OBJ_ARGS+=(-object "$so_path")
+        done < <(ldd "$COVERAGE_BINARY" 2>/dev/null \
+                   | awk '/=>/ {print $3}' \
+                   | grep -E '/_build(_cov|_fuzz|_symcc)?/' \
+                   || true)
         SUMMARY_JSON=$("$LLVM_COV_BIN" export "$COVERAGE_BINARY" \
+                          "${EXTRA_OBJ_ARGS[@]}" \
                           -instr-profile="$PROFDATA" \
                           --summary-only 2>/dev/null || true)
         if [ -n "$SUMMARY_JSON" ]; then
@@ -298,15 +366,33 @@ fi
 #------------------------------------------------------------------------------
 # 5. Find new crash files since last snapshot
 #------------------------------------------------------------------------------
-PREV=$(ls -t "$SNAPSHOTS_DIR"/coverage-*.json 2>/dev/null | head -1)
+# Pick the previous snapshot for THIS harness only (in multi mode), so
+# new_crashes_since_previous is harness-scoped.
+if is_multi; then
+  PREV=$(ls -t "$SNAPSHOTS_DIR"/coverage-"$HARNESS"-*.json 2>/dev/null | head -1)
+else
+  PREV=$(ls -t "$SNAPSHOTS_DIR"/coverage-*.json 2>/dev/null | head -1)
+fi
 PREV_TS=0
 if [ -n "$PREV" ]; then
-  PREV_TS=$(basename "$PREV" | sed 's/coverage-//;s/.json//')
+  # Filenames are coverage-<ts>.json (singular) or coverage-<harness>-<ts>.json (multi)
+  PREV_TS=$(basename "$PREV" | sed -E "s/^coverage-(${HARNESS}-)?//;s/.json$//")
+  # Defend against parse failure
+  case "$PREV_TS" in
+    ''|*[!0-9]*) PREV_TS=0 ;;
+  esac
 fi
 
 NEW_CRASHES_JSON="[]"
-NEW_CRASH_LIST=$(find "${FUZZ_CRASHES_DIR:-fuzz/crashes}/new" -name '*.bin' \
-                   -newermt "@$PREV_TS" -type f 2>/dev/null | head -50)
+# In multi mode, only count crashes whose filename prefix attributes them to
+# this harness (i.e. <harness>__<hash>.bin). In singular mode keep current.
+if is_multi; then
+  NEW_CRASH_LIST=$(find "${FUZZ_CRASHES_DIR:-fuzz/crashes}/new" -name "${HARNESS}__*.bin" \
+                     -newermt "@$PREV_TS" -type f 2>/dev/null | head -50)
+else
+  NEW_CRASH_LIST=$(find "${FUZZ_CRASHES_DIR:-fuzz/crashes}/new" -name '*.bin' \
+                     -newermt "@$PREV_TS" -type f 2>/dev/null | head -50)
+fi
 if [ -n "$NEW_CRASH_LIST" ]; then
   NEW_CRASHES_JSON=$(echo "$NEW_CRASH_LIST" | python3 -c "
 import sys, json
@@ -370,9 +456,18 @@ fi
 #------------------------------------------------------------------------------
 # 8. Write the snapshot
 #------------------------------------------------------------------------------
+# In multi mode, include the harness field at the top level so the validator
+# can cross-check it against the filename prefix. In singular mode the field
+# is omitted to keep the snapshot's shape identical to v8.
+HARNESS_JSON_LINE=""
+if is_multi; then
+  HARNESS_JSON_LINE="\"harness\": \"$HARNESS\","
+fi
+
 cat > "$OUT_FILE" <<EOF
 {
   "schema": "coverage-snapshot/v2",
+  $HARNESS_JSON_LINE
   "timestamp": $TS,
   "engine": "$ENGINE",
   "fuzzer_stats": {

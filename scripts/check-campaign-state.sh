@@ -59,13 +59,31 @@ if [ -n "$TARGET_SOURCE" ] && [ -f "$TARGET_SOURCE" ] && [ -n "$RECORDED_HASH" ]
   fi
 fi
 
-# 4. Check if fuzzer is running
-if [ -f "$STATE_DIR/fuzzer.pid" ]; then
-  PID=$(cat "$STATE_DIR/fuzzer.pid")
-  if kill -0 "$PID" 2>/dev/null; then
-    echo "running"
-    exit 0
+# 4. Check if any fuzzer slot is running.
+# v0.17 multi-fuzzer: walk fuzzer-*.pid; campaign is "running" if at least
+# one declared slot is alive. Dead-but-declared slots get relaunched by
+# check-slot-liveness.sh, so a partial-alive state is just "running".
+# Pre-v0.17 fallback: single fuzzer.pid.
+ANY_ALIVE=0
+for pidf in "$STATE_DIR"/fuzzer-*.pid; do
+  [ -f "$pidf" ] || continue
+  PID=$(cat "$pidf" 2>/dev/null | tr -d ' \n')
+  if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+    ANY_ALIVE=1
+    break
   fi
+done
+if [ "$ANY_ALIVE" -eq 0 ] && [ -f "$STATE_DIR/fuzzer.pid" ]; then
+  # Pre-v0.17 single-fuzzer layout
+  PID=$(cat "$STATE_DIR/fuzzer.pid" 2>/dev/null | tr -d ' \n')
+  if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+    ANY_ALIVE=1
+  fi
+fi
+
+if [ "$ANY_ALIVE" -eq 1 ]; then
+  echo "running"
+  exit 0
 fi
 
 # 5. Otherwise it's stopped, ready to resume

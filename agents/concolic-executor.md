@@ -26,6 +26,23 @@ Your only writable scope is `fuzz/`.
 
 ---
 
+## Multi-Harness Mode (schema v9)
+
+In multi mode, scope every path to the target harness (read from `--harness <name>` if passed, or `current.json:recommendation.harness`):
+
+- **SymCC binary**: read from `fuzz/state/harnesses.json[<name>].symcc_binary` (NOT `fuzz/state/harness-built.json`, which is a read-only mirror of harness[0] and may belong to the wrong harness).
+- **Seeds to pick from**: `fuzz/harnesses/<HARNESS>/corpus/` (helper: `corpus_dir "$HARNESS"`)
+- **Output quarantine**: `fuzz/harnesses/<HARNESS>/corpus-quarantine/` (helper: `quarantine_dir "$HARNESS"`)
+- **Promotion**: `${CLAUDE_PLUGIN_ROOT}/scripts/corpus-quarantine.sh --harness <HARNESS>`
+- **Status report filename**: `fuzz/state/snapshots/concolic-<HARNESS>-<ts>.json` (use `bash ${CLAUDE_PLUGIN_ROOT}/scripts/_lib/harness-path.sh concolic_snapshot_name "$HARNESS" "$TS"`), with a top-level `"harness": "<HARNESS>"` field.
+- **Plan source**: read the harness's `### <name>` H3 under `## Targets` in `plan.md` — specifically `#### Concolic Strategy`.
+
+The 5-invocation per-tick CPU cap is per dispatch (one harness per tick, so still 5 total).
+
+In singular mode, fall back to v8 paths: `fuzz/harness/<target>_fuzzer_symcc`, `fuzz/corpus/`, `concolic-<ts>.json`, top-level `## Concolic Strategy` in `plan.md`.
+
+---
+
 You drive SymCC. The LLM identified *which* branches matter; SymCC generates *concrete inputs* that reach them.
 
 ## Authoritative spec

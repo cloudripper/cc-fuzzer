@@ -157,10 +157,14 @@ All commands are prefixed `/cc-fuzzer:`.
 
 | Script | Purpose |
 |---|---|
-| `scripts/check-campaign-state.sh` | The state-machine dispatcher. Returns `none\|running\|stopped\|stale\|corrupted`. |
-| `scripts/run-fuzzer.sh` | Launch fuzzer in background, write PID file. Auto-passes `-c <cmplog_binary>` to AFL++ when available. Supports in-process and process-based fuzzing modes. |
-| `scripts/stop-fuzzer.sh` | Clean shutdown via `kill-harness-processes.sh` (PGID-aware). |
-| `scripts/kill-harness-processes.sh` | Deterministic teardown of harness processes by process group. Used before any relaunch. |
+| `scripts/check-campaign-state.sh` | The state-machine dispatcher. Returns `none\|running\|stopped\|stale\|corrupted`. Multi-fuzzer-aware: `running` if any slot is alive. |
+| `scripts/run-fuzzer.sh` | Reads `fuzz/state/fuzz-config.json.fuzzer_slots` and launches each slot. Defaults to a single `main` slot for single-fuzzer campaigns. |
+| `scripts/launch-fuzzer-slot.sh` | Launches one named fuzzer slot (engine-agnostic). Used internally by `run-fuzzer.sh` and `check-slot-liveness.sh`. |
+| `scripts/check-slot-liveness.sh` | Per-slot auto-restart for multi-fuzzer campaigns. Anti-flap throttle (3 restarts in 60s → slot marked deadlocked). Called by the orchestrator at the top of each WARM tick. |
+| `scripts/stop-fuzzer.sh` | Clean shutdown of all slots, or one slot via `--slot <name>`. |
+| `scripts/kill-harness-processes.sh` | Deterministic teardown of all slot processes by process group. Used before any relaunch. |
+| `scripts/check-seed-safety.sh` | Pre-promotion denylist scanner — refuses unambiguously destructive seed payloads (`rm -rf /`, fork bombs, `mkfs`/`dd` on real devices, `>/proc/sysrq-trigger`). Wired into `corpus-quarantine.sh`. |
+| `scripts/write-harness-built.sh` | Writes `fuzz/state/harness-built.json` with **computed** SHA-256 hashes. The harness-writer calls this instead of hand-writing the JSON (avoids the placeholder-stub bug that caused every subsequent `check-campaign-state.sh` to return `stale`). |
 | `scripts/snapshot-coverage.sh` | Materializes a `coverage-<ts>.json` snapshot for the LLM. |
 | `scripts/extract-cmplog-dict.sh` | Harvests AFL++ cmplog runtime observations into a libFuzzer-format dict for `coverage-analyst` and `seed-generator`. |
 | `scripts/find-delta-targets.sh` | On-demand: parses `git diff <range>` into per-hunk records (file + line range + function context). Consumed by `coverage-analyst` for `delta_target` gap priority. |
@@ -172,22 +176,25 @@ All commands are prefixed `/cc-fuzzer:`.
 | `scripts/status.sh` | Pure-shell campaign status (no LLM). |
 | `scripts/doctor.sh` | Read-only state/plugin diagnostics. |
 | `scripts/validate-state.sh` | Schema validation against `STATE_SCHEMA.md`. |
-| `scripts/migrate-state.sh` | Schema migration runner (current schema is v7). |
+| `scripts/migrate-state.sh` | Schema migration runner (current schema is v8). The v7→v8 step tombstones legacy `finding/v1` records with malformed IDs, renames legacy `fuzzer.pid`/`fuzzer.engine`/`fuzzer.log` into the `fuzzer-main.*` slot layout, bumps `fuzz-config.json` to v2, and backfills `fuzzer_slots = [main]`. |
 | `scripts/integrity-check.sh` | Verifies plugin files match `MANIFEST.md5`. Run before trusting your memory of plugin internals. |
 | `scripts/env-check.sh` | SessionStart hook: reports tool availability and FHS / nix-shell status. |
 | `scripts/detect-crashes.sh` | PostToolUse hook: nudges the orchestrator on new crashes. |
 
 ### State files (`fuzz/state/`)
 
-Authoritative spec: `STATE_SCHEMA.md` at the plugin root. Current schema version is **v7**.
+Authoritative spec: `STATE_SCHEMA.md` at the plugin root. Current schema version is **v8**.
 
 | File | Lifecycle | Purpose |
 |---|---|---|
 | `schema-version` | plain text | Pinned schema version for migrations. |
 | `plan.md` | rewritable-with-archival | Campaign strategy document. Written by `campaign-planner` (Opus) at COLD; can be revised mid-campaign via `/cc-fuzzer:plan` — each prior version is archived to `snapshots/plan-{ts}.md`. Read by every specialist on dispatch. |
-| `current.json` | rewritable | Compact, agent-friendly campaign snapshot. The orchestrator reads **only this** on warm ticks. |
-| `harness-built.json` | rewritable (`harness-built/v5`) | Records the three built binaries, `fuzzing_mode` (`in_process` \| `process_based`), `cmplog_enabled`, `verify_binary`. |
+| `current.json` | rewritable | Compact, agent-friendly campaign snapshot. The orchestrator reads **only this** on warm ticks. v8 adds a `fuzzers[]` array and a `multi_fuzzer` flag. |
+| `harness-built.json` | rewritable (`harness-built/v5`) | Records the three built binaries, `fuzzing_mode` (`in_process` \| `process_based`), `cmplog_enabled`, `verify_binary`. **v0.17**: written by `write-harness-built.sh` with real computed hashes. |
+| `fuzz-config.json` | rewritable (`fuzz-config/v2`) | User-editable launch config. **v0.17**: `fuzzer_slots[]` declares per-slot engine/role/power-schedule for multi-fuzzer campaigns. |
+| `fuzzers.json` | rewritable (`fuzzers/v1`) | Live per-slot manifest (pid, pgid, started_at, restart_count). Written by `launch-fuzzer-slot.sh` and `check-slot-liveness.sh`. |
 | `findings.jsonl` | append-only | Two-stage-verified unique crashes. Only `scripts/findings.sh` writes here. |
+| `findings-legacy.jsonl` | append-only | **v0.17**: tombstoned legacy `finding/v1` records that didn't conform to v7 strict validation (malformed IDs, wrong field set). Preserved here for audit; not read by any tool. |
 | `events.jsonl` | append-only | Every loop tick, structured. |
 | `snapshots/coverage-<ts>.json` | immutable | Periodic coverage snapshots. |
 | `snapshots/gaps-<ts>.json` | immutable | Ranked gap report from `coverage-analyst`. |
@@ -195,7 +202,9 @@ Authoritative spec: `STATE_SCHEMA.md` at the plugin root. Current schema version
 | `cmplog-dict-<ts>.dict` | immutable | Cmplog observations, libFuzzer dict format. |
 | `FINDINGS-REPORT.md` | rewritable | Human-readable report. Only `reporting-agent` writes here. |
 | `budget.json` | rewritable | Running LLM-spend estimate. |
+| `fuzzer-<slot>.{pid,engine,log}` | session | One per running slot (`main` by default; more for multi-fuzzer). |
 | `crashes/flaky/` | — | Stage-2-failed crashes (harness artifacts). Not recorded in `findings.jsonl`. |
+| `corpus-quarantine/rejected/` | — | **v0.17**: seeds blocked by `check-seed-safety.sh` (destructive payloads). |
 
 ## Steering the campaign with `fuzz/guidance.md`
 
@@ -243,6 +252,28 @@ Optionally, when the engine is AFL++ and `afl-clang-fast` is installed:
 4. **Cmplog binary** — `<target>_fuzzer_cmplog` built with `AFL_LLVM_CMPLOG=1`, **no sanitizers**. Passed to `afl-fuzz` via `-c` for Redqueen-style input-to-state mutations.
 
 If the cmplog build is skipped (libFuzzer engine, or `afl-clang-fast` missing), `coverage-analyst` falls back to source-only reasoning and `seed-generator` skips cmplog-grounded seeds. The campaign continues — cmplog is purely additive.
+
+## Multi-fuzzer campaigns (v0.17+)
+
+Single-fuzzer is still the default — a fresh campaign launches one `main` slot with the engine auto-detected from the harness binary, just like v0.16. To run multiple fuzzers concurrently against the same corpus, declare slots in `fuzz/state/fuzz-config.json`:
+
+```json
+{
+  "schema": "fuzz-config/v2",
+  "fuzz_forks": 2,
+  "fuzzer_slots": [
+    {"slot": "main",        "engine": "libfuzzer"},
+    {"slot": "afl-explore", "engine": "aflpp", "role": "secondary", "afl_power_schedule": "explore"},
+    {"slot": "afl-fast",    "engine": "aflpp", "role": "secondary", "afl_power_schedule": "fast"}
+  ]
+}
+```
+
+`run-fuzzer.sh` launches each slot via `launch-fuzzer-slot.sh`. Each slot gets its own `fuzzer-<slot>.{pid,engine,log}` files; the live manifest lives in `fuzz/state/fuzzers.json`. The orchestrator treats all slots as a single shared-corpus campaign: one `recommendation.branch`, one triage pass, one coverage view.
+
+**Per-slot auto-restart**: at the top of every WARM tick, the orchestrator runs `check-slot-liveness.sh`. Any slot declared in `fuzz_slots` whose PID is dead gets relaunched silently. An anti-flap throttle prevents storms — if a slot has been restarted 3 times in 60 seconds, it's marked deadlocked and left dead with an error event so the user can investigate.
+
+**`recommendation.branch == "restart_fuzzer"`** fires only when *every* slot is dead. The orchestrator never sees per-slot restarts — those happen below its view in the liveness checker.
 
 ## Two-stage crash triage
 
