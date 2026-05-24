@@ -86,6 +86,7 @@ if not declared:
     declared = [{'slot': s['slot'], 'engine': s['engine'],
                  'role': s.get('role'),
                  'afl_power_schedule': s.get('afl_power_schedule'),
+                 'timeout_ms': s.get('timeout_ms'),
                  'harness': s.get('harness','')}
                 for s in live.values()]
 
@@ -103,13 +104,14 @@ for d in declared:
         str(cur.get('restart_count', 0) or 0),
         str(cur.get('last_restart_at') or ''),
         d.get('harness','') or '',
+        str(d.get('timeout_ms','') if d.get('timeout_ms') is not None else ''),
     ]))
 print('\n'.join(out))
 PY
 )
 
 ANY_RESTARTED=0
-while IFS='|' read -r slot engine role schedule lf_forks cur_pid restart_count last_restart_at slot_harness; do
+while IFS='|' read -r slot engine role schedule lf_forks cur_pid restart_count last_restart_at slot_harness timeout_ms; do
   [ -z "$slot" ] && continue
 
   # Liveness check
@@ -175,6 +177,7 @@ except:
   [ -n "$role" ]         && args+=(--role "$role")
   [ -n "$schedule" ]     && args+=(--power-schedule "$schedule")
   [ -n "$lf_forks" ]     && args+=(--libfuzzer-forks "$lf_forks")
+  [ -n "$timeout_ms" ]   && args+=(--timeout-ms "$timeout_ms")
   [ -n "$slot_harness" ] && args+=(--harness "$slot_harness")
 
   if bash "$SCRIPT_DIR/launch-fuzzer-slot.sh" "${args[@]}" >/dev/null 2>&1; then

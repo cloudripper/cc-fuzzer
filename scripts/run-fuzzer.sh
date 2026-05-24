@@ -163,8 +163,9 @@ for entry in data:
         entry.get('afl_power_schedule','') or '',
         str(entry.get('libfuzzer_forks','') if entry.get('libfuzzer_forks') is not None else ''),
         entry.get('harness','') or '',
+        str(entry.get('timeout_ms','') if entry.get('timeout_ms') is not None else ''),
     ]))
-" | while IFS='|' read -r slot engine role schedule lf_forks slot_harness; do
+" | while IFS='|' read -r slot engine role schedule lf_forks slot_harness timeout_ms; do
     args=(--slot "$slot" --engine "$engine" --corpus "$CORPUS")
     # In multi mode the slot's binary is per-harness; pass --harness and let
     # launch-fuzzer-slot.sh resolve. In singular mode pass --binary directly.
@@ -181,6 +182,7 @@ for entry in data:
     [ -n "$role" ]      && args+=(--role "$role")
     [ -n "$schedule" ]  && args+=(--power-schedule "$schedule")
     [ -n "$lf_forks" ]  && args+=(--libfuzzer-forks "$lf_forks")
+    [ -n "$timeout_ms" ] && args+=(--timeout-ms "$timeout_ms")
     if ! bash "$SCRIPT_DIR/launch-fuzzer-slot.sh" "${args[@]}"; then
       echo "WARN: launch failed for slot=$slot${slot_harness:+ harness=$slot_harness}" >&2
       RC=1

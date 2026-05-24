@@ -61,7 +61,19 @@ elif [ -n "${IN_NIX_SHELL:-}" ]; then
 fi
 
 #------------------------------------------------------------------------------
-# 3. Preflight (only if fuzz/ exists in cwd)
+# 3. Capture Nix dev-shell environment (v0.18)
+#------------------------------------------------------------------------------
+# Snapshots PATH-resolved absolute paths for every tool cc-fuzzer scripts care
+# about into fuzz/state/nix-env.json. Downstream scripts source
+# scripts/_lib/nix-tools.sh and call `nix_tool <name>` instead of grepping
+# /nix/store. Capture runs before preflight so preflight diagnostics can read
+# the fresh snapshot.
+if [ -d "fuzz" ] && [ -x "$SCRIPT_DIR/capture-nix-env.sh" ]; then
+  bash "$SCRIPT_DIR/capture-nix-env.sh" >/dev/null 2>&1 || true
+fi
+
+#------------------------------------------------------------------------------
+# 4. Preflight (only if fuzz/ exists in cwd)
 #------------------------------------------------------------------------------
 STATUS="not-in-project"
 if [ -d "fuzz" ] && [ -x "$SCRIPT_DIR/preflight.sh" ]; then

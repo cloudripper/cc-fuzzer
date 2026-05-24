@@ -1,532 +1,258 @@
 # cc-fuzzer
 
-A Claude Code plugin for **LLM-in-the-loop coverage-guided fuzzing, concolic execution, and crash triage** of C/C++ source and binaries. The architecture borrows specific, named patterns from the DARPA AIxCC finalists — see [Which AIxCC patterns are used](#which-aixcc-patterns-are-used) below.
+A Claude Code plugin for **LLM-in-the-loop coverage-guided fuzzing, concolic execution, and crash triage** of C/C++ source and binaries. It keeps a real fuzzer (libFuzzer / AFL++) fed and steered by model agents, then verifies and reports what it finds.
 
-cc-fuzzer is **not** a Cyber Reasoning System. It covers the dynamic-analysis half of what a CRS does (DAST + concolic + triage + reporting); SAST is planned, patching is out of scope. See [Scope: what cc-fuzzer is and isn't](#scope-what-cc-fuzzer-is-and-isnt) for the explicit in/out list.
+cc-fuzzer is **not** a Cyber Reasoning System. It covers the dynamic-analysis half of what a CRS does (fuzzing + concolic + triage + reporting) plus a static code-review pass; autonomous SAST is partial and patch generation is out of scope. The architecture reuses three named patterns from the DARPA AIxCC finalists — see [AIxCC patterns](#aixcc-patterns) and [Scope](#scope).
 
 ## Quick start
 
-**1. Install the plugin** (one-time, from inside Claude Code)
-
 ```
+# 1. Install (one-time, inside Claude Code)
 /plugin marketplace add ./cc-fuzzer
 /plugin install cc-fuzzer
-```
 
-**2. (Recommended) enter the pinned-toolchain dev shell**
-
-```bash
+# 2. (Recommended) pinned-toolchain dev shell — see Prerequisites for the no-nix path
 cd ~/projects/your-target
 nix develop $CLAUDE_PLUGIN_ROOT
 claude
-```
 
-Skip if you don't have nix — see [Prerequisites](#prerequisites) for the host-tools path. Without nix, `afl-clang-fast` / SymCC may not be available and the campaign falls back to libFuzzer-only.
-
-**3. Inside Claude, start a campaign and drive the loop**
-
-```
+# 3. Start a campaign and drive the loop
 /cc-fuzzer:campaign src/parser.c parse_message
 /loop 10m /cc-fuzzer:tick
-```
 
-`/cc-fuzzer:campaign` runs COLD setup once (analyze → harness → 3 binaries → seed corpus → launch fuzzer). `/loop 10m /cc-fuzzer:tick` then fires WARM ticks every 10 minutes at Claude Code's loop cadence. The orchestrator picks the dispatch branch deterministically each tick — sleep, analyze gaps, generate seeds, run SymCC, triage crashes, etc.
-
-**4. Check progress without spending LLM tokens**
-
-```
+# 4. Check progress (pure shell, no LLM call) / render findings / stop
 /cc-fuzzer:status
-```
-
-Pure shell — safe to run anytime, no agent call.
-
-**5. Render the findings report and stop**
-
-```
 /cc-fuzzer:report
 /cc-fuzzer:stop
 ```
 
-`/cc-fuzzer:report` re-runs every recorded reproducer against the current harness binary and writes `fuzz/state/FINDINGS-REPORT.md` with confirmed bugs and copy-pasteable repro commands.
+`/cc-fuzzer:campaign` runs COLD setup once (analyze → harness → 3 binaries → seed corpus → launch fuzzer). `/loop 10m /cc-fuzzer:tick` fires WARM ticks every 10 minutes. `/cc-fuzzer:report` re-runs every recorded reproducer against the current harness binary and writes `fuzz/state/FINDINGS-REPORT.md`. To pick a stopped campaign back up without re-analyzing, `/cc-fuzzer:resume`.
 
-To resume the campaign, run `/cc-fuzzer:resume`. The campaign will be restarted and resumed based off of the campaign's saved state.
+Prefer not to babysit the loop? `/cc-fuzzer:yolo on` opts into auto-ticking (off by default) — see [YOLO](#yolo-self-looping).
 
-For details on what each tick actually does, see [What "LLM-guided" means here](#what-llm-guided-means-here) below.
+## How it works
 
-## What "LLM-guided" means here
-
-The LLM does not just write a harness and walk away. The campaign is split into a one-time **COLD** setup and a steady-state **WARM** tick. The orchestrator runs one tick per invocation (no self-looping); the user closes the loop via `/loop` or repeated `/cc-fuzzer:tick`. The dispatch branch on each tick is picked **deterministically** by `update-current.sh`, not by the LLM — the orchestrator only executes it.
+The campaign splits into a one-time **COLD** setup and a steady-state **WARM** tick. The fuzzer runs continuously in the background; each WARM tick the orchestrator reads one file (`fuzz/state/current.json`) and either sleeps or dispatches **one** specialist. On a manual tick (and YOLO `guided` mode) the dispatch branch is computed **deterministically** by `update-current.sh` and the orchestrator just executes it; YOLO's `hybrid`/`self_loop` modes let the orchestrator reason over cost/redundancy/progress signals to decide instead.
 
 ```
-COLD (once per campaign)
-  PLAN (Opus)  →  HARNESS (3 binaries + opt cmplog)  →  SEED  →  LAUNCH
-                                                              │
-                                                              ▼
-       ┌─────────────────────────────────────────────────────────┐
-       │  FUZZ + CMPLOG  (background, persistent)                │
-       │  ─ runtime input-to-state: AFL++ feeds cmplog operands  │
-       │    into its own mutation queue. Silent, no LLM.         │
-       └─────────────────────────────────────────────────────────┘
+COLD (once)
+  PLAN (Opus) → HARNESS (3 binaries + opt cmplog) → SEED → LAUNCH
+                                                       │
+                                                       ▼
+   ┌───────────────────────────────────────────────────────────┐
+   │ FUZZ + CMPLOG (background, persistent)                    │
+   │  AFL++ feeds cmplog operands into its own mutation queue. │
+   │  Silent, no LLM.                                          │
+   └───────────────────────────────────────────────────────────┘
                                   │
-       snapshot-coverage.sh ──────┤
-       extract-cmplog-dict.sh ────┘   (refreshed on analyze_gaps)
+   snapshot-coverage.sh ──────────┤
+   extract-cmplog-dict.sh ────────┘  (refreshed on gap analysis)
                                   │
                                   ▼
 WARM tick (one per /cc-fuzzer:tick)
-  update-current.sh  →  current.json.recommendation.branch
+  update-current.sh → current.json.recommendation.branch
                                   │
-   ┌──────────────────────────────┴───────────────────────────────┐
-   │ DISPATCH  (deterministic, picked by shell, not the LLM)      │
-   │                                                              │
-   │   sleep             — coverage climbing, no work             │
-   │   analyze_gaps   →  coverage-analyst                         │
-   │                       reads coverage + cmplog dict;          │
-   │                       emits gaps-<ts>.json (entries marked   │
-   │                       `direct_compare` = cmplog handling)    │
-   │   generate_seeds →  seed-generator                           │
-   │                       reads gaps + latest cmplog dict for    │
-   │                       grounded operands                      │
-   │   concolic       →  concolic-executor (SymCC on hard gaps)   │
-   │   mutator        →  mutator (structure-aware input)          │
-   │   triage         →  crash-triager (Stage 1 + Stage 2)        │
-   │   restart_fuzzer →  kill + relaunch                          │
-   │   fix_instrumentation → refuse to advance, surface errors    │
-   │   stop                                                       │
-   └──────────────────────────────────────────────────────────────┘
+   ┌──────────────────────────────┴───────────────────────────┐
+   │ DISPATCH (one specialist, or sleep)                      │
+   │   sleep              — coverage climbing, no work         │
+   │   analyze_gaps     → coverage-analyst                     │
+   │   generate_seeds   → seed-generator                       │
+   │   concolic         → concolic-executor (SymCC, hard gaps) │
+   │   mutator          → mutator (structure-aware input)      │
+   │   triage           → crash-triager (verification pipeline)│
+   │   restart_fuzzer   → kill + relaunch                      │
+   │   fix_instrumentation → refuse to advance, surface errors │
+   └────────────────────────────────────────────────────────────┘
 ```
 
-The fuzzer (libFuzzer or AFL++) runs continuously in the background. Cmplog has two channels in the flow above: a **runtime channel** inside the FUZZ box (AFL++ uses the cmplog binary directly, no LLM involvement) and an **offline channel** where `extract-cmplog-dict.sh` writes a libFuzzer-format dict that `coverage-analyst` and `seed-generator` read. The offline channel is what lets the LLM avoid spending tokens on branches cmplog has already claimed. libFuzzer campaigns get neither channel — input-to-state is an AFL++-only feature in this plugin.
+The orchestrator's most important job is **knowing when not to do work**: token cost is dominated by re-walking source unnecessarily, so a steady tick where coverage is climbing should sleep.
 
-## Which AIxCC patterns are used
+### Three-mode state machine
 
-cc-fuzzer is not a port of any single AIxCC system — it's a single-host Claude Code plugin. But it deliberately reuses three named patterns from the AIxCC finalists, and explicitly omits a fourth.
+Every orchestrator invocation begins with `check-campaign-state.sh`:
 
-| Pattern | Source | Where it lives here |
+| State | Mode | Behavior |
 |---|---|---|
-| **LLM-augmented coverage fuzzer loop** (the LLM keeps libFuzzer/AFL++ fed with seeds and mutators instead of replacing the fuzzer) | [Buttercup](https://github.com/trailofbits/buttercup) (Trail of Bits, AIxCC runner-up) | `fuzz-orchestrator` + `seed-generator` + `mutator` agents, driven by the WARM-tick loop |
-| **`concolic_input_gen`** — dispatch SymCC against specific uncovered constraints flagged by coverage analysis, write the resulting inputs back into the corpus | [Atlantis-Multilang](https://github.com/Team-Atlanta/atlantis-multilang-snapshot/tree/main/uniafl/src/concolic) (Team Atlanta, AIxCC winner) | `concolic-executor` agent + `scripts/run-concolic.sh` + `scripts/build-symcc-target.sh` |
-| **Iterative harness build-repair** — write harness, build, feed compiler errors back to the LLM, retry | [OSS-Fuzz-Gen](https://github.com/google/oss-fuzz-gen) (Google) | `harness-writer` agent's repair loop |
-| ~~Ensemble / inter-CRS data exchange / Kubernetes orchestration~~ | OSS-CRS, Buttercup, Atlantis | **Not used.** Single-host, single-process; see [Scope](#scope-what-cc-fuzzer-is-and-isnt). |
-
-What this means in practice: the orchestrator agent owns a state machine modeled on Buttercup's campaign driver, the concolic agent's I/O contract mirrors Atlantis-Multilang's `concolic_input_gen` (read corpus seed → SymCC run → write new corpus seeds), and the harness-writer's repair loop is the OSS-Fuzz-Gen pattern restricted to a single target.
-
-[OSS-CRS](https://github.com/ossf/oss-crs) provides a framework for shaping CRSs. cc-fuzzer borrows a couple of its organizing concepts (plugin manifest as `crs.yaml`, shared corpus directory, budget tracking) but doesn't aspire to CRS-hood — see [Scope](#scope-what-cc-fuzzer-is-and-isnt) for the in/out list.
+| `none` | **COLD** | Full setup: analyze, harness, build 3 binaries (+ opt cmplog), bootstrap corpus, launch. |
+| `stopped` | **RESUME** | Relaunch with the existing harness and corpus, then one tick. |
+| `running` | **WARM** | Read `current.json`, decide, optionally dispatch one specialist. |
+| `stale` | **REFUSE** | Target source changed since the harness was built → `/cc-fuzzer:reset` or `--reset`. |
+| `corrupted` | **REFUSE** | Schema validation failed → fix or reset. |
 
 ## Components
 
 ### Subagents (model-routed)
 
-| Subagent | Role | Model |
+| Subagent | Model | Role |
 |---|---|---|
-| `fuzz-orchestrator` | Owns the campaign loop. Dispatches via `check-campaign-state.sh` into one of three modes (COLD / RESUME / WARM). On warm ticks it reads only `fuzz/state/current.json`. | sonnet |
-| `campaign-planner` | Writes `fuzz/state/plan.md`: target description, harness layout, seed strategy, dictionary picks, concolic strategy, coverage targets. Two modes — fresh (COLD start) and revise (mid-campaign, folds in live coverage / findings / gap data; archives prior plan to `snapshots/plan-{ts}.md`). Every downstream specialist consults this plan. | **opus** |
-| `harness-writer` | Writes the libFuzzer/AFL++ harness and builds **three** binaries (fuzzing, coverage, verify) plus an optional cmplog binary. Iteratively repairs build failures (OSS-Fuzz-Gen pattern). Reads `plan.md` for harness layout decisions. | sonnet |
-| `seed-generator` | Bootstrap corpus + targeted seeds aimed at specific gaps. | haiku |
-| `mutator` | Writes a `LLVMFuzzerCustomMutator` for highly-structured inputs the default mutator can't reach. | haiku |
-| `coverage-analyst` | Turns coverage snapshots + cmplog dictionary into a ranked `gaps-report/v1` with gap classes (`magic_bytes`, `direct_compare`, `checksum_barrier`, `deep_path_condition`, `delta_target`, …). Reads the latest `delta-*.json` when present to weight recently-changed code higher. | sonnet |
-| `concolic-executor` | Drives SymCC against `checksum_barrier` / `deep_path_condition` gaps. Models Atlantis-Multilang's `concolic_input_gen`. | haiku |
-| `crash-triager` | Two-stage triage: Stage 1 reproduces in the fuzzer harness (2/3), Stage 2 reproduces in `verify_binary` (2/3). Stage-2 failures are routed to `crashes/flaky/` and never recorded. | **opus** |
-| `reporting-agent` | Re-runs every recorded reproducer against the current harness and writes `fuzz/state/FINDINGS-REPORT.md` with confirmed vs. false-positive classification. Annotates each finding with `git blame`-based provenance (likely-introduced commit, in-delta-range flag) when the project is a git repo. | **opus** |
+| `fuzz-orchestrator` | sonnet | Owns the loop. Dispatches COLD/RESUME/WARM; on warm ticks reads only `current.json`. |
+| `campaign-planner` | **opus** | Writes `plan.md` (target, harness layout, seed/dict/concolic strategy, coverage targets). Fresh at COLD, revise mid-campaign. |
+| `planner-consult` | **opus** | Per-tick strategic check-in: reads a small briefing, returns `stay_course` or `redirect` + tactic. Opus-in-the-loop without paying Opus on every tick. |
+| `harness-writer` | sonnet | Writes the harness, builds **three** binaries (+ optional cmplog), iteratively repairs build failures (OSS-Fuzz-Gen pattern). |
+| `seed-generator` | haiku | Bootstrap corpus + targeted seeds aimed at specific gaps. |
+| `mutator` | haiku | Writes a `LLVMFuzzerCustomMutator` for highly-structured inputs the default mutator can't reach. |
+| `coverage-analyst` | sonnet | Turns coverage + cmplog dict into a ranked `gaps-report/v1` with gap classes (`direct_compare`, `checksum_barrier`, `deep_path_condition`, …). |
+| `concolic-executor` | haiku | Drives SymCC against `checksum_barrier` / `deep_path_condition` gaps (Atlantis-Multilang `concolic_input_gen` pattern). |
+| `code-reviewer` | sonnet | Tier-2 static review: classifies dangerous-API candidates from the deterministic prescan. |
+| `code-reviewer-deep` | **opus** | Tier-3 cross-file taint analysis on flagged candidates; adds findings the Sonnet pass missed. |
+| `crash-triager` | **opus** | Runs the verification pipeline; only verified crashes become findings. |
+| `poc-builder` | **opus** | Builds a verifiable exploit (not just a reproducer) whose impact is checked by a `verify.sh`. |
+| `reporting-agent` | **opus** | Re-runs every reproducer and writes `FINDINGS-REPORT.md` (confirmed vs. false-positive, `git blame` provenance). |
 
-### Slash commands
+### Skills (`/cc-fuzzer:<name>`)
 
-All commands are prefixed `/cc-fuzzer:`.
+Claude may auto-invoke the read-only utilities (`status`, `doctor`, `validate`, `delta`, `dictionaries`) and the `campaign` headline; the rest carry `disable-model-invocation: true`.
 
-| Command | Purpose |
-|---|---|
-| `/cc-fuzzer:campaign <target>` | **Headline.** Auto-detects state and either starts (COLD), resumes (RESUME), or reports (WARM). |
-| `/cc-fuzzer:plan <target>` | Run the Opus `campaign-planner`. Fresh mode at COLD; revise mode mid-campaign (folds live coverage / findings / gap data into a revised plan and archives the prior version to `snapshots/plan-{ts}.md`). Auto-detects which mode. |
-| `/cc-fuzzer:resume` | Force-resume a stopped campaign without re-analyzing. |
-| `/cc-fuzzer:tick` | Advance the loop by one iteration manually. |
-| `/cc-fuzzer:stop` | Clean shutdown (uses PGID-aware `kill-harness-processes.sh`). |
-| `/cc-fuzzer:status` | Pure-shell campaign status — no LLM call, safe to run between ticks. |
-| `/cc-fuzzer:harness` | Single-shot harness generation (3 builds). |
-| `/cc-fuzzer:seed` | Single-shot seed generation. |
-| `/cc-fuzzer:coverage` | Snapshot + gap analysis. |
-| `/cc-fuzzer:concolic [gap-id]` | Force a SymCC run against current corpus and gaps. |
-| `/cc-fuzzer:triage` | One-off triage of a crashes directory. |
-| `/cc-fuzzer:report` | Re-run every reproducer and write `FINDINGS-REPORT.md`. |
-| `/cc-fuzzer:run` | Launch a built harness in the background without the LLM loop. |
-| `/cc-fuzzer:dictionaries [list\|add\|remove\|show]` | Manage bundled and project-local libFuzzer/AFL++ dictionaries. |
-| `/cc-fuzzer:delta [--range <git-range>]` | Compute git-diff delta targets (on demand, no LLM). Biases `coverage-analyst` toward recently-changed code. |
-| `/cc-fuzzer:doctor` | Read-only diagnostic for state corruption, modified plugin files, stray processes, etc. |
-| `/cc-fuzzer:validate` | Validate `fuzz/state/` against `STATE_SCHEMA.md`. |
-| `/cc-fuzzer:reset` | Wipe campaign state (backs up findings to `fuzz/reset-backup-<ts>.tar.gz`). |
+That flag gates **slash commands** only — it stops the *ambient* assistant from firing an expensive command (`/cc-fuzzer:triage`, `/cc-fuzzer:poc`, …) you didn't ask for. It does **not** gate **subagents**: once a campaign is running, the orchestrator dispatches the underlying agents — including Opus ones like `crash-triager` and `planner-consult` — directly via the Task tool. Each gated skill is just a thin wrapper that dispatches the same agent for one-off manual use. Starting the loop (`/cc-fuzzer:campaign`, `/cc-fuzzer:tick`, or `/cc-fuzzer:yolo on`) is your authorization for that autonomous dispatch; under YOLO the cost/redundancy ledger — not the skill gate — bounds how much Opus it spends.
 
-### Infrastructure scripts
+- **Campaign loop** — `campaign` (headline; auto-detects COLD/RESUME/WARM), `tick`, `resume`, `run`, `stop`, `yolo`, `reset`
+- **Analysis & corpus** — `plan`, `harness`, `seed`, `coverage`, `concolic`, `review`, `delta`, `dictionaries`
+- **Findings** — `triage`, `poc`, `report`
+- **Read-only** — `status`, `doctor`, `validate`
 
-| Script | Purpose |
-|---|---|
-| `scripts/check-campaign-state.sh` | The state-machine dispatcher. Returns `none\|running\|stopped\|stale\|corrupted`. Multi-fuzzer-aware: `running` if any slot is alive. |
-| `scripts/run-fuzzer.sh` | Reads `fuzz/state/fuzz-config.json.fuzzer_slots` and launches each slot. Defaults to a single `main` slot for single-fuzzer campaigns. |
-| `scripts/launch-fuzzer-slot.sh` | Launches one named fuzzer slot (engine-agnostic). Used internally by `run-fuzzer.sh` and `check-slot-liveness.sh`. |
-| `scripts/check-slot-liveness.sh` | Per-slot auto-restart for multi-fuzzer campaigns. Anti-flap throttle (3 restarts in 60s → slot marked deadlocked). Called by the orchestrator at the top of each WARM tick. |
-| `scripts/stop-fuzzer.sh` | Clean shutdown of all slots, or one slot via `--slot <name>`. |
-| `scripts/kill-harness-processes.sh` | Deterministic teardown of all slot processes by process group. Used before any relaunch. |
-| `scripts/check-seed-safety.sh` | Pre-promotion denylist scanner — refuses unambiguously destructive seed payloads (`rm -rf /`, fork bombs, `mkfs`/`dd` on real devices, `>/proc/sysrq-trigger`). Wired into `corpus-quarantine.sh`. |
-| `scripts/write-harness-built.sh` | Writes `fuzz/state/harness-built.json` with **computed** SHA-256 hashes. The harness-writer calls this instead of hand-writing the JSON (avoids the placeholder-stub bug that caused every subsequent `check-campaign-state.sh` to return `stale`). |
-| `scripts/snapshot-coverage.sh` | Materializes a `coverage-<ts>.json` snapshot for the LLM. |
-| `scripts/extract-cmplog-dict.sh` | Harvests AFL++ cmplog runtime observations into a libFuzzer-format dict for `coverage-analyst` and `seed-generator`. |
-| `scripts/find-delta-targets.sh` | On-demand: parses `git diff <range>` into per-hunk records (file + line range + function context). Consumed by `coverage-analyst` for `delta_target` gap priority. |
-| `scripts/blame-finding.sh` | On-demand (called by `reporting-agent`): runs `git blame` on a finding's crash line, returns commit/date/author plus whether the blamed commit is inside the latest delta range. |
-| `scripts/install-symcc.sh` | One-shot installer for SymCC (build from source) with `/nix/store` PATH fallback. |
-| `scripts/build-symcc-target.sh` | Build a SymCC-instrumented harness binary. |
-| `scripts/run-concolic.sh` | Run SymCC against a single seed (called by `concolic-executor`). |
-| `scripts/findings.sh` | The only sanctioned writer of `findings.jsonl`. Runs the two-stage verification. |
-| `scripts/status.sh` | Pure-shell campaign status (no LLM). |
-| `scripts/doctor.sh` | Read-only state/plugin diagnostics. |
-| `scripts/validate-state.sh` | Schema validation against `STATE_SCHEMA.md`. |
-| `scripts/migrate-state.sh` | Schema migration runner (current schema is v8). The v7→v8 step tombstones legacy `finding/v1` records with malformed IDs, renames legacy `fuzzer.pid`/`fuzzer.engine`/`fuzzer.log` into the `fuzzer-main.*` slot layout, bumps `fuzz-config.json` to v2, and backfills `fuzzer_slots = [main]`. |
-| `scripts/integrity-check.sh` | Verifies plugin files match `MANIFEST.md5`. Run before trusting your memory of plugin internals. |
-| `scripts/env-check.sh` | SessionStart hook: reports tool availability and FHS / nix-shell status. |
-| `scripts/detect-crashes.sh` | PostToolUse hook: nudges the orchestrator on new crashes. |
+### State
 
-### State files (`fuzz/state/`)
+All campaign state lives under `fuzz/state/`. The authoritative spec is **`STATE_SCHEMA.md`** at the plugin root (current schema **v9**). The orchestrator reads only `current.json` on warm ticks. Findings are written exclusively by `scripts/findings.sh` (which runs the verification pipeline); the report only by `reporting-agent`. Plugin scripts are read-only — your only writable scope is `fuzz/`.
 
-Authoritative spec: `STATE_SCHEMA.md` at the plugin root. Current schema version is **v8**.
+## Key mechanisms
 
-| File | Lifecycle | Purpose |
-|---|---|---|
-| `schema-version` | plain text | Pinned schema version for migrations. |
-| `plan.md` | rewritable-with-archival | Campaign strategy document. Written by `campaign-planner` (Opus) at COLD; can be revised mid-campaign via `/cc-fuzzer:plan` — each prior version is archived to `snapshots/plan-{ts}.md`. Read by every specialist on dispatch. |
-| `current.json` | rewritable | Compact, agent-friendly campaign snapshot. The orchestrator reads **only this** on warm ticks. v8 adds a `fuzzers[]` array and a `multi_fuzzer` flag. |
-| `harness-built.json` | rewritable (`harness-built/v5`) | Records the three built binaries, `fuzzing_mode` (`in_process` \| `process_based`), `cmplog_enabled`, `verify_binary`. **v0.17**: written by `write-harness-built.sh` with real computed hashes. |
-| `fuzz-config.json` | rewritable (`fuzz-config/v2`) | User-editable launch config. **v0.17**: `fuzzer_slots[]` declares per-slot engine/role/power-schedule for multi-fuzzer campaigns. |
-| `fuzzers.json` | rewritable (`fuzzers/v1`) | Live per-slot manifest (pid, pgid, started_at, restart_count). Written by `launch-fuzzer-slot.sh` and `check-slot-liveness.sh`. |
-| `findings.jsonl` | append-only | Two-stage-verified unique crashes. Only `scripts/findings.sh` writes here. |
-| `findings-legacy.jsonl` | append-only | **v0.17**: tombstoned legacy `finding/v1` records that didn't conform to v7 strict validation (malformed IDs, wrong field set). Preserved here for audit; not read by any tool. |
-| `events.jsonl` | append-only | Every loop tick, structured. |
-| `snapshots/coverage-<ts>.json` | immutable | Periodic coverage snapshots. |
-| `snapshots/gaps-<ts>.json` | immutable | Ranked gap report from `coverage-analyst`. |
-| `snapshots/concolic-<ts>.json` | immutable | Per-run SymCC results from `concolic-executor`. |
-| `cmplog-dict-<ts>.dict` | immutable | Cmplog observations, libFuzzer dict format. |
-| `FINDINGS-REPORT.md` | rewritable | Human-readable report. Only `reporting-agent` writes here. |
-| `budget.json` | rewritable | Running LLM-spend estimate. |
-| `fuzzer-<slot>.{pid,engine,log}` | session | One per running slot (`main` by default; more for multi-fuzzer). |
-| `crashes/flaky/` | — | Stage-2-failed crashes (harness artifacts). Not recorded in `findings.jsonl`. |
-| `corpus-quarantine/rejected/` | — | **v0.17**: seeds blocked by `check-seed-safety.sh` (destructive payloads). |
+### Three binaries (plus one)
 
-## Steering the campaign with `fuzz/guidance.md`
+Every COLD start builds three mandatory binaries:
 
-Optional, user-controlled. The plugin ships a template at `${CLAUDE_PLUGIN_ROOT}/templates/guidance.md` with sections for target description, input classes to emphasize, recommended bundled dictionaries, format expectations, known irrelevant classes, coverage targets, and out-of-scope code. Copy it into your project to steer the LLM agents:
+1. **Fuzzing** — libFuzzer + ASan + UBSan.
+2. **Coverage** — `-fprofile-instr-generate -fcoverage-mapping`, no fuzzer driver; run as a normal program by `snapshot-coverage.sh`.
+3. **Verify** — ASan + UBSan only, **no `-fsanitize=fuzzer`**; used to filter harness artifacts (a crash that reproduces in the fuzzer but not here is not a real target bug).
 
-```bash
-cp $CLAUDE_PLUGIN_ROOT/templates/guidance.md fuzz/guidance.md
-# edit the sections — leave the ones you don't care about empty or delete them
+Optionally a **cmplog** binary (`AFL_LLVM_CMPLOG=1`, no sanitizers) when AFL++ + `afl-clang-fast` are present. Cmplog is purely additive — without it the campaign falls back to source-only gap reasoning.
+
+### Crash verification
+
+`crash-triager` runs a multi-step pipeline before any crash becomes a finding: an **artifact filter** (four-principle audit that catches harness-only crashes), **deterministic replay** (multiple runs under ASan with identical top frames), and a **target-realistic reproducer** (the target's own CLI rebuilt with ASan, or a small program using only public headers). Crashes that fail any step are logged to `fuzz/state/dropped_crashes.jsonl` (transparency log) and never filed. Confirmed findings ship as self-contained `fuzz/findings/<id>/repro/` bundles a maintainer can verify in their own environment; `/cc-fuzzer:report --mode pre-contact|maintainer|public` renders disclosure-aware reports.
+
+### The cmplog / LLM / SymCC split
+
+Constraint-solving work is routed to the cheapest tool that can handle it:
+
+```
+Easy   (linear, direct compares)  → cmplog       (AFL++ runtime, free)
+Medium (transformations, math)    → LLM seed-gen  (semantic)
+Hard   (checksums, multi-cond)    → SymCC + Z3    (expensive, last resort)
 ```
 
-When `fuzz/guidance.md` is present, three agents read it during the WARM loop:
+`extract-cmplog-dict.sh` also surfaces cmplog's runtime observations to the agents as a dictionary, so `coverage-analyst` can mark a gap `direct_compare` (cmplog already handling it) instead of paying for a concolic run, and `seed-generator` can ground its seeds in operands that actually exist in the binary. SymCC setup is one-time (`scripts/install-symcc.sh` then `scripts/build-symcc-target.sh`); if it's absent the orchestrator simply skips concolic gaps. SymCC caveats: no inline asm, limited C++ exceptions, path explosion on input-bounded loops (capped per-seed).
 
-| Agent | What it uses |
-|---|---|
-| `seed-generator` | Input classes, format expectations, recommended dictionaries — shapes targeted seeds. |
-| `coverage-analyst` | Coverage targets (weight higher), Out-of-scope code (skip), Input classes (route to the right specialist). |
-| `fuzz-orchestrator` | Checks for the file at COLD start; if missing, tells you about the template (never auto-creates the file). |
+### Multi-fuzzer / multi-harness
 
-When the file is absent, all three fall back to default heuristics — `harness-built.json.input_encoding`, the harness source itself, and built-in classifiers. So guidance is purely additive: a way to spend extra human attention upfront in exchange for the agents not having to guess.
-
-## The three-mode state machine
-
-Every orchestrator invocation begins with `check-campaign-state.sh`, which returns one of:
-
-| State | Mode | Behavior |
-|---|---|---|
-| `none` | **COLD** | Full setup: analyze, write harness, build 3 binaries (+ optional cmplog), bootstrap corpus, launch fuzzer. |
-| `stopped` | **RESUME** | Relaunch the fuzzer with the existing harness and corpus, then a single tick. |
-| `running` | **WARM** | Tick: read `current.json`, decide, optionally dispatch one specialist, sleep. |
-| `stale` | **REFUSE** | Target source changed since the harness was built. Operator must `/cc-fuzzer:campaign --reset` or `/cc-fuzzer:reset`. |
-| `corrupted` | **REFUSE** | Schema validation failed. Operator must fix or reset. |
-
-The orchestrator's most important job is **knowing when not to do work**: on a steady warm tick where coverage is climbing, the right answer is "sleep". Token cost is dominated by re-walking source unnecessarily.
-
-## Three binaries (plus one)
-
-Every COLD start produces **three mandatory** binaries:
-
-1. **Fuzzing binary** — `fuzz/harness/<target>_fuzzer` with libFuzzer + ASan + UBSan.
-2. **Coverage binary** — `<target>_fuzzer_cov` with `-fprofile-instr-generate -fcoverage-mapping`, no fuzzer driver. Run as a normal program by `snapshot-coverage.sh`.
-3. **Verify binary** — `<target>_fuzzer_verify` with ASan + UBSan only, **no `-fsanitize=fuzzer`**. Used by `crash-triager` for Stage 2 cross-verification: a crash that reproduces in the harness but *not* here is a harness artifact and is never written to `findings.jsonl`.
-
-Optionally, when the engine is AFL++ and `afl-clang-fast` is installed:
-
-4. **Cmplog binary** — `<target>_fuzzer_cmplog` built with `AFL_LLVM_CMPLOG=1`, **no sanitizers**. Passed to `afl-fuzz` via `-c` for Redqueen-style input-to-state mutations.
-
-If the cmplog build is skipped (libFuzzer engine, or `afl-clang-fast` missing), `coverage-analyst` falls back to source-only reasoning and `seed-generator` skips cmplog-grounded seeds. The campaign continues — cmplog is purely additive.
-
-## Multi-fuzzer campaigns (v0.17+)
-
-Single-fuzzer is still the default — a fresh campaign launches one `main` slot with the engine auto-detected from the harness binary, just like v0.16. To run multiple fuzzers concurrently against the same corpus, declare slots in `fuzz/state/fuzz-config.json`:
+Single-fuzzer is the default (one `main` slot, engine auto-detected). To run several fuzzers against a shared corpus, declare slots in `fuzz/state/fuzz-config.json`:
 
 ```json
 {
-  "schema": "fuzz-config/v2",
-  "fuzz_forks": 2,
+  "schema": "fuzz-config/v3",
   "fuzzer_slots": [
     {"slot": "main",        "engine": "libfuzzer"},
-    {"slot": "afl-explore", "engine": "aflpp", "role": "secondary", "afl_power_schedule": "explore"},
-    {"slot": "afl-fast",    "engine": "aflpp", "role": "secondary", "afl_power_schedule": "fast"}
+    {"slot": "afl-explore", "engine": "aflpp", "role": "secondary", "afl_power_schedule": "explore"}
   ]
 }
 ```
 
-`run-fuzzer.sh` launches each slot via `launch-fuzzer-slot.sh`. Each slot gets its own `fuzzer-<slot>.{pid,engine,log}` files; the live manifest lives in `fuzz/state/fuzzers.json`. The orchestrator treats all slots as a single shared-corpus campaign: one `recommendation.branch`, one triage pass, one coverage view.
+Each slot gets its own `fuzzer-<slot>.{pid,engine,log}`; the live manifest is `fuzzers.json`. The orchestrator treats all slots as one shared-corpus campaign (one recommendation, one triage pass, one coverage view). At the top of each tick, `check-slot-liveness.sh` silently relaunches any dead slot (anti-flap throttle: 3 restarts in 60s → marked deadlocked); `restart_fuzzer` only surfaces when *every* slot is dead. Schema v9 additionally supports multiple **harnesses** in one campaign, each with its own corpus/coverage under `fuzz/harnesses/<name>/`.
 
-**Per-slot auto-restart**: at the top of every WARM tick, the orchestrator runs `check-slot-liveness.sh`. Any slot declared in `fuzz_slots` whose PID is dead gets relaunched silently. An anti-flap throttle prevents storms — if a slot has been restarted 3 times in 60 seconds, it's marked deadlocked and left dead with an error event so the user can investigate.
+> **AFL++ on `process_based` harnesses:** the launcher auto-bumps the per-input timeout to 5000 ms and passes `-t <ms>+` (skip-on-timeout) so a fork-exec'ing CLI target can clear AFL's dry-run. Override per-slot with `"timeout_ms": <ms>`.
 
-**`recommendation.branch == "restart_fuzzer"`** fires only when *every* slot is dead. The orchestrator never sees per-slot restarts — those happen below its view in the liveness checker.
+### YOLO (self-looping)
 
-## Two-stage crash triage
+`/cc-fuzzer:yolo on [--mode guided|hybrid|self_loop]` opts into auto-ticking (off by default; the orchestrator calls `ScheduleWakeup` at end-of-tick). All modes share hard halt caps (tick / cost / no-progress / crash-storm) and a deterministic per-tick **evaluation** block — cost posture (throttles Opus agents past a soft fraction of the cost cap), a per-agent **redundancy ledger** (suppresses an agent that loops without producing results), and a self-climbing signal.
 
-The `crash-triager` agent enforces a two-stage verification before any crash becomes a finding:
+| Mode | Per-tick decision |
+|---|---|
+| `guided` | Legacy deterministic precedence table; `sleep` is the last resort. |
+| `hybrid` (default) | The orchestrator reasons over the evaluation signals to choose **wait / act / consult**. Waiting (with adaptive backoff) is first-class — it lets the fuzzer run while it's productive and defers expensive work when an agent is looping or cost is throttling. |
+| `self_loop` | Maximum autonomy: the orchestrator reasons freely toward the goal, pursuing multi-step strategy across ticks. Still fenced by the caps + redundancy/cost ledger. |
 
-- **Stage 1** — Reproduce in the fuzzer harness binary, 2 of 3 attempts. Filters flakes.
-- **Stage 2** — Reproduce in `verify_binary` (no libFuzzer driver), 2 of 3 attempts. Stage-2 failures are routed to `crashes/flaky/` and never recorded in `findings.jsonl`.
+`/cc-fuzzer:stop` always disables YOLO.
 
-This is what catches harness-artifact false positives like libFuzzer-side allocations OOMing, fuzzer-init races, or sanitizer/driver interactions that don't reproduce against the underlying target code. Only `scripts/findings.sh add` writes `findings.jsonl`, and it runs both stages internally.
+## Steering with `fuzz/guidance.md`
 
-## Concolic execution (SymCC, Atlantis-Multilang pattern)
-
-`concolic-executor` is modeled on Atlantis-Multilang's `concolic_input_gen` module. The orchestrator dispatches it when `coverage-analyst` produces a gap classified as:
-
-- **`checksum_barrier`** — branch needs a CRC, hash, or other computed field.
-- **`deep_path_condition`** — branch requires multiple constraints satisfied simultaneously.
-
-For simpler gap classes (`magic_bytes`, `direct_compare`), the LLM + `seed-generator` is faster and cheaper. For `direct_compare` specifically, cmplog usually solves the branch before anyone is dispatched. The split is intentional: cmplog handles linear runtime input-to-state, the LLM handles semantic understanding, SymCC + Z3 handle constraint solving — only the expensive solver gets called on actually hard constraints.
-
-### Setup (one-time)
+Optional and user-controlled. Copy the template and fill in what you care about:
 
 ```bash
-${CLAUDE_PLUGIN_ROOT}/scripts/install-symcc.sh
-source ~/.bashrc
-
-# After /cc-fuzzer:campaign has built the harness:
-${CLAUDE_PLUGIN_ROOT}/scripts/build-symcc-target.sh
+cp $CLAUDE_PLUGIN_ROOT/templates/guidance.md fuzz/guidance.md
 ```
 
-After this, `fuzz/state/harness-built.json` gains a `symcc_binary` field and the orchestrator uses SymCC automatically on appropriate gaps.
+When present, `seed-generator` (input classes, formats, dictionaries), `coverage-analyst` (coverage targets, out-of-scope code), and `fuzz-orchestrator` read it during the loop. Absent, all three fall back to default heuristics — guidance is purely additive.
 
-### Manual invocation
+## Reproducible toolchain (Nix)
 
-```
-/cc-fuzzer:concolic            # all eligible gaps
-/cc-fuzzer:concolic g003       # specific gap id
-```
+The plugin ships a Nix flake that pins the whole toolchain (clang+compiler-rt, AFL++, SymCC, Z3, llvm-cov/profdata, gdb, addr2line, plus ripgrep/fd). The dev shell is wrapped in `buildFHSEnv` because AFL++ and SymCC assume a traditional `/usr/bin`, `/usr/lib` layout — the FHS wrapping is load-bearing, not cosmetic.
 
-### Limitations
-
-- **No inline assembly.** Targets that use inline asm in hot paths (some crypto code) lose symbolic state at those points.
-- **Limited C++ exception support.** Heavy exception-throwing code can produce incorrect path conditions.
-- **Path explosion.** Loops bounded only by input size will consume the timeout. Mitigated by the per-seed cap in `run-concolic.sh`.
-- **Concrete fallback.** When SymCC can't symbolize an operation, it falls back to concrete execution. Still valid output, just less exploratory.
-
-If SymCC isn't installed, the orchestrator skips this branch and continues with seed/dictionary-based fixes for all gaps. The plugin works fine without it.
-
-## Cmplog (AFL++ Redqueen-style input-to-state)
-
-When AFL++ is the engine and `afl-clang-fast` is installed, the harness-writer builds a cmplog binary instrumented with `AFL_LLVM_CMPLOG=1`. `run-fuzzer.sh` passes it to `afl-fuzz` via `-c`, enabling Redqueen-style input-to-state mutations at runtime.
-
-This sits in a principled split between the LLM and SymCC:
-
-```
-Easy constraints  (linear, direct compares)  → cmplog          (runtime, free)
-Medium            (transformations, math)    → LLM seed-gen    (semantic)
-Hard              (checksums, multi-cond)    → SymCC + Z3      (expensive, last resort)
+```bash
+cd ~/projects/your-target
+nix develop $CLAUDE_PLUGIN_ROOT     # exports CC_FUZZER_FHS=1; auto-binds $PWD
+claude
 ```
 
-For branches like `if (magic == 0xDEADBEEF)` or `if (memcmp(buf, "PNG", 3) == 0)`, cmplog typically solves them without any LLM or solver involvement.
+The SessionStart hook (`scripts/env-check.sh`) reports whether you're in the cc-fuzzer FHS shell, some other nix shell, or on host tools — and only warns inside directories that contain a `fuzz/`. The plugin does **not** ship a `flake.lock`: run `nix flake update` once per project to get a lock you own, which pins your toolchain for the campaign. The plugin imposes the toolchain *shape*; you own the *version*.
 
-The plugin also surfaces cmplog observations to the LLM agents: `extract-cmplog-dict.sh` harvests AFL++'s cmplog runtime output into `fuzz/state/cmplog-dict-<ts>.dict`. `coverage-analyst` reads it to classify gaps as `direct_compare` (cmplog already handling) instead of dispatching them to the more expensive `concolic-executor`. `seed-generator` reads it to ground its targeted seeds in operands that actually exist in the binary, rather than LLM guesses.
+No nix? Everything still works with host tools (see [Prerequisites](#prerequisites)); `scripts/install-symcc.sh` bootstraps SymCC, and preflight reports what's missing.
 
-When `afl-clang-fast` is missing or the engine is libFuzzer, the cmplog build is skipped with a loud warning. The campaign continues normally.
+## Plugin integrity (`MANIFEST.md5`)
 
-## Scope: what cc-fuzzer is and isn't
+`MANIFEST.md5` fingerprints every shipped file. Agents are told plugin files are read-only, but in-place patches have happened — they silently vanish on `/plugin install` and leave mystery regressions. `scripts/integrity-check.sh` makes drift loud: it runs at SessionStart, in `/cc-fuzzer:doctor`, and is referenced by every subagent before it trusts its memory of a script. A "DRIFT DETECTED" warning is non-fatal — reinstall to restore canonical state, or, if you're a developer iterating, regenerate the manifest before cutting a release.
 
-A real Cyber Reasoning System (Buttercup, Atlantis, the AIxCC finalists generally) produces both **POVs** (proofs of vulnerability) *and* **patches** for them, with autonomous SAST, ensemble orchestration, container packaging, and competition-submission infrastructure. cc-fuzzer covers only the dynamic-analysis half:
+## Scope
+
+A real CRS produces both proofs-of-vulnerability **and** patches, with autonomous SAST, ensemble orchestration, and submission infrastructure. cc-fuzzer covers the dynamic-analysis half plus a static review pass:
 
 | Capability | cc-fuzzer | A real CRS |
 |---|---|---|
 | Coverage-guided fuzzing (libFuzzer / AFL++) | ✓ | ✓ |
 | Concolic execution on hard constraints | ✓ | ✓ |
-| LLM-guided harness, seed, and mutator generation | ✓ | ✓ |
-| Crash triage + deduplication + reporting | ✓ | ✓ |
-| Static analysis (SAST) | **planned** | ✓ |
-| Patch generation | **out of scope** | ✓ |
-| Ensemble / multi-CRS orchestration | **out of scope** | ✓ |
-| Containerization / cloud submission | **out of scope** | ✓ |
+| LLM-guided harness / seed / mutator generation | ✓ | ✓ |
+| Crash triage + verification + reporting | ✓ | ✓ |
+| Static analysis | partial (LLM code-review pass) | ✓ |
+| Patch generation, ensemble orchestration, cloud submission | out of scope | ✓ |
 
-For a full CRS, look at [Buttercup](https://github.com/trailofbits/buttercup) or [Atlantis](https://team-atlanta.github.io/blog/post-afc/). cc-fuzzer borrows specific patterns from them (see [Which AIxCC patterns are used](#which-aixcc-patterns-are-used)) but is intentionally narrower: DAST + concolic + triage inside a single Claude Code session.
+### AIxCC patterns
 
-### Relationship to OSS-CRS
+cc-fuzzer is not a port of any single AIxCC system, but it reuses three named patterns:
 
-[OSS-CRS](https://github.com/ossf/oss-crs) is a framework for orchestrating CRSs over OSS-Fuzz-format projects. cc-fuzzer is not one, but it borrows a few of OSS-CRS's organizing concepts loosely:
-
-| OSS-CRS concept | cc-fuzzer's analogue |
-|---|---|
-| `crs.yaml` (CRS manifest) | `.claude-plugin/plugin.json` |
-| Containerized modules (fuzzer + analyzer) | Background `run-fuzzer.sh` + orchestrator subagent |
-| Shared corpus directory | `fuzz/corpus/` shared between agent and fuzzer |
-| LLM budget tracking via LiteLLM | `budget.json` updated by orchestrator |
-| `libCRS submit pov` | Append to `findings.jsonl` via `findings.sh` (local-only, no submission endpoint) |
-
-What's missing to call this a CRS: SAST, patch generation, POV submission infrastructure, ensemble / FETCH_DIR data exchange, container orchestration. SAST is on the roadmap; the rest is out of scope. Wrapping the existing scripts in an `oss-crs/crs.yaml` and Dockerfile per the [OSS-CRS development guide](https://github.com/ossf/oss-crs/blob/main/docs/crs-development-guide.md) would be the path if someone wanted to graduate this into a containerized CRS, but that's a separate project.
-
-## Reproducible toolchain (Nix)
-
-cc-fuzzer ships a Nix flake at the plugin root that pins the entire toolchain — clang+compiler-rt (libFuzzer), AFL++, SymCC, Z3, llvm-cov, llvm-profdata, gdb, addr2line, plus dev conveniences like ripgrep and fd. The dev shell is wrapped in `buildFHSEnv`, which exposes a traditional FHS layout (`/usr/bin`, `/usr/lib`, `/lib64`) inside the sandbox. AFL++ and SymCC were both written assuming this layout; running them under pure nix without FHSEnv hits hardcoded path expectations and fragile cc-wrapper interactions, so the FHS wrapping is load-bearing, not cosmetic.
-
-Recommended workflow:
-
-```bash
-cd ~/projects/your-target           # your project, anywhere under $HOME
-nix develop $CLAUDE_PLUGIN_ROOT     # one-time per session; auto-binds $PWD
-claude                              # toolchain is now the pinned set
-/cc-fuzzer:campaign target.c
-```
-
-Inside the dev shell, `CC_FUZZER_FHS=1` is exported. The plugin's SessionStart hook (`scripts/env-check.sh`) reads this and reports one of three states:
-
-- **`cc_fuzzer_fhs_active`** — pinned toolchain in use. Builds are reproducible across machines that use the same `flake.lock`.
-- **`nix_shell_other`** — you're inside *some* nix shell, but not the cc-fuzzer one. The hook prints a loud warning and the campaign continues with whatever's on PATH.
-- **`host_tools`** — neither nix shell nor cc-fuzzer FHS. The hook prints a loud warning and the campaign continues with host tools. AFL++/SymCC may be missing entirely; preflight will report what's available.
-
-Warnings only fire in directories that contain a `fuzz/` subdirectory — the hook is silent during regular Claude sessions where the user isn't engaging with cc-fuzzer.
-
-### Reproducibility tradeoffs
-
-The plugin does **not** ship a `flake.lock`. Pinning a specific nixpkgs commit in the plugin would make every user's first session expensive (downloading ~500MB of toolchain matching that exact commit) and would mean the plugin maintainer has to chase nixpkgs versions to stay current with security fixes. Instead, the user runs `nix flake update` once per project, gets a `flake.lock` they own, and that lock pins their toolchain for the duration of the campaign.
-
-This means: two users on the same project with the same `flake.lock` get bit-identical toolchains. Two users with different locks may not. The plugin imposes the toolchain *shape*; the user owns the toolchain *version*.
-
-### What's not pinned (Layer 2, on roadmap)
-
-The harness build itself currently uses imperative `bash build.sh` invoking the (pinned) clang. This means the toolchain is reproducible but the build process is still imperative — the harness binary's hash depends on file ordering, environment variables, and host details inside the FHSEnv. A future release would offer an opt-in `--derivation` mode where harness-writer emits a Nix derivation instead, giving content-addressed harness binaries. That refactor is significant enough to stage separately; it's explicitly out of scope for v0.15.
-
-### When the host-tools fallback still makes sense
-
-- You're on a system without nix and don't want to install it.
-- You're rapidly iterating on harness logic and the per-build latency of nix's eval cache is annoying.
-- You're adapting cc-fuzzer to an environment where bubblewrap (FHSEnv's underlying mechanism) isn't available — some hardened containers, certain CI runners.
-
-In all these cases, run `scripts/install-symcc.sh` to bootstrap SymCC and let preflight report what else you need. The plugin will print a loud reminder that nix is preferred, but it won't refuse to operate.
-
-## Plugin integrity (`MANIFEST.md5`)
-
-`MANIFEST.md5` at the plugin root is a release-time-generated list of `<md5>  <relative-path>` lines covering every shipped file (`scripts/*.sh`, `agents/*.md`, `commands/*.md`, `STATE_SCHEMA.md`, `.claude-plugin/plugin.json`, etc.). It's the canonical fingerprint of what the plugin looked like when it shipped. Where the Nix flake pins your toolchain, the manifest pins the plugin itself — together they bound the moving parts of a campaign.
-
-### Why drift detection exists
-
-Every subagent's prompt enforces a read-only rule: *"Plugin files are read-only. Your only writable scope is `fuzz/`."* But agents have patched plugin files in place at least three documented times, defeating the rule. In-place patches silently disappear on `/plugin install` and leave mystery regressions behind. The manifest makes drift loud enough that it can't be ignored.
-
-### Three checkpoints run the check
-
-| Checkpoint | Where | When it fires |
+| Pattern | Source | Where it lives |
 |---|---|---|
-| SessionStart hook | `scripts/env-check.sh` → `scripts/integrity-check.sh` | Every Claude Code session start. Produces a "DRIFT DETECTED" warning at the top of the session if any file's hash doesn't match. |
-| `/cc-fuzzer:doctor` | `scripts/doctor.sh` | On demand, as one diagnostic category among several. |
-| Every subagent | Agent prompt frontmatter | Before trusting its memory of any plugin script's contents. If the check returns "ok", the disk is canonical and the agent's memory is stale. |
+| LLM-augmented coverage fuzzer loop | [Buttercup](https://github.com/trailofbits/buttercup) (Trail of Bits) | `fuzz-orchestrator` + `seed-generator` + `mutator`, driven by the WARM loop |
+| `concolic_input_gen` — SymCC against specific uncovered constraints | [Atlantis-Multilang](https://github.com/Team-Atlanta/atlantis-multilang-snapshot/tree/main/uniafl/src/concolic) (Team Atlanta) | `concolic-executor` + `run-concolic.sh` + `build-symcc-target.sh` |
+| Iterative harness build-repair | [OSS-Fuzz-Gen](https://github.com/google/oss-fuzz-gen) (Google) | `harness-writer`'s repair loop |
 
-### When you see "DRIFT DETECTED"
-
-The check is non-fatal — campaigns continue regardless. But the warning means at least one file under the plugin root no longer matches its release hash. Options:
-
-- **Reinstall** to restore canonical state:
-  ```
-  /plugin marketplace update <your-marketplace>
-  /plugin install cc-fuzzer@<your-marketplace>
-  ```
-- **Inspect first**: `bash $CLAUDE_PLUGIN_ROOT/scripts/integrity-check.sh` lists the specific drifted files.
-- **Plugin developer iterating?** The drift is intentional. Regenerate the manifest before cutting a release — the existing format is `<md5>  <relative-path>` (two spaces), one line per file, produced by `find` + `md5sum` against the shipped tree.
+Ensemble / inter-CRS exchange / container orchestration are intentionally **not** used (single-host, single-process). cc-fuzzer borrows a few organizing concepts from [OSS-CRS](https://github.com/ossf/oss-crs) loosely (plugin manifest ≈ `crs.yaml`, shared corpus dir, `budget.json` spend tracking) but doesn't aspire to CRS-hood.
 
 ## Cost
 
-Expected token mix during a typical campaign:
-
-- ~60% Haiku (seed generation each tick, mutator scaffolding, concolic dispatch)
-- ~25% Sonnet (orchestrator decisions, harness writing, coverage analysis)
-- ~15% Opus (one-shot `campaign-planner` at COLD, `crash-triager` per unique crash, `reporting-agent` per `/cc-fuzzer:report`)
-
-Roughly an order of magnitude cheaper than running everything on Opus, with Opus reserved for the three places its quality really matters: the initial campaign plan (`campaign-planner`, one shot at COLD start), root-cause analysis on unique crashes (`crash-triager`), and the final reproducer-verified report (`reporting-agent`). The planner's cost is amortized across the entire campaign because every downstream specialist reads its output.
-
-The `--budget` flag (default $20) caps total LLM spend for the campaign. When approaching the cap, the orchestrator skips lower-priority specialist calls and continues with the fuzzer alone.
+Typical token mix: ~60% Haiku (seeds, mutator, concolic dispatch), ~25% Sonnet (orchestrator, harness, coverage), ~15% Opus (one-shot planner, per-crash triager, per-report). Roughly an order of magnitude cheaper than running everything on Opus, with Opus reserved where its quality matters: the initial plan, root-cause analysis, exploit-building, and the verified report. `--budget` (default $20) caps total spend; near the cap the orchestrator drops lower-priority specialist calls and continues with the fuzzer alone. (YOLO has its own separate `--max-cost`, default $10.)
 
 ## Prerequisites
 
-Two paths. Pick one:
+**Path A — nix (recommended).** Install nix once (e.g. the Determinate Systems installer); the flake provides everything else.
 
-**Path A: nix (recommended for reproducibility).** Install nix once via the Determinate Systems installer (`curl -fsSL https://install.determinate.systems/nix | sh -s -- install`) or your distro's nix package. Everything else is provided by the plugin's flake. Total host requirements: nix.
-
-**Path B: host tools (faster to start, less reproducible).** Install whichever of the following you don't have. The SessionStart hook reports what's missing:
-
-- `clang` + `clang++` with `compiler-rt` (libFuzzer + sanitizers)
-- `afl-fuzz` and `afl-clang-fast` from AFL++
-- `llvm-cov`, `llvm-profdata` for source coverage
-- `gdb`, `addr2line` for triage
-- SymCC (run `scripts/install-symcc.sh` for a build-from-source path)
-
-## Install
-
-```bash
-# As a local plugin during development
-/plugin marketplace add ./cc-fuzzer
-/plugin install cc-fuzzer
-```
-
-For team distribution, wrap this directory in a marketplace repo with a `.claude-plugin/marketplace.json`, push to GitHub, then `/plugin marketplace add <org>/<repo>`.
-
-## Typical session
-
-```
-/cc-fuzzer:campaign src/parser.c parse_message --budget=20 --tick-seconds=120
-
-# orchestrator runs the loop, prints status each tick:
-# [tick #1 | t=0h 0m | $0.04 of $20.00]
-# Mode:      COLD → 3 binaries built, fuzzer launched
-# Coverage:  142 lines (+142) | 8400 execs/sec
-# Crashes:   0 unique / 0 total (+0)
-# Next tick: in 120 seconds
-#
-# [tick #2 | t=0h 2m | $0.07 of $20.00]
-# Mode:      WARM
-# Coverage:  391 lines (+249) | 12100 execs/sec
-# Decision:  coverage climbing → sleep
-# ...
-# [tick #14 | t=0h 28m | $0.61 of $20.00]
-# Mode:      WARM
-# Coverage:  1842 lines (+0) | 14000 execs/sec
-# Crashes:   2 unique / 7 total (+3)
-# Decision:  new crashes → dispatched crash-triager (Stage 1 + Stage 2)
-# ...
-
-/cc-fuzzer:report     # re-run reproducers, write FINDINGS-REPORT.md
-/cc-fuzzer:stop
-```
-
-To inspect a running campaign cheaply at any point: `/cc-fuzzer:status` (pure shell, no LLM). To diagnose corruption: `/cc-fuzzer:doctor` and `/cc-fuzzer:validate`.
+**Path B — host tools.** Install what you're missing (the SessionStart hook reports gaps): `clang`/`clang++` + `compiler-rt`, `afl-fuzz` + `afl-clang-fast`, `llvm-cov` + `llvm-profdata`, `gdb` + `addr2line`, and SymCC (`scripts/install-symcc.sh` for a build-from-source path).
 
 ## Customizing model routing
 
-Each subagent's model is set in its frontmatter. To force everything to a single model temporarily:
+Each subagent's model is set in its frontmatter. To force a single model temporarily:
 
 ```bash
-export CLAUDE_CODE_SUBAGENT_MODEL=claude-sonnet-4-6
+export CLAUDE_CODE_SUBAGENT_MODEL=claude-sonnet-4-6   # unset to restore defaults
 ```
-
-This overrides per-agent settings. Unset to restore defaults.
-
-## Development note
-
-cc-fuzzer was built collaboratively using Claude. Architecture decisions, schema design, and all shipped code were human-reviewed before release. 
 
 ## References
 
-- OSS-CRS framework: https://github.com/ossf/oss-crs
-- OSS-CRS dev guide: https://github.com/ossf/oss-crs/blob/main/docs/crs-development-guide.md
 - Buttercup (Trail of Bits, AIxCC runner-up): https://github.com/trailofbits/buttercup
 - Atlantis (Team Atlanta, AIxCC winner): https://team-atlanta.github.io/blog/post-afc/
 - Atlantis-Multilang `concolic_input_gen`: https://github.com/Team-Atlanta/atlantis-multilang-snapshot/tree/main/uniafl/src/concolic
-- OSS-Fuzz-Gen (Google, LLM-driven harness generation): https://github.com/google/oss-fuzz-gen
-- Claude Code plugins: https://code.claude.com/docs/en/plugins
-- Claude Code subagents: https://code.claude.com/docs/en/sub-agents
-- Claude Code hooks: https://code.claude.com/docs/en/hooks
-- AFL++: https://aflplus.plus/docs/
-- libFuzzer: https://llvm.org/docs/LibFuzzer.html
+- OSS-Fuzz-Gen (Google): https://github.com/google/oss-fuzz-gen
+- OSS-CRS: https://github.com/ossf/oss-crs
+- Claude Code [plugins](https://code.claude.com/docs/en/plugins) · [subagents](https://code.claude.com/docs/en/sub-agents) · [skills](https://code.claude.com/docs/en/skills) · [hooks](https://code.claude.com/docs/en/hooks)
+- [AFL++](https://aflplus.plus/docs/) · [libFuzzer](https://llvm.org/docs/LibFuzzer.html)
+
+---
+
+*cc-fuzzer was built collaboratively with Claude; architecture, schema, and shipped code were human-reviewed before release.*

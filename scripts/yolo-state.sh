@@ -1,0 +1,319 @@
+#!/usr/bin/env bash
+# yolo-state.sh
+#
+# Manages the YOLO (user-defined self-looping) state block in
+# fuzz/state/fuzz-config.json. Used by the /cc-fuzzer:yolo slash command and
+# by the orchestrator's end-of-tick check.
+#
+# YOLO is opt-in: when enabled, the orchestrator calls ScheduleWakeup at the
+# end of each WARM tick to advance the campaign automatically. Hard halts
+# protect against runaway: tick cap, cost cap, no-progress detector, and a
+# crash-storm guard.
+#
+# Subcommands:
+#   yolo-state.sh enable    [--mode guided|hybrid|self_loop] [--interval SEC] [--max-ticks N] [--max-cost USD]
+#                           [--stop-on-no-progress N] [--crash-storm-threshold N]
+#                           [--redundancy-threshold N] [--soft-cost-fraction F] [--max-backoff-multiplier N]
+#       Set yolo.enabled=true, optionally override defaults. Records
+#       enabled_at_ts and enabled_at_tick from current.json.
+#
+#       --mode selects how each tick decides what to do:
+#         guided    deterministic precedence table (legacy)
+#         hybrid    orchestrator reasons over the evaluation signals; the table
+#                   is a fallback (default)
+#         self_loop orchestrator reasons freely from signals + plan; the table
+#                   is a menu. Hard caps + the redundancy/cost ledger still bind.
+#
+#   yolo-state.sh disable [--reason TEXT]
+#       Set yolo.enabled=false. Records last_halt_reason.
+#
+#   yolo-state.sh status
+#       Print one-line summary of the current yolo block.
+#
+#   yolo-state.sh check-halt
+#       Inspect current.json:yolo_state and decide whether a halt is due.
+#       Exit 0 = continue (no halt). Exit 1 = halt due. Prints the reason
+#       to stdout regardless. Used by the orchestrator before ScheduleWakeup.
+#
+# Defaults (when fields are absent):
+#   mode:                        hybrid
+#   interval_seconds:            1800 (30 min)
+#   max_ticks:                   24
+#   max_cost_usd:                10.0
+#   stop_on_no_progress_ticks:   30
+#   crash_storm_threshold:       10
+#   redundancy_threshold:        2
+#   soft_cost_fraction:          0.6
+#   max_backoff_multiplier:      4
+
+set -u
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/_lib/path-anchor.sh"
+
+STATE_DIR="${FUZZ_STATE_DIR:-$FUZZ_ROOT/state}"
+CFG_FILE="$STATE_DIR/fuzz-config.json"
+CURRENT_FILE="$STATE_DIR/current.json"
+
+# Defaults applied by `enable` when no override is given AND no value is
+# already in the config.
+DEFAULT_MODE=hybrid
+DEFAULT_INTERVAL=1800
+DEFAULT_MAX_TICKS=24
+DEFAULT_MAX_COST=10.0
+DEFAULT_STOP_NO_PROGRESS=30
+DEFAULT_CRASH_STORM=10
+DEFAULT_REDUNDANCY=2
+DEFAULT_SOFT_COST=0.6
+DEFAULT_MAX_BACKOFF=4
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+_have_config() {
+  [ -f "$CFG_FILE" ] || {
+    echo "ERROR: $CFG_FILE not found. Initialize the campaign first." >&2
+    exit 2
+  }
+}
+
+# Atomic JSON edit: merge KEY=VALUE pairs into fuzz-config.yolo, writing
+# only if the result differs.
+_yolo_merge() {
+  local merge_json="$1"
+  CFG="$CFG_FILE" MERGE="$merge_json" python3 - <<'PY'
+import json, os, sys
+cfg_path = os.environ["CFG"]
+merge = json.loads(os.environ["MERGE"])
+with open(cfg_path) as f:
+    cfg = json.load(f)
+yolo = cfg.get("yolo") or {}
+yolo.update(merge)
+cfg["yolo"] = yolo
+tmp = cfg_path + ".tmp"
+with open(tmp, "w") as f:
+    json.dump(cfg, f, indent=2)
+    f.write("\n")
+os.replace(tmp, cfg_path)
+PY
+}
+
+_current_tick() {
+  if [ -f "$CURRENT_FILE" ]; then
+    python3 -c "
+import json
+try: print(json.load(open('$CURRENT_FILE')).get('tick_number', 0))
+except: print(0)
+" 2>/dev/null || echo 0
+  else
+    echo 0
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# enable
+# ---------------------------------------------------------------------------
+_cmd_enable() {
+  _have_config
+  local mode="" interval="" max_ticks="" max_cost="" stop_no_prog="" crash_storm=""
+  local redundancy="" soft_cost="" max_backoff=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --mode)                   mode="${2:-}";        shift 2 ;;
+      --interval)               interval="${2:-}";    shift 2 ;;
+      --max-ticks)              max_ticks="${2:-}";   shift 2 ;;
+      --max-cost)               max_cost="${2:-}";    shift 2 ;;
+      --stop-on-no-progress)    stop_no_prog="${2:-}";shift 2 ;;
+      --crash-storm-threshold)  crash_storm="${2:-}"; shift 2 ;;
+      --redundancy-threshold)   redundancy="${2:-}";  shift 2 ;;
+      --soft-cost-fraction)     soft_cost="${2:-}";   shift 2 ;;
+      --max-backoff-multiplier) max_backoff="${2:-}"; shift 2 ;;
+      *) echo "ERROR: enable: unknown arg '$1'" >&2; exit 2 ;;
+    esac
+  done
+
+  case "$mode" in
+    ""|guided|hybrid|self_loop) ;;
+    *) echo "ERROR: --mode must be guided, hybrid, or self_loop (got '$mode')" >&2; exit 2 ;;
+  esac
+
+  # Read current values from the config so we only override fields the user
+  # explicitly provided, while filling defaults for genuinely-missing ones.
+  local now tick
+  now=$(date +%s)
+  tick=$(_current_tick)
+
+  MODE="$mode" INTERVAL="$interval" MAX_TICKS="$max_ticks" MAX_COST="$max_cost" \
+  STOP_NO_PROG="$stop_no_prog" CRASH_STORM="$crash_storm" \
+  REDUNDANCY="$redundancy" SOFT_COST="$soft_cost" MAX_BACKOFF="$max_backoff" \
+  NOW="$now" TICK="$tick" \
+  DEF_MODE="$DEFAULT_MODE" DEF_INTERVAL="$DEFAULT_INTERVAL" DEF_MAX_TICKS="$DEFAULT_MAX_TICKS" \
+  DEF_MAX_COST="$DEFAULT_MAX_COST" DEF_STOP_NO_PROG="$DEFAULT_STOP_NO_PROGRESS" \
+  DEF_CRASH_STORM="$DEFAULT_CRASH_STORM" DEF_REDUNDANCY="$DEFAULT_REDUNDANCY" \
+  DEF_SOFT_COST="$DEFAULT_SOFT_COST" DEF_MAX_BACKOFF="$DEFAULT_MAX_BACKOFF" \
+  CFG="$CFG_FILE" \
+  python3 - <<'PY'
+import json, os
+cfg_path = os.environ["CFG"]
+with open(cfg_path) as f:
+    cfg = json.load(f)
+yolo = cfg.get("yolo") or {}
+
+def _override(field, env, default, cast):
+    v = os.environ.get(env, "")
+    if v:
+        try:
+            yolo[field] = cast(v)
+            return
+        except Exception:
+            pass
+    if field not in yolo:
+        yolo[field] = cast(default)
+
+_override("mode",                     "MODE",         os.environ["DEF_MODE"],         str)
+_override("interval_seconds",         "INTERVAL",     os.environ["DEF_INTERVAL"],     int)
+_override("max_ticks",                "MAX_TICKS",    os.environ["DEF_MAX_TICKS"],    int)
+_override("max_cost_usd",             "MAX_COST",     os.environ["DEF_MAX_COST"],     float)
+_override("stop_on_no_progress_ticks","STOP_NO_PROG", os.environ["DEF_STOP_NO_PROG"], int)
+_override("crash_storm_threshold",    "CRASH_STORM",  os.environ["DEF_CRASH_STORM"],  int)
+_override("redundancy_threshold",     "REDUNDANCY",   os.environ["DEF_REDUNDANCY"],   int)
+_override("soft_cost_fraction",       "SOFT_COST",    os.environ["DEF_SOFT_COST"],    float)
+_override("max_backoff_multiplier",   "MAX_BACKOFF",  os.environ["DEF_MAX_BACKOFF"],  int)
+
+yolo["enabled"]         = True
+yolo["enabled_at_ts"]   = int(os.environ["NOW"])
+yolo["enabled_at_tick"] = int(os.environ["TICK"])
+yolo["last_halt_reason"] = None
+
+cfg["yolo"] = yolo
+tmp = cfg_path + ".tmp"
+with open(tmp, "w") as f:
+    json.dump(cfg, f, indent=2)
+    f.write("\n")
+os.replace(tmp, cfg_path)
+
+print(f"yolo enabled mode={yolo['mode']} at tick={yolo['enabled_at_tick']} "
+      f"interval={yolo['interval_seconds']}s "
+      f"max_ticks={yolo['max_ticks']} "
+      f"max_cost=${yolo['max_cost_usd']:.2f} "
+      f"stop_on_no_progress={yolo['stop_on_no_progress_ticks']} "
+      f"redundancy={yolo['redundancy_threshold']} "
+      f"soft_cost={yolo['soft_cost_fraction']}")
+PY
+}
+
+# ---------------------------------------------------------------------------
+# disable
+# ---------------------------------------------------------------------------
+_cmd_disable() {
+  _have_config
+  local reason=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --reason) reason="${2:-}"; shift 2 ;;
+      *) echo "ERROR: disable: unknown arg '$1'" >&2; exit 2 ;;
+    esac
+  done
+
+  REASON="$reason" CFG="$CFG_FILE" python3 - <<'PY'
+import json, os
+cfg_path = os.environ["CFG"]
+with open(cfg_path) as f:
+    cfg = json.load(f)
+yolo = cfg.get("yolo") or {}
+was_enabled = bool(yolo.get("enabled"))
+yolo["enabled"] = False
+reason = os.environ.get("REASON", "")
+if reason:
+    yolo["last_halt_reason"] = reason
+cfg["yolo"] = yolo
+tmp = cfg_path + ".tmp"
+with open(tmp, "w") as f:
+    json.dump(cfg, f, indent=2)
+    f.write("\n")
+os.replace(tmp, cfg_path)
+print(f"yolo disabled{' (was: enabled)' if was_enabled else ' (was: already disabled)'}"
+      + (f" reason: {reason}" if reason else ""))
+PY
+}
+
+# ---------------------------------------------------------------------------
+# status
+# ---------------------------------------------------------------------------
+_cmd_status() {
+  if [ ! -f "$CFG_FILE" ]; then
+    echo "yolo: not configured (no fuzz-config.json)"
+    return 0
+  fi
+  CFG="$CFG_FILE" python3 - <<'PY'
+import json, os
+with open(os.environ["CFG"]) as f:
+    cfg = json.load(f)
+y = cfg.get("yolo") or {}
+if not y:
+    print("yolo: not configured")
+else:
+    state = "ENABLED" if y.get("enabled") else "disabled"
+    print(f"yolo: {state}")
+    if y.get("enabled"):
+        print(f"  mode:                     {y.get('mode', 'hybrid')}")
+        print(f"  interval:                 {y.get('interval_seconds', '?')}s")
+        print(f"  max_ticks:                {y.get('max_ticks', '?')}")
+        print(f"  max_cost_usd:             ${y.get('max_cost_usd', 0):.2f}")
+        print(f"  stop_on_no_progress:      {y.get('stop_on_no_progress_ticks', '?')} ticks")
+        print(f"  crash_storm_threshold:    {y.get('crash_storm_threshold', '?')} findings/tick")
+        print(f"  redundancy_threshold:     {y.get('redundancy_threshold', 2)} unproductive dispatches")
+        print(f"  soft_cost_fraction:       {y.get('soft_cost_fraction', 0.6)} of max_cost (throttle Opus)")
+        print(f"  enabled_at_tick:          {y.get('enabled_at_tick', '?')}")
+        print(f"  enabled_at_ts:            {y.get('enabled_at_ts', '?')}")
+    halt = y.get("last_halt_reason")
+    if halt:
+        print(f"  last_halt_reason:         {halt}")
+PY
+}
+
+# ---------------------------------------------------------------------------
+# check-halt — inspects current.json.yolo_state.halt_triggered + halt_reason.
+# Exit 0 if no halt due (yolo continues). Exit 1 if halt due (orchestrator
+# must call `disable --reason ...` and NOT schedule the next wake).
+# ---------------------------------------------------------------------------
+_cmd_check_halt() {
+  if [ ! -f "$CURRENT_FILE" ]; then
+    echo "no current.json — halt (cannot evaluate)"; return 1
+  fi
+  CURRENT="$CURRENT_FILE" python3 - <<'PY'
+import json, os, sys
+with open(os.environ["CURRENT"]) as f:
+    cur = json.load(f)
+ys = cur.get("yolo_state") or {}
+if not ys.get("active"):
+    print("not_active")
+    sys.exit(0)
+if ys.get("halt_triggered"):
+    print(ys.get("halt_reason") or "halt_triggered_no_reason")
+    sys.exit(1)
+# Active and no halt yet → continue.
+print(f"continue tick={ys.get('tick_quota_used', '?')}/{ys.get('tick_quota_used',0)+ys.get('tick_quota_remaining',0)} "
+      f"cost=${ys.get('estimated_cost_usd', 0):.2f}/${ys.get('estimated_cost_usd',0)+ys.get('cost_quota_remaining_usd',0):.2f}")
+sys.exit(0)
+PY
+}
+
+# ---------------------------------------------------------------------------
+# Dispatch
+# ---------------------------------------------------------------------------
+cmd="${1:-help}"
+shift || true
+case "$cmd" in
+  enable)     _cmd_enable "$@" ;;
+  disable)    _cmd_disable "$@" ;;
+  status)     _cmd_status ;;
+  check-halt) _cmd_check_halt ;;
+  help|-h|--help)
+    sed -n '2,/^$/p' "$0" | sed 's/^# \?//'
+    ;;
+  *)
+    echo "ERROR: unknown subcommand '$cmd' (try: enable | disable | status | check-halt)" >&2
+    exit 2
+    ;;
+esac

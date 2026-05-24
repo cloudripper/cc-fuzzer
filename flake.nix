@@ -94,11 +94,20 @@
           which
           file
           glib
+          git
+          jq
 
           # -- Common library headers/bits some targets need
           glib.dev
           zlib.dev
           openssl.dev
+
+          # --build support for d-bugs
+          expat.dev
+          systemd.dev
+          dbus.dev
+          pam
+          duktape
 
           # -- State-script runtime
           python3
@@ -174,4 +183,3 @@
       };
     };
 }
-

@@ -57,7 +57,7 @@ ok() {
 #------------------------------------------------------------------------------
 # Check 1: Recursive fuzz/fuzz/ directories
 #------------------------------------------------------------------------------
-echo "[1/9] Checking for recursive fuzz/ directories..."
+echo "[1/10] Checking for recursive fuzz/ directories..."
 if [ -d "$PROJECT_ROOT/fuzz/fuzz" ]; then
   issue "recursive fuzz/fuzz/ exists at $PROJECT_ROOT/fuzz/fuzz/"
   echo "       This is the 'cwd inside fuzz/' bug - a script ran with cwd"
@@ -79,7 +79,7 @@ echo ""
 #------------------------------------------------------------------------------
 # Check 2: Multiple running fuzzers
 #------------------------------------------------------------------------------
-echo "[2/9] Checking for multiple fuzzer processes..."
+echo "[2/10] Checking for multiple fuzzer processes..."
 PARENTS=()
 for pid in $(pgrep -f fuzz_find_parser 2>/dev/null) $(pgrep -f LLVMFuzzer 2>/dev/null); do
   PARENT=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
@@ -104,7 +104,7 @@ echo ""
 #------------------------------------------------------------------------------
 # Check 3: Plugin file integrity
 #------------------------------------------------------------------------------
-echo "[3/9] Checking plugin file integrity..."
+echo "[3/10] Checking plugin file integrity..."
 if [ -f "$PLUGIN_ROOT/MANIFEST.md5" ]; then
   DRIFT=$(bash "$PLUGIN_ROOT/scripts/integrity-check.sh" 2>&1 | grep -c '^  - ' || true)
   DRIFT=${DRIFT:-0}
@@ -124,7 +124,7 @@ echo ""
 #------------------------------------------------------------------------------
 # Check 3b: Plugin file permissions (read-only enforcement)
 #------------------------------------------------------------------------------
-echo "[4/9] Checking plugin file permissions..."
+echo "[4/10] Checking plugin file permissions..."
 if [ -f "$PLUGIN_ROOT/MANIFEST.md5" ]; then
   if [ -w "$PLUGIN_ROOT/MANIFEST.md5" ]; then
     if [ "${CC_FUZZER_DISABLE_READONLY_LOCK:-0}" = "1" ]; then
@@ -143,7 +143,7 @@ echo ""
 #------------------------------------------------------------------------------
 # Check 4: Dangerous flags in active fuzzer command line
 #------------------------------------------------------------------------------
-echo "[5/9] Checking active fuzzer flags..."
+echo "[5/10] Checking active fuzzer flags..."
 DANGER_FOUND=0
 for pid in $(pgrep -f fuzz_find_parser 2>/dev/null); do
   CMDLINE=$(tr '\0' ' ' < /proc/$pid/cmdline 2>/dev/null)
@@ -162,7 +162,7 @@ echo ""
 #------------------------------------------------------------------------------
 # Check 5: Multiple state/findings.jsonl
 #------------------------------------------------------------------------------
-echo "[6/9] Checking for duplicate findings.jsonl..."
+echo "[6/10] Checking for duplicate findings.jsonl..."
 COUNT=$(find "$PROJECT_ROOT/fuzz" -maxdepth 5 -name 'findings.jsonl' 2>/dev/null | wc -l)
 if [ "$COUNT" -le 1 ]; then
   ok "single findings.jsonl"
@@ -180,7 +180,7 @@ echo ""
 #------------------------------------------------------------------------------
 # Check 6: Stale fuzzer.pid
 #------------------------------------------------------------------------------
-echo "[7/9] Checking for stale fuzzer.pid..."
+echo "[7/10] Checking for stale fuzzer.pid..."
 if [ -f "$PROJECT_ROOT/fuzz/state/fuzzer.pid" ]; then
   PID=$(cat "$PROJECT_ROOT/fuzz/state/fuzzer.pid" 2>/dev/null)
   if [ -n "$PID" ] && ! kill -0 "$PID" 2>/dev/null; then
@@ -197,7 +197,7 @@ echo ""
 #------------------------------------------------------------------------------
 # Check 7: Stray timestamped files in state/ root
 #------------------------------------------------------------------------------
-echo "[8/9] Checking for stray snapshot files..."
+echo "[8/10] Checking for stray snapshot files..."
 STRAY=$(find "$PROJECT_ROOT/fuzz/state" -maxdepth 1 -type f \( -name 'coverage-*.json' -o -name 'gaps-*.json' -o -name 'concolic-*.json' \) 2>/dev/null | wc -l)
 if [ "$STRAY" -eq 0 ]; then
   ok "no stray snapshot files in state/ root"
@@ -210,7 +210,7 @@ echo ""
 #------------------------------------------------------------------------------
 # Check 8: Legacy fuzz/state/crashes/ path
 #------------------------------------------------------------------------------
-echo "[9/9] Checking for legacy crash paths..."
+echo "[9/10] Checking for legacy crash paths..."
 if [ -d "$PROJECT_ROOT/fuzz/state/crashes" ]; then
   warn "legacy fuzz/state/crashes/ directory exists"
   COUNT=$(ls "$PROJECT_ROOT/fuzz/state/crashes/" 2>/dev/null | wc -l)
@@ -218,6 +218,50 @@ if [ -d "$PROJECT_ROOT/fuzz/state/crashes" ]; then
   echo "       Fix: triage/move to fuzz/crashes/{new,known,flaky}/, then rmdir"
 else
   ok "no legacy crash paths"
+fi
+echo ""
+
+#------------------------------------------------------------------------------
+# Check 9: Nix tool inventory (v0.18)
+#------------------------------------------------------------------------------
+echo "[10/10] Checking Nix tool inventory..."
+NIX_ENV_FILE="$PROJECT_ROOT/fuzz/state/nix-env.json"
+if [ -f "$NIX_ENV_FILE" ]; then
+  NIX_ENV_AGE=$(python3 -c "
+import json, time
+try:
+    d = json.load(open('$NIX_ENV_FILE'))
+    age = int(time.time()) - int(d.get('captured_at', 0))
+    fhs = d.get('cc_fuzzer_fhs', False)
+    rev = d.get('flake_rev', 'unknown')
+    tools = d.get('tools', {})
+    present = sum(1 for v in tools.values() if v)
+    missing = sum(1 for v in tools.values() if not v)
+    crit = ['clang', 'symcc', 'afl-fuzz', 'llvm-cov', 'llvm-profdata']
+    crit_missing = [k for k in crit if not tools.get(k)]
+    print(f'{age}|{fhs}|{rev}|{present}|{missing}|{\",\".join(crit_missing)}')
+except Exception as e:
+    print(f'ERR|||||{e}')
+" 2>/dev/null)
+  IFS='|' read -r AGE FHS REV PRESENT MISSING CRIT_MISSING <<< "$NIX_ENV_AGE"
+  if [ "$AGE" = "ERR" ]; then
+    issue "nix-env.json present but unreadable"
+  else
+    if [ "$FHS" = "True" ]; then
+      ok "cc-fuzzer Nix dev shell active (flake rev: $REV)"
+    else
+      warn "not inside cc-fuzzer Nix dev shell"
+      echo "       Fix: exit Claude and run: nix develop \$CLAUDE_PLUGIN_ROOT && claude"
+    fi
+    echo "       captured ${AGE}s ago — $PRESENT tool(s) resolved, $MISSING missing"
+    if [ -n "$CRIT_MISSING" ]; then
+      issue "critical tools missing from environment: $CRIT_MISSING"
+      echo "       These block harness builds / coverage / concolic. Run 'nix develop' before claude."
+    fi
+  fi
+else
+  warn "no nix-env.json (will be captured on next session start)"
+  echo "       Fix: bash $PLUGIN_ROOT/scripts/capture-nix-env.sh"
 fi
 echo ""
 

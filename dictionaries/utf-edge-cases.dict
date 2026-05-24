@@ -4,75 +4,124 @@
 # bugs in text decoders, transcoders, and string processing libraries.
 
 # === Byte Order Marks ===
-"\xef\xbb\xbf"          # UTF-8 BOM (U+FEFF)
-"\xfe\xff"              # UTF-16 BE BOM
-"\xff\xfe"              # UTF-16 LE BOM
-"\x00\x00\xfe\xff"      # UTF-32 BE BOM
-"\xff\xfe\x00\x00"      # UTF-32 LE BOM
+# UTF-8 BOM (U+FEFF)
+"\xef\xbb\xbf"
+# UTF-16 BE BOM
+"\xfe\xff"
+# UTF-16 LE BOM
+"\xff\xfe"
+# UTF-32 BE BOM
+"\x00\x00\xfe\xff"
+# UTF-32 LE BOM
+"\xff\xfe\x00\x00"
 
 # === Overlong UTF-8 encodings (invalid but historically accepted) ===
-"\xc0\xaf"              # overlong / (2-byte form of 0x2F)
-"\xe0\x80\xaf"          # overlong / (3-byte form)
-"\xf0\x80\x80\xaf"      # overlong / (4-byte form)
-"\xc0\x80"              # overlong NUL (Java/CESU-8 style)
-"\xc1\xbf"              # overlong 0x7F
+# overlong / (2-byte form of 0x2F)
+"\xc0\xaf"
+# overlong / (3-byte form)
+"\xe0\x80\xaf"
+# overlong / (4-byte form)
+"\xf0\x80\x80\xaf"
+# overlong NUL (Java/CESU-8 style)
+"\xc0\x80"
+# overlong 0x7F
+"\xc1\xbf"
 
 # === Lone / unpaired UTF-16 surrogates (invalid as UTF-8) ===
-"\xed\xa0\x80"          # high surrogate U+D800 as 3-byte UTF-8
-"\xed\xb0\x80"          # low surrogate U+DC00
-"\xed\xa0\x80\xed\xb0\x80"  # CESU-8 surrogate pair
+# high surrogate U+D800 as 3-byte UTF-8
+"\xed\xa0\x80"
+# low surrogate U+DC00
+"\xed\xb0\x80"
+# CESU-8 surrogate pair
+"\xed\xa0\x80\xed\xb0\x80"
 
 # === Maximum codepoints / boundary values ===
-"\xf4\x8f\xbf\xbf"      # U+10FFFF - max valid Unicode codepoint
-"\xf4\x90\x80\x80"      # U+110000 - first invalid (above max)
-"\xf7\xbf\xbf\xbf"      # max 4-byte sequence (invalid)
-"\xfb\xbf\xbf\xbf\xbf"  # 5-byte sequence (RFC 2279 era, now invalid)
-"\xfd\xbf\xbf\xbf\xbf\xbf"  # 6-byte sequence (now invalid)
+# U+10FFFF - max valid Unicode codepoint
+"\xf4\x8f\xbf\xbf"
+# U+110000 - first invalid (above max)
+"\xf4\x90\x80\x80"
+# max 4-byte sequence (invalid)
+"\xf7\xbf\xbf\xbf"
+# 5-byte sequence (RFC 2279 era, now invalid)
+"\xfb\xbf\xbf\xbf\xbf"
+# 6-byte sequence (now invalid)
+"\xfd\xbf\xbf\xbf\xbf\xbf"
 
 # === Truncated multi-byte sequences ===
-"\xc2"                  # leading byte of 2-byte seq, no continuation
-"\xe2\x82"              # leading + 1 of 3-byte seq, missing 1
-"\xf0\x9f\x98"          # leading + 2 of 4-byte seq, missing 1
-"\xc2\x20"              # leading byte followed by ASCII (invalid continuation)
-"\xe0\x80"              # 3-byte sequence with overlong leading
+# leading byte of 2-byte seq, no continuation
+"\xc2"
+# leading + 1 of 3-byte seq, missing 1
+"\xe2\x82"
+# leading + 2 of 4-byte seq, missing 1
+"\xf0\x9f\x98"
+# leading byte followed by ASCII (invalid continuation)
+"\xc2\x20"
+# 3-byte sequence with overlong leading
+"\xe0\x80"
 
 # === Stray continuation bytes ===
-"\x80"                  # continuation byte without leader
-"\x80\x80\x80\x80"      # multiple continuation bytes
+# continuation byte without leader
+"\x80"
+# multiple continuation bytes
+"\x80\x80\x80\x80"
 
 # === Null and control bytes ===
-"\x00"                  # NUL
+# NUL
+"\x00"
 "\x01"
-"\x07"                  # BEL
-"\x0a"                  # LF
-"\x0d"                  # CR
-"\x0d\x0a"              # CRLF
-"\x1b"                  # ESC
+# BEL
+"\x07"
+# LF
+"\x0a"
+# CR
+"\x0d"
+# CRLF
+"\x0d\x0a"
+# ESC
+"\x1b"
 
 # === Unicode control characters ===
-"\xc2\x85"              # NEL (U+0085) - alternative line separator
-"\xe2\x80\xa8"          # Line Separator (U+2028)
-"\xe2\x80\xa9"          # Paragraph Separator (U+2029)
+# NEL (U+0085) - alternative line separator
+"\xc2\x85"
+# Line Separator (U+2028)
+"\xe2\x80\xa8"
+# Paragraph Separator (U+2029)
+"\xe2\x80\xa9"
 
 # === Replacement characters ===
-"\xef\xbf\xbd"          # U+FFFD REPLACEMENT CHARACTER
-"\xef\xbf\xbe"          # U+FFFE noncharacter
-"\xef\xbf\xbf"          # U+FFFF noncharacter
+# U+FFFD REPLACEMENT CHARACTER
+"\xef\xbf\xbd"
+# U+FFFE noncharacter
+"\xef\xbf\xbe"
+# U+FFFF noncharacter
+"\xef\xbf\xbf"
 
 # === Other noncharacters ===
-"\xef\xb7\x90"          # U+FDD0 (noncharacter)
-"\xef\xb7\xaf"          # U+FDEF (last in noncharacter range)
+# U+FDD0 (noncharacter)
+"\xef\xb7\x90"
+# U+FDEF (last in noncharacter range)
+"\xef\xb7\xaf"
 
 # === Common multi-byte test inputs ===
-"\xc2\xa0"              # NBSP (U+00A0)
-"\xe2\x80\x8b"          # ZERO WIDTH SPACE (U+200B)
-"\xe3\x80\x80"          # IDEOGRAPHIC SPACE (U+3000)
-"\xc3\xa9"              # é (U+00E9)
-"\xe2\x82\xac"          # € (U+20AC)
-"\xf0\x9f\x98\x80"      # 😀 (U+1F600)
+# NBSP (U+00A0)
+"\xc2\xa0"
+# ZERO WIDTH SPACE (U+200B)
+"\xe2\x80\x8b"
+# IDEOGRAPHIC SPACE (U+3000)
+"\xe3\x80\x80"
+# é (U+00E9)
+"\xc3\xa9"
+# € (U+20AC)
+"\xe2\x82\xac"
+# 😀 (U+1F600)
+"\xf0\x9f\x98\x80"
 
 # === UTF-16 specific patterns (when targets accept UTF-16 input) ===
-"H\x00e\x00l\x00l\x00o\x00"     # "Hello" in UTF-16 LE
-"\x00H\x00e\x00l\x00l\x00o"     # "Hello" in UTF-16 BE
-"\xd8\x3d\xde\x00"               # 😀 in UTF-16 BE surrogate pair
-"\x3d\xd8\x00\xde"               # 😀 in UTF-16 LE
+# "Hello" in UTF-16 LE
+"H\x00e\x00l\x00l\x00o\x00"
+# "Hello" in UTF-16 BE
+"\x00H\x00e\x00l\x00l\x00o"
+# 😀 in UTF-16 BE surrogate pair
+"\xd8\x3d\xde\x00"
+# 😀 in UTF-16 LE
+"\x3d\xd8\x00\xde"

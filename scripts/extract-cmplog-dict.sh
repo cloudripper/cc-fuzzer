@@ -20,7 +20,8 @@
 #   extract-cmplog-dict.sh [--aflpp-out <out-dir>] [--output <dict-path>]
 #
 # Defaults:
-#   --aflpp-out  ${FUZZ_OUT_DIR:-out}/default
+#   --aflpp-out  ${FUZZ_OUT_DIR:-out}   (the AFL++ output ROOT; instance subdirs
+#                                        default/ or <slot>/ are auto-discovered)
 #   --output     fuzz/state/cmplog-dict-<timestamp>.dict
 #
 # This script is idempotent and read-only against the AFL++ output directory.
@@ -71,9 +72,9 @@ fi
 # Resolve defaults if not given on CLI
 if [ -z "$AFLPP_OUT" ]; then
   if is_multi; then
-    AFLPP_OUT="$FUZZ_ROOT/harnesses/$HARNESS/aflpp-out/default"
+    AFLPP_OUT="$FUZZ_ROOT/harnesses/$HARNESS/aflpp-out"
   else
-    AFLPP_OUT="${FUZZ_OUT_DIR:-$PROJECT_ROOT/out}/default"
+    AFLPP_OUT="${FUZZ_OUT_DIR:-$PROJECT_ROOT/out}"
   fi
 fi
 if [ -z "$OUTPUT" ]; then
@@ -85,11 +86,13 @@ mkdir -p "$(dirname "$OUTPUT")"
 #------------------------------------------------------------------------------
 # Find cmplog observation sources.
 #
-# AFL++ records useful comparison operands in a few places depending on version:
-#   1. <out>/default/.cmplog/                — newer AFL++ stores per-op data
-#   2. <out>/default/queue/                  — input filenames sometimes carry
+# AFL++ records useful comparison operands in a few places depending on version,
+# under each instance dir (<out>/default/ for a roleless slot, <out>/<slot>/ for
+# a -M/-S slot):
+#   1. <instance>/.cmplog/                   — newer AFL++ stores per-op data
+#   2. <instance>/queue/                     — input filenames sometimes carry
 #                                              cmp:<addr>,<val> tags via cmplog
-#   3. <out>/default/cmplog/                 — older layout
+#   3. <instance>/cmplog/                    — older layout
 #
 # We scan all three, harvest any operand strings/bytes we can find, dedupe,
 # and emit a dictionary. If none of the directories exist, the cmplog binary
@@ -97,16 +100,30 @@ mkdir -p "$(dirname "$OUTPUT")"
 # we emit a header-only dict noting the situation.
 #------------------------------------------------------------------------------
 
+# A missing AFL++ output dir is NOT an error (see contract above): the campaign
+# may be libFuzzer (no cmplog data exists), or AFL++ may not have run yet. Fall
+# through to emit a header-only dict and exit 0, so the coverage-analyst's
+# "refresh, then read the newest cmplog dict" step still gets a valid (empty)
+# dict instead of a hard failure it has to special-case.
+AFLPP_OUT_MISSING=0
 if [ ! -d "$AFLPP_OUT" ]; then
-  echo "ERROR: AFL++ output dir not found: $AFLPP_OUT" >&2
-  echo "  (cmplog harvest needs the fuzzer to have run at least once)" >&2
-  exit 1
+  AFLPP_OUT_MISSING=1
+  echo "note: AFL++ output dir not present yet: $AFLPP_OUT (emitting empty cmplog dict)" >&2
 fi
 
-CANDIDATES=(
-  "$AFLPP_OUT/.cmplog"
-  "$AFLPP_OUT/cmplog"
-)
+# Resolve which instance dirs to harvest. AFLPP_OUT is normally the AFL++ output
+# ROOT; afl_instances finds its instance subdirs (default/ for a roleless slot,
+# <slot>/ for a -M/-S slot — possibly several in a parallel campaign). Also scan
+# AFLPP_OUT itself so a caller that passes a single instance dir via --aflpp-out
+# still works.
+SCAN_DIRS=()
+while IFS= read -r inst; do [ -n "$inst" ] && SCAN_DIRS+=("$inst"); done < <(afl_instances "$AFLPP_OUT")
+SCAN_DIRS+=("$AFLPP_OUT")
+
+CANDIDATES=()
+for base in "${SCAN_DIRS[@]}"; do
+  CANDIDATES+=("$base/.cmplog" "$base/cmplog")
+done
 
 FOUND_ANY=0
 RAW_TMP=$(mktemp)
@@ -129,14 +146,15 @@ done
 #   id:000123,src:000045,time:9876,op:havoc,rep:8,+cov
 # We don't extract those tags themselves but we do scan the queue file
 # CONTENTS for printable runs that look like operand candidates that
-# happened to land in the corpus.
-if [ -d "$AFLPP_OUT/queue" ]; then
+# happened to land in the corpus. Scan every instance's queue.
+for base in "${SCAN_DIRS[@]}"; do
+  [ -d "$base/queue" ] || continue
   if command -v strings >/dev/null 2>&1; then
-    find "$AFLPP_OUT/queue" -type f -print0 \
+    find "$base/queue" -type f -print0 \
       | xargs -0 -r strings -n 4 -- 2>/dev/null \
       | head -c 1048576 >> "$RAW_TMP" || true
   fi
-fi
+done
 
 #------------------------------------------------------------------------------
 # Dedupe and emit dictionary.
@@ -219,7 +237,12 @@ NUM_ENTRIES=$(echo "$ENTRIES" | grep -c '^"' || true)
   echo "# (gap reason: direct_compare), and should NOT dispatch them to"
   echo "# concolic-executor."
   echo "#"
-  if [ "$FOUND_ANY" -eq 0 ]; then
+  if [ "$AFLPP_OUT_MISSING" -eq 1 ]; then
+    echo "# NOTE: AFL++ output dir $AFLPP_OUT does not exist yet."
+    echo "#       Either this is a libFuzzer campaign (no cmplog data), or AFL++"
+    echo "#       has not run yet. Dictionary is empty; coverage-analyst should"
+    echo "#       fall back to source-only reasoning for this tick."
+  elif [ "$FOUND_ANY" -eq 0 ]; then
     echo "# NOTE: no cmplog directories were found under $AFLPP_OUT."
     echo "#       Either the cmplog binary isn't being passed via -c, or this"
     echo "#       AFL++ version doesn't expose cmplog data on disk. Dictionary"

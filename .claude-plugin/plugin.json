@@ -1,12 +1,14 @@
 {
     "$schema": "https://json.schemastore.org/claude-code-plugin.json",
     "name": "cc-fuzzer",
-    "version": "0.17.0",
-    "description": "LLM-in-the-loop coverage-guided fuzzing for C/C++ with strict, schema-driven, deterministic state. v0.17 adds: (1) Multi-fuzzer campaigns — schema v8 supports an engine-agnostic per-slot model (fuzz-config/v2 fuzzer_slots[], fuzzers/v1 manifest); each slot has its own pid/log/engine files; check-slot-liveness.sh per-slot auto-restart with anti-flap. Single-fuzzer campaigns are unchanged (default \"main\" slot). (2) Seed-safety scanner (check-seed-safety.sh) rejects unambiguously destructive payloads (rm -rf /, fork bombs, mkfs on real devices, dd to block devices, etc) before they enter the corpus. (3) write-harness-built.sh wrapper computes real SHA-256 hashes for target_source_hash / build_command_hash, replacing the v0.15 placeholder-stub bug. (4) migrate-state.sh v7->v8 tombstones legacy findings/v1 records with malformed IDs to findings-legacy.jsonl. v0.16: Opus-based campaign-planner + /cc-fuzzer:plan + /cc-fuzzer:delta + blame-finding.sh. v0.15: process-based fuzzing, two-stage triage, /cc-fuzzer:report. Architecture inspired by OSS-CRS, Buttercup, OSS-Fuzz-Gen, and Atlantis-Multilang.",
+    "version": "0.18.0",
+    "description": "LLM-in-the-loop coverage-guided fuzzing, concolic execution, and crash triage for C/C++. Model agents keep libFuzzer/AFL++ fed and steered over a schema-driven state machine, verify crashes through a multi-step pipeline, and render maintainer-ready reports. Supports multi-harness campaigns, CVE-pattern intelligence, LLM code review, and an opt-in self-looping mode.",
     "author": {
-        "name": "oro"
+        "name": "cloudripper"
     },
-    "category": "security",
+    "homepage": "https://github.com/cloudripper/cc-fuzzer",
+    "repository": "https://github.com/cloudripper/cc-fuzzer",
+    "license": "MIT",
     "keywords": [
         "fuzzing",
         "afl++",
@@ -23,6 +25,10 @@
         "redqueen",
         "nix",
         "reproducible",
-        "multi-fuzzer"
+        "multi-fuzzer",
+        "cve",
+        "nvd",
+        "vulnerability-intelligence",
+        "responsible-disclosure"
     ]
 }

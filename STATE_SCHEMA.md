@@ -100,6 +100,59 @@ A single line containing the framework schema version. The orchestrator reads th
 
 Migration chain: `v0` (pre-schema, flat layout) → `v1` (subdirectory layout, schema fields) → `v2` (mandatory coverage builds, instrumentation field) → `v3` (multiple dictionary files) → `v4` (coverage_disabled_reason required when tracking off, schema field on all events) → `v5` (findings carry verified_against_build; crashes/stale/ for rebuild-invalidated findings; fuzz-config.json for per-project settings) → `v6` (harness-built/v4 with cmplog_enabled / cmplog_binary / cmplog_disabled_reason; new gap.reason `direct_compare` for cmplog-handled branches; current.json.gaps gains `direct_compare` counter) → `v7` (harness-built/v5 adds `fuzzing_mode: in_process | process_based`; `state/FINDINGS-REPORT.md` filesystem entry; `current.json` optional `last_report_at` field) → `v8` (multi-fuzzer slots: `fuzz-config/v2` adds `fuzzer_slots[]`, new `fuzzers/v1` live manifest at `state/fuzzers.json`, per-slot `state/fuzzer-<slot>.{pid,engine,log}`, `current/v1` gains `fuzzers[]`; legacy malformed findings tombstoned to `findings-legacy.jsonl`) → `v9` (multi-harness mode opt-in: new `harness-set/v1` at `state/harnesses.json`, `harness-built/v6` adds `name`, `current/v2` adds `harnesses[]` + `active_harness`, `fuzz-config/v3` adds top-level `harnesses[]` + `fuzzer_slots[].harness`, `fuzzers/v2` slot entries gain `harness`, `finding/v2` gains `harnesses[]`, per-harness snapshot filename prefixes).
 
+**v0.18 release notes — additive within schema v9, no migration required.** v0.18 is backward-compatible: a v0.17 campaign on v9 state runs under v0.18 without rewriting state. Additions are:
+
+- New REWRITABLE artifact `state/nix-env.json` (`nix-env/v1`) — session-start snapshot.
+- New IMMUTABLE artifacts: `state/snapshots/tick-coverage-<ts>.json` (`tick-coverage/v1`), `state/snapshots/tick-briefing-<ts>.json` (`tick-briefing/v1`), `state/snapshots/planner-consult-<ts>.json` (`planner-consult/v1`), `state/snapshots/cve-context-<ts>.json` (`cve-context/v1`).
+- New APPEND-ONLY artifact `state/dropped_crashes.jsonl` (`dropped-crash/v1`).
+- New per-finding REWRITABLE bundle directory `fuzz/findings/<id>/repro/`.
+- New optional `fuzz-config.json` blocks: `tick`, `cve`, `yolo`.
+- New `current.json` optional fields: `tick_coverage`, `consult_state`, `yolo_state`.
+- New `finding/v1` and `finding/v2` optional fields: `poc_kind`, `poc_path`, `cvss_v3_1`, `cwe_id`, `principles_audit`, `verification`, `disclosure_state`, `weaponization`.
+- New `gaps-report/v1` allowed `reason` value: `cve_hotspot`.
+
+Older readers that don't understand the new fields/files gracefully degrade — they ignore unknown fields and unknown snapshot kinds (validator runs in lenient mode for snapshot files). Forward path is clean: v0.18 fields populate as the campaign runs the v0.18 code.
+
+### `state/nix-env.json` — REWRITABLE (session-start snapshot)
+
+```json
+{
+  "schema": "nix-env/v1",
+  "captured_at": 1779100000,
+  "in_nix_shell": true,
+  "cc_fuzzer_fhs": true,
+  "flake_rev": "abc123...",
+  "path": "/nix/store/...-clang/bin:/nix/store/.../bin:...",
+  "tools": {
+    "clang":         "/nix/store/.../bin/clang",
+    "symcc":         "/nix/store/.../bin/symcc",
+    "afl-fuzz":      "/nix/store/.../bin/afl-fuzz",
+    "llvm-cov":      "/nix/store/.../bin/llvm-cov",
+    "llvm-profdata": "/nix/store/.../bin/llvm-profdata",
+    "...":           "..."
+  },
+  "env": {
+    "PKG_CONFIG_PATH":   "...",
+    "LD_LIBRARY_PATH":   "...",
+    "CMAKE_PREFIX_PATH": "...",
+    "C_INCLUDE_PATH":    "...",
+    "CPLUS_INCLUDE_PATH":"...",
+    "NIX_LDFLAGS":       "...",
+    "NIX_CFLAGS_COMPILE":"..."
+  }
+}
+```
+
+Written by `scripts/capture-nix-env.sh`, invoked once per session by the `env-check.sh` SessionStart hook (only when `fuzz/` exists in cwd). Consumed by `scripts/_lib/nix-tools.sh` — agents and scripts call `nix_tool <name>` to get an absolute path for a Nix-provisioned tool without grepping `/nix/store`.
+
+**Required fields**: schema, captured_at, in_nix_shell, cc_fuzzer_fhs, flake_rev, path, tools, env.
+
+**`tools` map**: every key is a curated tool name from the capture script's `TOOLS_LIST`. Values are absolute paths from `PATH` resolution at capture time, or `""` when the tool wasn't on `PATH`. An empty value is not an error — it just means that tool isn't part of the current environment (e.g. `symcc` will be empty outside the cc-fuzzer Nix dev shell, in which case concolic-executor work cannot run).
+
+**`cc_fuzzer_fhs`**: `true` when `CC_FUZZER_FHS=1` was set by the flake's profile block — the load-bearing marker that distinguishes "user is in our pinned dev shell" from "user is in some other shell that happens to have IN_NIX_SHELL set."
+
+**Freshness**: rewritten on every session start. Scripts that consume it after a `nix develop` re-entry should not need to re-run capture manually — the next session start picks up the new environment.
+
 ### `state/plan.md` — REWRITABLE-with-archival (campaign plan)
 
 Human-readable Markdown campaign plan produced by the `campaign-planner` subagent. Two write paths:
@@ -252,6 +305,63 @@ The single file the orchestrator reads on warm ticks. Schema is already document
 
 **Optional fields**: `last_report_at` (integer unix timestamp, set by reporting-agent after writing `FINDINGS-REPORT.md`).
 
+**`yolo_state` block** (v0.18+) — computed by `update-current.sh` from `fuzz-config.json:yolo` + campaign signals (coverage roundups, events.jsonl token totals, findings.jsonl). Tells the orchestrator whether to call `ScheduleWakeup` at end-of-tick:
+```json
+"yolo_state": {
+  "active": true,
+  "enabled_at_tick": 42,
+  "enabled_at_ts":   1779200000,
+  "ticks_since_enable":      3,
+  "tick_quota_used":         3,
+  "tick_quota_remaining":    21,
+  "estimated_cost_usd":          0.42,
+  "cost_quota_remaining_usd":    9.58,
+  "consecutive_no_progress_ticks": 0,
+  "new_findings_last_interval":    0,
+  "halt_conditions": {
+    "tick_cap":     false,
+    "cost_cap":     false,
+    "no_progress":  false,
+    "crash_storm":  false
+  },
+  "halt_triggered":   false,
+  "halt_reason":      null,
+  "interval_seconds": 1800,
+  "evaluation": {
+    "mode": "hybrid",
+    "cost": {
+      "total_usd": 0.42, "opus_usd": 0.10, "opus_calls": 1,
+      "fraction_of_cap": 0.042, "posture": "normal", "soft_cost_fraction": 0.6
+    },
+    "agent_ledger": {
+      "concolic-executor": {"dispatches": 3, "consecutive_unproductive": 2, "suppressed": true}
+    },
+    "suppressed_agents": ["concolic-executor"],
+    "progress": {"fuzzer_self_climbing": true, "ticks_since_coverage_gain": 0, "consecutive_waits": 0},
+    "suggested_disposition": "wait",
+    "suggested_wait_seconds": 1800,
+    "redundancy_threshold": 2,
+    "rationale": "fuzzer still climbing; let it run"
+  }
+}
+```
+When `active=false` the orchestrator treats yolo as off (other fields may be absent). When `halt_triggered=true` the orchestrator MUST NOT schedule the next wake; instead it runs `scripts/yolo-state.sh disable --reason "<halt_reason>"` and surfaces the reason in the tick output.
+
+**`evaluation`** (v0.18+, computed by `_lib/yolo_evaluate.py`) is the **advisory** dynamic-YOLO signal block — it never halts (the hard caps above own that). `posture` ∈ {`normal`, `throttle`, `halt`} engages Opus-throttling at `soft_cost_fraction` of `max_cost_usd`. `agent_ledger[agent].suppressed` flags an agent that has been dispatched `≥ redundancy_threshold` times with no result (concolic → 0 inputs promoted; coverage agents → no weighted-coverage gain; triager → no new finding). `suggested_disposition` ∈ {`wait`, `act`, `consult`} and `suggested_wait_seconds` (adaptive backoff) are recommendations; how strictly the orchestrator follows them depends on `mode` (see the `yolo` config block).
+
+**`consult_state` block** (v0.18+) — signals whether a strategic check-in is due this tick:
+```json
+"consult_state": {
+  "last_consult_ts": 1779099000,
+  "last_consult_tick": 37,
+  "ticks_since_last_consult": 5,
+  "due": true,
+  "trigger": "scheduled" | "coverage_stall" | null,
+  "consult_every_n": 5
+}
+```
+Computed by `update-current.sh` from the latest `planner-consult-*.json`, `tick-coverage-*.json` history, and `fuzz-config.json:tick.*` settings. The orchestrator reads `due` + `trigger` to decide whether to dispatch `campaign-planner` in consult mode for this tick. Singular and multi modes both populate this block.
+
 **Multi-fuzzer (v8)**:
 - `fuzzers` is the canonical per-slot status array. Every running slot appears here with its current pid + liveness.
 - `fuzzer` (singular) is a **backward-compat convenience** for legacy readers — it always mirrors the first slot. New code reads `fuzzers[]`; the singular field will be removed in a future schema bump.
@@ -285,6 +395,97 @@ Schema: **`fuzz-config/v2`** (introduced by schema-version v8 / plugin v0.17). B
 - `role` (optional, AFL++ only) — one of `master | secondary`. AFL++ multi-fuzzer requires exactly one master per shared-corpus campaign; secondaries pull from the master's queue. Default `null` (single-instance AFL++ run).
 - `afl_power_schedule` (optional, AFL++ only) — one of `explore | exploit | fast | coe | quad | lin | seek | rare`. Maps to AFL++'s `-p` flag.
 - `libfuzzer_forks` (optional, libFuzzer only) — overrides the top-level `fuzz_forks` for this slot. Useful when one slot should be single-process while another uses fork-mode.
+- `timeout_ms` (optional, v0.18+) — per-input timeout passed to the engine. AFL: maps to `-t <ms>+` (the `+` instructs AFL to skip-on-timeout during dry-run rather than abort — without this, slow-start `process_based` harnesses can't get past AFL's calibration phase). libFuzzer: maps to `-timeout=<sec>` (rounded up from ms). **Default**: `5000` when `engine=aflpp` AND the bound harness's `fuzzing_mode=process_based`; `1000` otherwise. The auto-default exists specifically because `process_based` targets (CLI fork-exec, daemon startup, init-heavy libs) routinely exceed AFL's 1000 ms default dry-run timeout and AFL would otherwise refuse to launch the secondary. Override per-slot when the target's per-input wall time is materially different.
+
+**`tick` block** (optional, v0.18+) — controls strategic check-in cadence:
+```json
+"tick": {
+  "consult_every_n": 5,
+  "consult_on_coverage_stall": true
+}
+```
+- `consult_every_n` — every Nth WARM tick, the orchestrator writes a briefing and calls `campaign-planner` in consult mode (default 5).
+- `consult_on_coverage_stall` — when true (default), additionally forces a consult any tick where the overall `weighted_pct` has not increased across the last 5 tick-coverage roundups.
+
+**`cve` block** (optional, v0.18+) — controls the CVE intelligence layer:
+```json
+"cve": {
+  "enabled": true,
+  "query": "libxml2",
+  "version_hint": "2.11",
+  "cache_ttl_days": 30,
+  "max_cves": 200,
+  "fetch_timeout_seconds": 300,
+  "github_token_env": "GITHUB_TOKEN",
+  "include_pocs_as_seeds": true,
+  "promote_tier_b": false,
+  "poc_size_cap_bytes": 5242880
+}
+```
+- `query` — NVD keyword (required when `enabled: true`). No auto-detect; if absent at COLD, the orchestrator prompts the user.
+- `include_pocs_as_seeds` — when true (default), Tier-A PoC blobs are auto-promoted to `fuzz/corpus/cve_<id>.<ext>` after passing `check-seed-safety.sh`.
+- `promote_tier_b` — when true, Tier-B blob PoCs are also promotion-eligible. Default false (recognised-security-org sources are retained as reference, not auto-fed to the fuzzer).
+- `poc_size_cap_bytes` — hard cap on any PoC artifact fetch (default 5 MiB; oversized fetches are skipped).
+- See `scripts/_lib/cve_poc_trust.py` for the A/B/C trust-tier rules.
+
+**`code_review` block** (optional, v0.18+) — three-tier static review of the target source:
+```json
+"code_review": {
+  "enabled": true,
+  "default_tier": "sonnet",
+  "scan_paths": null,
+  "excluded_paths": ["tests/", "docs/", "examples/", "third_party/", "vendor/"],
+  "max_functions_to_review": 50,
+  "refresh_on_source_hash_change": true,
+  "deep_pass_cost_cap_usd": 3.0
+}
+```
+- `default_tier` — `"prescan"` | `"sonnet"` | `"opus"`. Sonnet is the recommended default ($0.20–$0.50 per run).
+- `scan_paths` — explicit override. When `null`, auto-detect from `harness-built.json:target_source`.
+- `excluded_paths` — list of path fragments to skip during the prescan. The defaults exclude tests, docs, examples, vendor trees, build outputs.
+- `max_functions_to_review` — Tier-2 caps. Top-N from the prescan are reviewed.
+- `deep_pass_cost_cap_usd` — hard cap on the Tier-3 Opus pass; refuses to start if the estimate exceeds.
+
+Toggled via `/cc-fuzzer:review [--deep] [--refresh] [--delta]`. Auto-runs at COLD between `cve-context-build` and `campaign-planner`; never auto-runs on WARM ticks (deliberate one-time-ish cost).
+
+**`yolo` block** (optional, v0.18+, **off by default**) — auto-tick self-loop:
+```json
+"yolo": {
+  "enabled": true,
+  "mode": "hybrid",
+  "interval_seconds": 1800,
+  "max_ticks": 24,
+  "max_cost_usd": 10.0,
+  "stop_on_no_progress_ticks": 30,
+  "crash_storm_threshold": 10,
+  "redundancy_threshold": 2,
+  "soft_cost_fraction": 0.6,
+  "max_backoff_multiplier": 4,
+  "enabled_at_ts": 1779200000,
+  "enabled_at_tick": 42,
+  "last_halt_reason": null
+}
+```
+- An absent `yolo` block — or `enabled: false` — means yolo is off and the campaign is driven manually by `/cc-fuzzer:tick`. Yolo is a deliberate user opt-in via `/cc-fuzzer:yolo on`.
+- `enabled` — when true, the orchestrator schedules its own next tick via `ScheduleWakeup` at end of each WARM tick AND follows the operator stance for the active `mode` (see `agents/fuzz-orchestrator.md`).
+- `mode` — how each tick decides what to do (default `hybrid`):
+  - `guided` — the legacy deterministic precedence table; `sleep` is the last resort. No per-tick reasoning beyond the table.
+  - `hybrid` — the orchestrator (Sonnet) reasons over `yolo_state.evaluation` (cost posture, redundancy ledger, progress) to choose **wait / act / consult** and which action; the precedence table is a fallback prior. `wait` is first-class.
+  - `self_loop` — the orchestrator reasons freely from the evaluation signals + `plan.md`; the precedence table is a menu, not a mandate. It may chain a multi-step strategy across ticks. The hard caps and the redundancy/cost ledger still bind.
+- `interval_seconds` — base delay between auto-scheduled ticks (default 1800 = 30 min). Hard floor: 60s. Under `hybrid`/`self_loop` a `wait` disposition applies adaptive backoff up to `max_backoff_multiplier × interval_seconds`.
+- `max_ticks` — hard tick cap (default 24 ≈ 12 hours at the 30-min interval). Counted from `enabled_at_tick`.
+- `max_cost_usd` — soft cost cap (default 10.0). Estimated from `events.jsonl:agent_call` token totals; not a billing source of truth. The hard halt fires at 100%.
+- `stop_on_no_progress_ticks` — halt after N consecutive zero-delta tick-coverage roundups (default 30 ≈ 15 hours stuck).
+- `crash_storm_threshold` — halt when one interval yields ≥ N new findings (default 10).
+- `redundancy_threshold` — (hybrid/self_loop) suppress an agent after this many consecutive unproductive dispatches (default 2). Surfaced in `yolo_state.evaluation.agent_ledger`.
+- `soft_cost_fraction` — (hybrid/self_loop) fraction of `max_cost_usd` at which cost `posture` becomes `throttle`: prefer cheap/deterministic actions and defer Opus agents (default 0.6).
+- `max_backoff_multiplier` — (hybrid/self_loop) cap on adaptive wait backoff (default 4).
+- `enabled_at_ts` / `enabled_at_tick` — written by `scripts/yolo-state.sh enable`; used to scope halt-condition + evaluation computation.
+- `last_halt_reason` — human-readable reason from the most recent auto-halt (or null when never halted / freshly enabled).
+
+Toggled via `/cc-fuzzer:yolo on [--mode ...]|off|status` which wraps `scripts/yolo-state.sh`. `/cc-fuzzer:stop` always sets `enabled=false` (escape hatch).
+
+**Operator stance during yolo**: see the corresponding section in `agents/fuzz-orchestrator.md`. The short version: under `guided`, `sleep` is the last resort. Under `hybrid`/`self_loop`, **wait is a first-class choice** — the orchestrator waits (with backoff) when the fuzzer is self-climbing or every actionable agent is suppressed or cost is throttling, and otherwise acts on the cheapest high-value move that isn't suppressed.
 
 **Lifecycle**: REWRITABLE. Single canonical version. Replaced atomically.
 
@@ -333,6 +534,17 @@ One finding per line. JSONL format. Strictly append-only for **new** findings; i
 **Required fields**: schema, id, stack_hash, category, location, exploitability, root_cause, reproducer, first_seen, last_seen, dedup_count.
 **Optional fields**: subcategory, sanitizer_report_excerpt.
 
+**v0.18 additive optional fields** (written by the v0.18 triager; legacy records remain valid without them; promoted to required at the next schema-version bump):
+
+- `poc_kind`: `c_program | python_ctypes | cli_invocation | ipc_replay | poc_unverified` — the form of the target-realistic reproducer.
+- `poc_path`: relative path to the `fuzz/findings/<id>/repro/` directory.
+- `cvss_v3_1`: object — `{ vector_string, base_score, severity_label, source: "triager_estimate" }`. The `source` field is mandatory and exists so the maintainer-facing report can disclaim our score as a starting estimate, not authoritative.
+- `cwe_id`: e.g., `"CWE-787"`.
+- `principles_audit`: object capturing the artifact-filter outcome — `{ harness_correctness, api_contract, public_api_reachability, entry_point_currency }`, each `{ verdict: "pass"|"fail"|"n/a", note: string }`.
+- `verification`: object — `{ deterministic_replay: "pass"|"fail"|"n/a", target_realistic_reproducer: "pass"|"fail"|"n/a", route: "A"|"B"|null, weakly_verified: bool }`. `weakly_verified: true` is set when neither Route A (target CLI) nor Route B (minimal public-API program) was buildable; the finding still files but the report surfaces the limitation honestly.
+- `disclosure_state`: `pre_contact | maintainer_engaged | cve_requested | cve_assigned | published`. Drives the `/cc-fuzzer:report --mode` rendering.
+- `weaponization`: optional object, present only when the triager attempted weaponization after the verification pipeline passed — `{ attempted: bool, achieved: bool, level: "trigger"|"control"|"exploit", notes: string }`. Failure here does NOT invalidate the trigger-level finding.
+
 **Allowed values**:
 - `category`: `heap-buffer-overflow | heap-use-after-free | stack-buffer-overflow | global-buffer-overflow | stack-overflow | null-deref | assertion-failure | ubsan-<kind> | oom | timeout | flaky | harness-artifact`
 - `exploitability`: `likely | medium | unlikely | harness-artifact`
@@ -363,6 +575,76 @@ No other fields may be modified after the finding is first recorded.
 - `event="campaign_start"`, `event="campaign_resume"`, `event="campaign_stop"`: no extra fields required.
 
 **Strict append-only**: never edit existing lines. Add new lines only.
+
+### `state/harness-corrections.jsonl` — APPEND-ONLY (v0.18 triager → harness-writer feedback)
+
+One record per line, schema `harness-correction/v1`. Written by `crash-triager` when a high-dup-count finding (default threshold: `dedup_count >= 5`) fails a re-audit of the four-principle artifact filter. The triager is signalling: "the existing finding was filed in good faith, but the pattern of repeats clarifies that this is actually a harness artifact — the harness needs a correction." `harness-writer` reads this log on its next invocation to refine the harness.
+
+```json
+{
+  "schema": "harness-correction/v1",
+  "ts": 1779200000,
+  "finding_id": "f005",
+  "stack_hash": "abcdef0123456789",
+  "principle": "harness_correctness" | "api_contract" | "public_api_reachability" | "entry_point_currency",
+  "suggested_fix": "harness:42 memcpy(dst, data, len-1) — drop the off-by-one OR validate len ≥ 1 first",
+  "evidence": "<optional: file:line citation>"
+}
+```
+
+**Required fields**: schema, ts, finding_id, stack_hash, principle, suggested_fix.
+**Optional fields**: evidence.
+
+**Strict append-only**. The triager also updates the corresponding finding's `category` and `exploitability` to `harness-artifact` via the dedup-write exception in `findings.jsonl`, so the reclassification is visible in both files.
+
+### `state/dropped_crashes.jsonl` — APPEND-ONLY (v0.18 transparency log)
+
+One record per line, schema `dropped-crash/v1`. Records every crash candidate the triager filtered out before it became a finding — with the reason, the verification stage that rejected it, and (when applicable) the principle that was violated. Lets a maintainer who asks "why didn't you report X?" get a deterministic answer with a citation, instead of "we just didn't think it counted."
+
+```json
+{
+  "schema": "dropped-crash/v1",
+  "ts": "2026-05-18T14:00:00Z",
+  "crash_file": "fuzz/crashes/new/abcdef1234567890.bin",
+  "stack_hash_partial": "abcdef12",
+  "stage": "artifact_filter" | "deterministic_replay" | "target_realistic_reproducer",
+  "principle": "harness_correctness" | "api_contract" | "public_api_reachability" | "entry_point_currency" | null,
+  "reason": "fuzz bytes do not reach the crash site; harness threads them through a length-mismatched memcpy that itself is the trigger",
+  "evidence": "see harness lines 42-58: memcpy(dst, data, len-1) with len from raw input — UB independent of target"
+}
+```
+
+**Required fields**: schema, ts, crash_file, stage, reason.
+**Optional fields**: stack_hash_partial, principle, evidence.
+
+**`stage` values**:
+- `artifact_filter` — failed one of the four principles (artifact-filter step).
+- `deterministic_replay` — crash was flaky; top stack frames not identical across ≥3 replays.
+- `target_realistic_reproducer` — verification step 3 couldn't produce a reproducer outside the harness.
+
+`principle` is required only when `stage == artifact_filter`. For the other stages it's `null`.
+
+**Strict append-only**. Maintainer-visible artifact when included with a finding bundle.
+
+### `findings/<id>/repro/` — REWRITABLE per-finding reproducer bundle (v0.18)
+
+Self-contained directory created by `scripts/build-poc-repro.sh` for every finding that passes the verification pipeline:
+
+```
+fuzz/findings/<finding_id>/repro/
+├── README.md          # auto-generated — finding id, CVSS estimate, CWE, brief description
+├── build.sh           # compiles the reproducer in the cc-fuzzer Nix dev shell
+├── run.sh             # executes; expects an ASan crash with the recorded top frames
+├── poc.c              # Route B: ~30-line program using public headers only
+│   poc.cc / poc.py    # (or Python ctypes/cffi if more appropriate)
+│   poc.sh             # (or shell wrapper invoking the target's CLI for Route A)
+├── input.bin          # the minimised crashing input
+└── asan.log           # ASan output captured from a successful run, for cross-check
+```
+
+Goal: a maintainer can `tar czf` this directory and verify the crash with no other artifacts from the campaign repo. The reproducer **must not** reference the fuzz harness binary; that's the entire point of the verification pipeline.
+
+The finding's `poc_path` field points at this directory. `poc_kind` records which file is the entry point (`c_program` → `poc.c`/`poc.cc`, `python_ctypes` → `poc.py`, `cli_invocation` → `poc.sh`, `ipc_replay` → `poc.py` or `poc.sh`).
 
 ### `state/snapshots/coverage-<ts>.json` — IMMUTABLE
 
@@ -437,7 +719,7 @@ Produced by `coverage-analyst`. Shape:
 ```
 
 **Required gap fields**: id, file, function, line_range, reason, hint, recommended_agent.
-**Allowed `reason` values**: `harness_gap | format_barrier | state_precondition | value_constraint | direct_compare | checksum_barrier | deep_path_condition | delta_target | dead`.
+**Allowed `reason` values**: `harness_gap | format_barrier | state_precondition | value_constraint | direct_compare | checksum_barrier | deep_path_condition | delta_target | cve_hotspot | code_review_target | dead`.
 **Allowed `recommended_agent` values**: `harness-writer | seed-generator | mutator | concolic-executor | none`.
 
 The `delta_target` reason marks gaps whose enclosing function appears in the latest `state/snapshots/delta-*.json` (recently-changed code per the user's chosen git range). It's a priority signal layered on top of the underlying root cause. Only assigned when a `delta-*.json` exists; absence of a delta artifact means delta weighting is disabled.
@@ -447,6 +729,324 @@ The `direct_compare` reason (introduced in v6) marks branches whose comparison o
 **Cap**: max 15 gaps per report. Validator enforces.
 
 Filename ts equals `timestamp` field. Immutable once written.
+
+### `state/snapshots/tick-coverage-<ts>.json` — IMMUTABLE
+
+Produced by `scripts/tick-coverage-roundup.sh` (auto-invoked from `update-current.sh`). Aggregates the newest per-harness `coverage-*.json` snapshot into a single tick-level view. Shape:
+
+```json
+{
+  "schema": "tick-coverage/v1",
+  "timestamp": 1779100000,
+  "mode": "singular" | "multi",
+  "harnesses": [
+    {
+      "name": "polkit",
+      "lines_covered": 482,
+      "lines_total": 3010,
+      "pct": 16.01,
+      "delta_since_last_tick": 7,
+      "first_seen": false,
+      "instrumentation_ok": true,
+      "snapshot_file": "fuzz/state/snapshots/coverage-polkit-1779099800.json",
+      "snapshot_ts": 1779099800,
+      "snapshot_age_seconds": 200,
+      "stale": false
+    }
+  ],
+  "overall": {
+    "lines_covered": 980,
+    "lines_total": 6020,
+    "weighted_pct": 16.28
+  },
+  "stale_harnesses": [],
+  "stale_threshold_seconds": 600
+}
+```
+
+**Required fields**: schema, timestamp, mode, harnesses, overall.
+
+**Per-harness fields**: name, lines_covered, lines_total, pct, delta_since_last_tick, first_seen, instrumentation_ok, snapshot_file, snapshot_ts, snapshot_age_seconds, stale.
+
+**`stale`** is true when `snapshot_age_seconds > stale_threshold_seconds` (default 600). A stale harness usually means instrumentation broke between snapshots — silent zeros that the orchestrator would otherwise miss. The roundup surfaces this in `stale_harnesses[]` so the orchestrator can flag it in the tick output.
+
+**`delta_since_last_tick`** compares against the previous `tick-coverage-*.json` (same harness name match). For a harness's first appearance, `first_seen=true` and `delta=0`.
+
+**`overall.weighted_pct`** = `sum(lines_covered) / sum(lines_total) * 100`. Useful for "is the campaign making progress overall?" without summing per-harness percentages (which would be wrong).
+
+Embedded inline as `current.json.tick_coverage` so consumers reading `current.json` get the aggregate without a second file read. Validator runs in lenient mode (same rationale as the other snapshot files: forward-compat for evolving fields).
+
+### `state/snapshots/tick-briefing-<ts>.json` — IMMUTABLE (v0.18 consult input)
+
+Produced by `scripts/tick-briefing.sh`. The orchestrator writes this on consult ticks (every Nth tick or on coverage stall) and hands the path to `campaign-planner` in consult mode. The briefing is intentionally small (~1 KB) so the Opus call stays cheap.
+
+```json
+{
+  "schema": "tick-briefing/v1",
+  "ts": 1779100000,
+  "tick_number": 42,
+  "trigger": "scheduled" | "coverage_stall" | "manual",
+  "last_consult_ts": 1779099000,
+  "last_consult_tick": 37,
+  "ticks_since_last_consult": 5,
+  "coverage": {
+    "current_overall_pct": 16.28,
+    "history": [
+      {"ts": 1779098000, "weighted_pct": 14.10, "stale_harnesses": []},
+      {"ts": 1779098500, "weighted_pct": 15.20, "stale_harnesses": []},
+      {"ts": 1779099000, "weighted_pct": 15.90, "stale_harnesses": []},
+      {"ts": 1779099500, "weighted_pct": 16.10, "stale_harnesses": []},
+      {"ts": 1779100000, "weighted_pct": 16.28, "stale_harnesses": []}
+    ],
+    "delta_across_window": 2.18,
+    "stale_harnesses": []
+  },
+  "active_gaps": {
+    "total_pending": 12,
+    "mix_by_reason": {
+      "checksum_barrier": 3,
+      "format_barrier": 2,
+      "deep_path_condition": 4,
+      "value_constraint": 3
+    },
+    "examples": [
+      {"id": "g012", "reason": "checksum_barrier",
+       "file": "src/parser.c", "function": "validate_crc",
+       "recommended_agent": "concolic-executor",
+       "hint": "16-bit CRC check at offset 0x4..."}
+    ]
+  },
+  "dispatched_since_last_consult": [
+    {"agent": "seed-generator", "tick": 39, "tokens_in": 8200, "tokens_out": 1100},
+    {"agent": "coverage-analyst", "tick": 41, "tokens_in": 15400, "tokens_out": 2200}
+  ],
+  "findings_since_last_consult": {"count": 0, "ids": []},
+  "sonnet_recommendation": {
+    "branch": "generate_seeds",
+    "reason": "plateau, 3 seedgen-eligible gaps pending"
+  }
+}
+```
+
+**Required fields**: schema, ts, tick_number, trigger, coverage, active_gaps, sonnet_recommendation.
+
+**`trigger`** values:
+- `scheduled` — periodic consult per `fuzz-config.json:tick.consult_every_n` (default 5).
+- `coverage_stall` — `tick_coverage.overall.weighted_pct` has not increased across the last 5 roundups; forces an early consult when configured.
+- `manual` — user-triggered via `/cc-fuzzer:plan --consult` (future hook).
+
+**`examples`** is capped at 8 entries by the briefing script — one example per gap reason to give the planner concrete texture without ballooning token cost. `dispatched_since_last_consult` is capped at 15.
+
+Validator runs in lenient mode — schema may grow.
+
+### `state/snapshots/planner-consult-<ts>.json` — IMMUTABLE (v0.18 consult output)
+
+Produced by `campaign-planner` in consult mode. The orchestrator reads it, applies the verdict, and includes a one-line summary in the tick output.
+
+```json
+{
+  "schema": "planner-consult/v1",
+  "ts": 1779100050,
+  "tick_number": 42,
+  "briefing_file": "fuzz/state/snapshots/tick-briefing-1779100000.json",
+  "verdict": "stay_course" | "redirect",
+  "reason": "one-line summary surfaced in the tick output",
+  "tactic": null | "force_concolic_on:g012" | "force_seedgen:g015" | "force_mutator" | "widen_scope" | "revise_plan" | "escalate_to_user",
+  "rationale": "5-10 line explanation the planner wrote for the audit trail"
+}
+```
+
+**Required fields**: schema, ts, verdict, reason.
+**`tactic`** is required when `verdict == "redirect"`; null/absent when `verdict == "stay_course"`.
+
+**Allowed tactics** (orchestrator applies inline; `revise_plan` triggers a full planner-revise pass; `escalate_to_user` halts the tick and asks the user for direction):
+
+| Tactic | Orchestrator action |
+|---|---|
+| `force_concolic_on:<gap_id>` | Dispatch concolic-executor with the named gap, regardless of `recommendation.branch`. |
+| `force_seedgen:<gap_id>` | Dispatch seed-generator with the named gap. |
+| `force_mutator` | Dispatch mutator agent. |
+| `widen_scope` | Print the planner's scope-widening note for the user; do NOT modify the plan automatically. |
+| `revise_plan` | Dispatch campaign-planner in revise mode in this same tick (heavier). |
+| `escalate_to_user` | Surface the rationale and stop. User decides what to do next. |
+
+Validator runs in lenient mode.
+
+### `state/code-review.md` — REWRITABLE (v0.18 code-review narrative)
+
+Rendered by the `code-reviewer` Sonnet agent at the tail of the Tier-2 pass. The human/LLM-readable companion to `state/snapshots/code-review-<ts>.json`. Contains:
+
+- Scope summary (files scanned, functions reviewed, LOC).
+- Top focus areas (3–7), each with rationale + fuzzing recommendation + the findings clustered into that area.
+- Top findings (medium + high confidence only) sorted by confidence then file. Each finding shows: file:line, function, pattern, evidence, exploitability hint, fuzzing recommendation, CVE pattern overlap, hotspot match.
+- How-to-use-this guidance for each consuming agent.
+
+**Purpose framing**: this is a starting map for the fuzzer, NOT a security audit and NOT a checklist of bugs to verify. The findings are PATTERNS the campaign should investigate by directing the fuzzer at the flagged regions.
+
+**Lifecycle**: REWRITABLE, overwritten by every `code-reviewer` invocation. The structured JSON snapshot is the immutable record.
+
+### `state/snapshots/code-review-prescan-<ts>.json` — IMMUTABLE (v0.18 Tier-1 output)
+
+Produced by `scripts/_lib/code_review_prescan.py` (invoked via `scripts/code-review-run.sh`). Deterministic, no LLM. Ranks the target's functions by suspicion score so Tier-2 (Sonnet) reviews the most promising candidates.
+
+```json
+{
+  "schema": "code-review-prescan/v1",
+  "ts": 1779200000,
+  "target_root": "/path/to/target",
+  "scope": {
+    "files_scanned": 47,
+    "functions_inventoried": 312,
+    "loc_total": 28453,
+    "excluded_paths": ["tests/", "docs/", ...],
+    "cve_context_consumed": "fuzz/state/snapshots/cve-context-1779100000.json",
+    "recently_changed_files": 18
+  },
+  "top_candidates": [
+    {
+      "file": "src/parser.c",
+      "name": "parse_chunk",
+      "line_start": 142, "line_end": 198, "loc": 57,
+      "suspicion_score": 22,
+      "score_breakdown": {"strcpy_call": 5, "memcpy_call": 4,
+                          "cve_hotspot_function": 10, "recently_changed": 3},
+      "pattern_hits": {"strcpy_call": 1, "memcpy_call": 2, "indexed_write": 3},
+      "cve_hotspot_match": true,
+      "cve_pattern_hints": ["oob_write", "int_overflow"],
+      "file_recently_changed": true
+    }
+  ],
+  "full_inventory_summary": [
+    {"file": "...", "name": "...", "line_start": N, "loc": N, "suspicion_score": N}
+  ]
+}
+```
+
+**Required fields**: schema, ts, target_root, scope, top_candidates.
+**Optional fields**: full_inventory_summary.
+
+### `state/snapshots/code-review-<ts>.json` — IMMUTABLE (v0.18 code-review output)
+
+Produced by the `code-reviewer` agent (Tier-2 Sonnet pass; Tier-3 Opus deep pass merges into this same file).
+
+```json
+{
+  "schema": "code-review/v1",
+  "ts": 1779200000,
+  "target": "polkit",
+  "scope": {
+    "files_scanned": 47,
+    "functions_inventoried": 312,
+    "loc_total": 28453,
+    "candidates_reviewed": 50,
+    "excluded_paths": ["tests/", "docs/", ...]
+  },
+  "tiers_run": ["prescan", "sonnet"],
+  "findings": [
+    {
+      "id": "cr001",
+      "file": "src/polkit/polkitdetails.c",
+      "function": "polkit_details_lookup",
+      "line_range": [142, 165],
+      "pattern": "oob_read",
+      "confidence": "high" | "medium" | "low",
+      "tier_classified": "sonnet" | "opus",
+      "evidence": "...",
+      "exploitability_hint": "...",
+      "fuzzing_recommendation": "...",
+      "cve_pattern_match": ["oob_read"],
+      "hotspot_match": true
+    }
+  ],
+  "focus_areas": [
+    {"rank": 1, "scope": "src/polkit/polkitauthority.c",
+     "rationale": "...", "fuzzing_recommendation": "..."}
+  ],
+  "model_costs": {
+    "prescan_tokens_in": 0, "prescan_tokens_out": 0,
+    "sonnet_tokens_in": 58200, "sonnet_tokens_out": 6800,
+    "opus_tokens_in": 0, "opus_tokens_out": 0,
+    "estimated_cost_usd": 0.27
+  }
+}
+```
+
+**Required fields**: schema, ts, target, scope, tiers_run, findings, focus_areas.
+**Optional fields**: model_costs.
+
+**Per-finding required**: id, file, function, line_range, pattern, confidence, tier_classified, evidence.
+**Per-finding optional**: exploitability_hint, fuzzing_recommendation, cve_pattern_match, hotspot_match.
+
+**Allowed `pattern` values**: any bug class from `cve-patterns.md`'s vocabulary (`oob_write | oob_read | stack_overflow | uaf | double_free | null_deref | int_overflow | format_string | type_confusion | race | uninit_read | divide_by_zero | infinite_loop`).
+
+**Allowed `confidence` values**: `high | medium | low`.
+
+**Allowed `tier_classified` values**: `sonnet | opus`.
+
+**`id` format**: `cr<NNN>` where NNN is zero-padded ≥3 digits, monotonic within one review run. Re-runs reset to `cr001`.
+
+Validator runs in lenient mode (forward-compat for the schema growing in later releases).
+
+### `state/cve-patterns.md` — REWRITABLE (v0.18 pattern guidance)
+
+Rendered by `scripts/_lib/cve_patterns.py:render_guidance()` at the tail of `scripts/cve-context-build.sh`. The human/LLM-readable companion to `state/snapshots/cve-context-<ts>.json`. Contains:
+
+- **Top patterns by frequency** — for each bug class observed across the target's CVE history, the historical locations, patch idioms, representative CVEs, generic seed strategies (rule-based), and coverage-target hints.
+- **Hotspot locations** — per-file rollups: top affected functions, pattern mix, why-it-matters paragraph.
+- **Reference PoCs cached for this campaign** — short list of Tier-A (promoted) and Tier-B (reference-only) PoCs.
+- **How agents should use this document** — explicit role guidance for seed-generator / planner / coverage-analyst / mutator.
+
+**Purpose framing (load-bearing)**: the document declares itself as PATTERN guidance, NOT a presence check. None of the listed CVEs are claimed to be present in the current codebase — they're studied to extract failure modes worth probing for NEW bugs in adjacent code.
+
+**Lifecycle**: REWRITABLE, overwritten by every `cve-context-build.sh` run. The structured backing data in the `cve-context-<ts>.json` snapshot remains the immutable record. Consumers should ALWAYS read this markdown when available (it's the cheaper, narrative-driven entry point) and only descend into the JSON when a structured field is needed.
+
+### `state/snapshots/cve-context-<ts>.json` — IMMUTABLE (v0.18 CVE intelligence)
+
+Produced by `scripts/cve-context-build.sh`. The orchestrator runs the script at COLD start (synchronously, with a 300s timeout); `campaign-planner` reads it to populate the `## Known prior art` plan section, and every downstream specialist (harness-writer, seed-generator, coverage-analyst, reporter) consults it for hotspots and patterns.
+
+```json
+{
+  "schema": "cve-context/v1",
+  "ts": 1779200000,
+  "target": "libxml2",
+  "nvd_query": "libxml2",
+  "fetch_stats": {"total": 167, "with_patch": 89, "parsed": 67, "with_poc": 8},
+  "hotspots": {
+    "by_file":     [{"path": "parse.c", "cve_count": 12, "top_funcs": ["xmlParseDoc","xmlParseContent"]}],
+    "by_function": [{"name": "xmlParseDoc", "cve_count": 6}]
+  },
+  "pattern_frequency": {"oob_write": 23, "oob_read": 18, "uaf": 12, "int_overflow": 9},
+  "patch_idioms":     [{"pattern": "bounds_check_added", "count": 18, "example_cves": ["CVE-2023-1234"]}],
+  "time_since_last_high_cve_days": 89,
+  "cves": [
+    {"id": "CVE-2023-1234",
+     "cvss_v3_1": {"vector_string": "...", "base_score": 7.5, "severity": "HIGH"},
+     "cwe_id": "CWE-787",
+     "description_summary": "OOB write in xmlParseDoc when ...",
+     "patches": [{"url":"...", "source":"github", "commit_sha":"...", "repo":"GNOME/libxml2",
+                  "files_changed":["parse.c"], "functions_changed":["xmlParseDoc"]}],
+     "advisories": [...],
+     "raw_references": [...],
+     "poc": {"available": true, "tier": "A", "kind": "blob",
+             "path": "fuzz/state/cve-cache/CVE-2023-1234/poc/test.xml",
+             "source_url": "...", "promoted_to_corpus": true},
+     "tags": ["oob_write"], "patch_idioms": ["bounds_check_added"],
+     "published": "...", "last_modified": "..."}
+  ]
+}
+```
+
+**Required fields**: schema, ts, target, nvd_query, fetch_stats, hotspots, pattern_frequency, cves.
+**Optional fields**: patch_idioms, time_since_last_high_cve_days.
+
+**Per-CVE required**: id, description_summary, patches.
+**Per-CVE optional**: cvss_v3_1, cwe_id, advisories, raw_references, poc, tags, patch_idioms, published, last_modified.
+
+**`poc.tier`** is one of `"A"` (auto-promote eligible, same-repo regression-test pattern + data blob), `"B"` (recognised security-org host, retain as reference only), or `"C"` (not downloaded). See the trust evaluator at `scripts/_lib/cve_poc_trust.py` for the exact classification rules. **No PoC URL is fetched until classified**; Tier C is recorded but never downloaded. Tier-B blob promotion to corpus requires explicit `--promote-tier-b` opt-in.
+
+**Cache backing store**: `~/.cache/cc-fuzzer/cve/<sanitized-query>/` (cross-campaign shared) with a `fuzz/state/cve-cache` symlink for inspection. Cache TTL defaults to 30 days; re-runs are idempotent.
+
+Validator runs in lenient mode (consistent with other snapshot files: forward-compat as the schema grows in v0.19+).
 
 ### `state/snapshots/delta-<ts>.json` — IMMUTABLE (OPTIONAL)
 

@@ -23,6 +23,7 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/_lib/path-anchor.sh"
 . "$SCRIPT_DIR/_lib/harness-path.sh"
+. "$SCRIPT_DIR/_lib/nix-tools.sh"
 
 # Multi-harness dispatch: with no --harness argument in multi mode, recurse
 # once per declared harness so the orchestrator gets a fresh per-harness
@@ -65,24 +66,21 @@ OUT_FILE="$SNAPSHOTS_DIR/$(coverage_snapshot_name "$HARNESS" "$TS")"
 #------------------------------------------------------------------------------
 # 1. LLVM tool probe
 #------------------------------------------------------------------------------
-probe_llvm_tool() {
-  local tool="$1"
-  if command -v "$tool" >/dev/null 2>&1; then
-    command -v "$tool"
-    return 0
-  fi
-  # Walk /usr/lib/llvm-*/bin/ from highest version down
-  for v in 21 20 19 18 17 16 15 14 13 12 11; do
-    if [ -x "/usr/lib/llvm-$v/bin/$tool" ]; then
-      echo "/usr/lib/llvm-$v/bin/$tool"
-      return 0
-    fi
-  done
-  return 1
-}
+# Resolution: fuzz/state/nix-env.json (captured at session start) then PATH.
+# Outside the cc-fuzzer Nix dev shell, falls back to host-tools via PATH.
+# Empty when neither resolves — caller below decides whether that's fatal.
+LLVM_COV_BIN=$(nix_tool llvm-cov 2>/dev/null || true)
+LLVM_PROFDATA_BIN=$(nix_tool llvm-profdata 2>/dev/null || true)
 
-LLVM_COV_BIN=$(probe_llvm_tool llvm-cov 2>/dev/null || true)
-LLVM_PROFDATA_BIN=$(probe_llvm_tool llvm-profdata 2>/dev/null || true)
+# Host fallback for Debian/Ubuntu/Kali layouts where llvm tools live in
+# /usr/lib/llvm-NN/bin/ and aren't on PATH. nix-env.json captures these
+# when present, but the user might have invoked us outside any nix shell.
+if [ -z "$LLVM_COV_BIN" ] || [ -z "$LLVM_PROFDATA_BIN" ]; then
+  for v in 21 20 19 18 17 16 15 14 13 12 11; do
+    [ -z "$LLVM_COV_BIN" ]      && [ -x "/usr/lib/llvm-$v/bin/llvm-cov" ]      && LLVM_COV_BIN="/usr/lib/llvm-$v/bin/llvm-cov"
+    [ -z "$LLVM_PROFDATA_BIN" ] && [ -x "/usr/lib/llvm-$v/bin/llvm-profdata" ] && LLVM_PROFDATA_BIN="/usr/lib/llvm-$v/bin/llvm-profdata"
+  done
+fi
 
 LLVM_COV_AVAILABLE=false
 [ -n "$LLVM_COV_BIN" ] && [ -n "$LLVM_PROFDATA_BIN" ] && LLVM_COV_AVAILABLE=true
@@ -118,30 +116,38 @@ FORK_MODE=false
 if is_multi; then
   OUT_DIR="${FUZZ_OUT_DIR:-$FUZZ_ROOT/harnesses/$HARNESS/aflpp-out}"
   # Pick the first libFuzzer slot whose harness matches; use its log file.
-  LIBFUZZER_LOG=$(MF="$STATE_DIR/fuzzers.json" H="$HARNESS" python3 - <<'PY' 2>/dev/null
-import json, os
-try:
-    doc = json.load(open(os.environ['MF']))
-    for s in doc.get('slots', []):
-        if s.get('engine') == 'libfuzzer' and s.get('harness') == os.environ['H']:
-            print(s.get('log_file',''))
-            break
-except Exception:
-    pass
-PY
-)
+  LIBFUZZER_LOG=$(MF="$STATE_DIR/fuzzers.json" H="$HARNESS" python3 "$SCRIPT_DIR/_lib/snapshot_helpers.py" slot-field log_file 2>/dev/null)
 else
   OUT_DIR="${FUZZ_OUT_DIR:-out}"
   LIBFUZZER_LOG="${LIBFUZZER_LOG:-$STATE_DIR/fuzzer.log}"
 fi
 
-if [ -f "$OUT_DIR/default/fuzzer_stats" ]; then
+# Resolve AFL++ instance dirs (default/ for a roleless slot, <slot>/ for -M/-S)
+# and aggregate fuzzer_stats across ALL of them, so a parallel campaign reports
+# campaign-wide totals rather than one fuzzer's slice. Aggregation policy:
+#   execs / crashes / hangs / execs_per_sec -> SUM (additive across instances)
+#   corpus_count (paths)                    -> MAX (instances sync to a shared,
+#                                              converged corpus; summing would
+#                                              multiply the real corpus size)
+# For a single instance this is identical to the old per-instance read.
+AFL_STATS_FILES=()
+while IFS= read -r inst; do
+  [ -f "$inst/fuzzer_stats" ] && AFL_STATS_FILES+=("$inst/fuzzer_stats")
+done < <(afl_instances "$OUT_DIR")
+
+if [ "${#AFL_STATS_FILES[@]}" -gt 0 ]; then
   ENGINE="aflpp"
-  EXECS=$(awk -F': *' '/^execs_done/{print $2; exit}' "$OUT_DIR/default/fuzzer_stats" 2>/dev/null || echo 0)
-  PATHS=$(awk -F': *' '/^corpus_count/{print $2; exit}' "$OUT_DIR/default/fuzzer_stats" 2>/dev/null || echo 0)
-  CRASHES=$(awk -F': *' '/^saved_crashes/{print $2; exit}' "$OUT_DIR/default/fuzzer_stats" 2>/dev/null || echo 0)
-  HANGS=$(awk -F': *' '/^saved_hangs/{print $2; exit}' "$OUT_DIR/default/fuzzer_stats" 2>/dev/null || echo 0)
-  EXEC_RATE=$(awk -F': *' '/^execs_per_sec/{print $2; exit}' "$OUT_DIR/default/fuzzer_stats" 2>/dev/null || echo 0)
+  read -r EXECS PATHS CRASHES HANGS EXEC_RATE < <(awk -F'[: ]+' '
+    /^execs_done/    {execs   += $2}
+    /^corpus_count/  {if ($2+0 > paths) paths = $2+0}
+    /^saved_crashes/ {crashes += $2}
+    /^saved_hangs/   {hangs   += $2}
+    /^execs_per_sec/ {rate    += $2}
+    END {printf "%d %d %d %d %s\n", execs, paths, crashes, hangs,
+                (rate==int(rate) ? sprintf("%d", rate) : sprintf("%.2f", rate))}
+  ' "${AFL_STATS_FILES[@]}" 2>/dev/null)
+  : "${EXECS:=0}" "${PATHS:=0}" "${CRASHES:=0}" "${HANGS:=0}" "${EXEC_RATE:=0}"
+  [ "${#AFL_STATS_FILES[@]}" -gt 1 ] && echo "snapshot: aggregated ${#AFL_STATS_FILES[@]} AFL++ instances (execs=$EXECS, corpus=$PATHS max)" >&2
   PARSED_ENGINE_LOG=true
 elif [ -n "$LIBFUZZER_LOG" ] && [ -f "$LIBFUZZER_LOG" ]; then
   ENGINE="libfuzzer"
@@ -162,18 +168,7 @@ elif [ -n "$LIBFUZZER_LOG" ] && [ -f "$LIBFUZZER_LOG" ]; then
   FUZZER_PID=""
   PID_FILE_TO_READ=""
   if is_multi; then
-    PID_FILE_TO_READ=$(MF="$STATE_DIR/fuzzers.json" H="$HARNESS" python3 - <<'PY' 2>/dev/null
-import json, os
-try:
-    doc = json.load(open(os.environ['MF']))
-    for s in doc.get('slots', []):
-        if s.get('engine') == 'libfuzzer' and s.get('harness') == os.environ['H']:
-            print(s.get('pid_file',''))
-            break
-except Exception:
-    pass
-PY
-)
+    PID_FILE_TO_READ=$(MF="$STATE_DIR/fuzzers.json" H="$HARNESS" python3 "$SCRIPT_DIR/_lib/snapshot_helpers.py" slot-field pid_file 2>/dev/null)
   fi
   [ -z "$PID_FILE_TO_READ" ] && PID_FILE_TO_READ="$STATE_DIR/fuzzer.pid"
   if [ -f "$PID_FILE_TO_READ" ]; then
@@ -343,19 +338,7 @@ if [ "$COVERAGE_TRACKING_ENABLED" = "true" ] && [ "$COVERAGE_BUILD_PRESENT" = "t
                           -instr-profile="$PROFDATA" \
                           --summary-only 2>/dev/null || true)
         if [ -n "$SUMMARY_JSON" ]; then
-          read COV_LINES COV_TOTAL COV_PCT < <(echo "$SUMMARY_JSON" | python3 -c "
-import json, sys
-try:
-    d = json.load(sys.stdin)
-    totals = d['data'][0]['totals']
-    lines = totals['lines']
-    covered = lines.get('covered', 0)
-    total = lines.get('count', 0)
-    pct = (covered / total * 100) if total else 0
-    print(covered, total, f'{pct:.2f}')
-except Exception as e:
-    print(0, 0, 0)
-" 2>/dev/null || echo "0 0 0")
+          read COV_LINES COV_TOTAL COV_PCT < <(echo "$SUMMARY_JSON" | python3 "$SCRIPT_DIR/_lib/snapshot_helpers.py" cov-summary 2>/dev/null || echo "0 0 0")
           COV_RUN_OK=true
         fi
       fi
@@ -394,10 +377,7 @@ else
                      -newermt "@$PREV_TS" -type f 2>/dev/null | head -50)
 fi
 if [ -n "$NEW_CRASH_LIST" ]; then
-  NEW_CRASHES_JSON=$(echo "$NEW_CRASH_LIST" | python3 -c "
-import sys, json
-print(json.dumps([line.strip() for line in sys.stdin if line.strip()]))
-")
+  NEW_CRASHES_JSON=$(echo "$NEW_CRASH_LIST" | python3 "$SCRIPT_DIR/_lib/snapshot_helpers.py" lines-to-json)
 fi
 
 #------------------------------------------------------------------------------
@@ -407,16 +387,7 @@ UNREACHED_JSON="[]"
 if [ "$COV_RUN_OK" = "true" ] && [ -f "$COV_DIR/default.profdata" ]; then
   UNREACHED_JSON=$("$LLVM_COV_BIN" export "$COVERAGE_BINARY" \
                     -instr-profile="$COV_DIR/default.profdata" 2>/dev/null \
-    | python3 -c "
-import sys, json
-try:
-    d = json.load(sys.stdin)
-    funcs = d['data'][0].get('functions', [])
-    unreached = [f['name'] for f in funcs if f.get('count', 0) == 0]
-    print(json.dumps(unreached[:15]))
-except Exception:
-    print('[]')
-" 2>/dev/null || echo '[]')
+    | python3 "$SCRIPT_DIR/_lib/snapshot_helpers.py" unreached-funcs 2>/dev/null || echo '[]')
 fi
 
 #------------------------------------------------------------------------------
@@ -447,10 +418,7 @@ fi
 
 if [ "${#ERRS[@]}" -gt 0 ]; then
   INSTRUMENTATION_OK=false
-  INSTRUMENTATION_ERRORS_JSON=$(printf '%s\n' "${ERRS[@]}" | python3 -c "
-import sys, json
-print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))
-")
+  INSTRUMENTATION_ERRORS_JSON=$(printf '%s\n' "${ERRS[@]}" | python3 "$SCRIPT_DIR/_lib/snapshot_helpers.py" lines-to-json)
 fi
 
 #------------------------------------------------------------------------------
@@ -500,8 +468,10 @@ EOF
 
 echo "$OUT_FILE"
 
-# Refresh current.json so callers don't have to.
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Refresh current.json so callers don't have to. SCRIPT_DIR was resolved at the
+# top (before path-anchor changed cwd); don't recompute it here — a relative
+# invocation would resolve it against the wrong directory and silently skip the
+# refresh.
 if [ -x "$SCRIPT_DIR/update-current.sh" ]; then
   FUZZ_STATE_DIR="$STATE_DIR" bash "$SCRIPT_DIR/update-current.sh" >/dev/null 2>&1 || true
 fi

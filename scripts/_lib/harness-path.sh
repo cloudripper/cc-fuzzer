@@ -31,6 +31,7 @@
 #   harness_field <name> <field>          # read a per-harness record field
 #   harness_binary <name>                 # convenience for harness_field <name> harness_binary
 #   slot_to_harness <slot>                # read fuzzers.json; empty string in singular mode
+#   afl_instances <out_dir>               # AFL++ instance dirs under out_dir (default first)
 #
 # In singular mode, the <name> argument is ignored by the path/filename
 # helpers — they return the singular paths regardless. Callers may pass any
@@ -333,6 +334,36 @@ PY
 }
 
 #------------------------------------------------------------------------------
+# AFL++ instance directories
+#
+# AFL++ writes each fuzzer instance into <out_dir>/<instance>/. The instance
+# name is the slot when launched with -M/-S (parallel campaigns), or "default"
+# for a roleless single instance. Scripts that read fuzzer_stats or harvest
+# cmplog data must not assume "default" — a -M main slot lands in <out>/main/.
+#
+# afl_instances <out_dir>: print existing instance dir paths (those with a
+# fuzzer_stats file or a queue/ dir), "default" first when present so the
+# common single-slot case keeps reading the same dir. Empty if none.
+#------------------------------------------------------------------------------
+
+afl_instances() {
+  local out_dir="$1"
+  [ -d "$out_dir" ] || return 0
+  if [ -d "$out_dir/default" ] && { [ -f "$out_dir/default/fuzzer_stats" ] || [ -d "$out_dir/default/queue" ]; }; then
+    echo "$out_dir/default"
+  fi
+  local d base
+  for d in "$out_dir"/*/; do
+    [ -d "$d" ] || continue
+    base=$(basename "$d")
+    [ "$base" = default ] && continue
+    if [ -f "${d}fuzzer_stats" ] || [ -d "${d}queue" ]; then
+      echo "${d%/}"
+    fi
+  done
+}
+
+#------------------------------------------------------------------------------
 # CLI dispatch (only when invoked directly, not when sourced)
 #------------------------------------------------------------------------------
 
@@ -358,7 +389,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     coverage_snapshot_name|gaps_snapshot_name|concolic_snapshot_name|cmplog_dict_name|crash_filename)
       "$cmd" "${1:-}" "${2:-}"
       ;;
-    parse_crash_filename|harness_binary|slot_to_harness)
+    parse_crash_filename|harness_binary|slot_to_harness|afl_instances)
       "$cmd" "${1:-}"
       ;;
     harness_field)

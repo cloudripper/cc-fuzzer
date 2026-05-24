@@ -60,6 +60,7 @@ ROLE=""
 POWER_SCHEDULE=""
 LF_FORKS_OVERRIDE=""
 RESTART_OF=""
+TIMEOUT_MS=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -71,6 +72,7 @@ while [ $# -gt 0 ]; do
     --role)              ROLE="${2:-}"; shift 2 ;;
     --power-schedule)    POWER_SCHEDULE="${2:-}"; shift 2 ;;
     --libfuzzer-forks)   LF_FORKS_OVERRIDE="${2:-}"; shift 2 ;;
+    --timeout-ms)        TIMEOUT_MS="${2:-}"; shift 2 ;;
     --restart-of)        RESTART_OF="${2:-}"; shift 2 ;;
     -h|--help)
       sed -n '2,/^$/p' "$0" | sed 's/^# \?//'
@@ -172,6 +174,26 @@ esac
 FUZZING_MODE=$(harness_field "$HARNESS" fuzzing_mode)
 [ -z "$FUZZING_MODE" ] && FUZZING_MODE="in_process"
 
+# --timeout-ms default. Per-input timeout passed to the engine. The interesting
+# case is AFL++ + process_based: AFL's default 1000 ms calibration timeout
+# kills any seed whose startup (fork+exec+init) exceeds it, which for daemon-
+# or CLI-style targets is essentially every seed. Auto-bump for that combo.
+#
+# Order of precedence:
+#   1. Explicit --timeout-ms argument (from fuzz-config.json:fuzzer_slots[].timeout_ms)
+#   2. Auto-default by (engine, fuzzing_mode)
+if [ -z "$TIMEOUT_MS" ]; then
+  if [ "$ENGINE" = "aflpp" ] && [ "$FUZZING_MODE" = "process_based" ]; then
+    TIMEOUT_MS=5000
+  else
+    TIMEOUT_MS=1000
+  fi
+fi
+case "$TIMEOUT_MS" in
+  ''|*[!0-9]*) echo "ERROR: --timeout-ms must be a positive integer (got '$TIMEOUT_MS')" >&2; exit 2 ;;
+esac
+[ "$TIMEOUT_MS" -ge 100 ] 2>/dev/null || { echo "ERROR: --timeout-ms below 100ms floor" >&2; exit 2; }
+
 CMPLOG_ENABLED=$(harness_field "$HARNESS" cmplog_enabled)
 [ "$CMPLOG_ENABLED" = "True" ] && CMPLOG_ENABLED="true"
 [ "$CMPLOG_ENABLED" = "False" ] || [ -z "$CMPLOG_ENABLED" ] && CMPLOG_ENABLED="false"
@@ -184,20 +206,7 @@ DICT_JSON=$(harness_field "$HARNESS" dict_files)
 if [ -n "$DICT_JSON" ] && [ "$DICT_JSON" != "None" ]; then
   while IFS= read -r df; do
     [ -n "$df" ] && DICT_FILES+=("$df")
-  done < <(DJ="$DICT_JSON" python3 - <<'PY' 2>/dev/null
-import json, os
-try:
-    val = os.environ['DJ']
-    if val.startswith('['):
-        arr = json.loads(val)
-    else:
-        arr = [val]
-    for f in arr:
-        if f: print(f)
-except Exception:
-    pass
-PY
-)
+  done < <(DJ="$DICT_JSON" python3 "$SCRIPT_DIR/_lib/launch_slot.py" parse-dict-json 2>/dev/null)
 fi
 
 # Resolve per-harness output paths so crash files attribute back to a harness.
@@ -256,6 +265,9 @@ if [ "$ENGINE" = "libfuzzer" ]; then
     EXTRA_LF_FLAGS+=("-close_fd_mask=3")
     LF_RSZ_MB=4096
   fi
+  # libFuzzer -timeout is in SECONDS (AFL is ms). Round up.
+  LF_TIMEOUT_SEC=$(( (TIMEOUT_MS + 999) / 1000 ))
+  [ "$LF_TIMEOUT_SEC" -lt 1 ] && LF_TIMEOUT_SEC=1
 
   # Launch from SLOT_CWD so libFuzzer's ./crash-* writes there. Use a subshell
   # for cwd isolation, then capture the backgrounded PID. The trick: bash's $!
@@ -270,7 +282,7 @@ if [ "$ENGINE" = "libfuzzer" ]; then
       "${FORK_FLAGS[@]}" \
       "${EXTRA_LF_FLAGS[@]}" \
       -print_final_stats=1 \
-      -timeout=10 \
+      -timeout="$LF_TIMEOUT_SEC" \
       -rss_limit_mb="$LF_RSZ_MB" \
       -print_pcs=0 \
       > "$LOG_FILE" 2>&1 &
@@ -335,9 +347,17 @@ else
     AFL_TARGET_ARGS=()
   fi
 
-  echo "slot=$SLOT: launching AFL++ (role=${ROLE:-standalone}, schedule=${POWER_SCHEDULE:-default}, mode=$FUZZING_MODE${HARNESS:+, harness=$HARNESS})" >&2
+  # -t <ms>+   per-input timeout. The trailing `+` means skip-on-timeout
+  #             rather than abort during dry-run. Without it, AFL refuses
+  #             to start when ANY seed in the initial corpus exceeds the
+  #             timeout — which is essentially every seed for slow-start
+  #             process_based targets.
+  AFL_TIMEOUT_FLAG=("-t" "${TIMEOUT_MS}+")
+
+  echo "slot=$SLOT: launching AFL++ (role=${ROLE:-standalone}, schedule=${POWER_SCHEDULE:-default}, mode=$FUZZING_MODE, timeout=${TIMEOUT_MS}ms${HARNESS:+, harness=$HARNESS})" >&2
 
   nohup afl-fuzz \
+    "${AFL_TIMEOUT_FLAG[@]}" \
     "${AFL_DICT_FLAG[@]}" \
     "${CMPLOG_FLAG[@]}" \
     "${ROLE_FLAG[@]}" \
@@ -366,62 +386,7 @@ MANIFEST_TMP="$MANIFEST.tmp"
 IS_MULTI=0
 if is_multi; then IS_MULTI=1; fi
 export SLOT ENGINE BIN PID PGID STARTED_AT LOG_FILE PID_FILE ENGINE_FILE ROLE POWER_SCHEDULE MANIFEST RESTART_OF HARNESS IS_MULTI
-python3 - <<'PY'
-import json, os
-mf = os.environ['MANIFEST']
-slot = os.environ['SLOT']
-restart_of = os.environ.get('RESTART_OF','')
-is_multi = os.environ.get('IS_MULTI','0') == '1'
-harness  = os.environ.get('HARNESS','') if is_multi else ''
-expected_schema = 'fuzzers/v2' if is_multi else 'fuzzers/v1'
-
-try:
-    doc = json.load(open(mf))
-    if doc.get('schema') != expected_schema:
-        doc = {'schema': expected_schema, 'slots': []}
-except Exception:
-    doc = {'schema': expected_schema, 'slots': []}
-
-# Find or insert
-idx = next((i for i,s in enumerate(doc['slots']) if s.get('slot') == slot), None)
-restart_count = 0
-last_restart_at = None
-if idx is not None:
-    prev = doc['slots'][idx]
-    restart_count = int(prev.get('restart_count', 0))
-    if restart_of:
-        restart_count += 1
-        last_restart_at = os.environ['STARTED_AT']
-    else:
-        last_restart_at = prev.get('last_restart_at')
-
-entry = {
-    "slot":           slot,
-    "engine":         os.environ['ENGINE'],
-    "binary":         os.environ['BIN'],
-    "pid":            os.environ['PID'],
-    "pgid":           os.environ['PGID'],
-    "started_at":     os.environ['STARTED_AT'],
-    "log_file":       os.environ['LOG_FILE'],
-    "pid_file":       os.environ['PID_FILE'],
-    "engine_file":    os.environ['ENGINE_FILE'],
-    "role":           os.environ.get('ROLE') or None,
-    "afl_power_schedule": os.environ.get('POWER_SCHEDULE') or None,
-    "restart_count":  restart_count,
-    "last_restart_at": last_restart_at,
-}
-if is_multi:
-    entry["harness"] = harness
-
-if idx is None:
-    doc['slots'].append(entry)
-else:
-    doc['slots'][idx] = entry
-
-with open(mf + '.tmp', 'w') as f:
-    json.dump(doc, f, indent=2)
-os.replace(mf + '.tmp', mf)
-PY
+python3 "$SCRIPT_DIR/_lib/launch_slot.py" update-manifest
 
 # Backward-compat: when slot is "main" and we're in singular mode, maintain the
 # legacy single-slot files so pre-v0.17 readers (anything still doing

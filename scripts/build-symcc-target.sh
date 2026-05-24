@@ -8,6 +8,9 @@
 # Output: fuzz/symcc/<harness-name>_symcc
 
 set -u
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/_lib/nix-tools.sh"
+
 HARNESS_INFO="${FUZZ_STATE_DIR:-fuzz/state}/harness-built.json"
 
 if [ ! -f "$HARNESS_INFO" ]; then
@@ -15,31 +18,10 @@ if [ ! -f "$HARNESS_INFO" ]; then
   exit 1
 fi
 
-# Resolve symcc and sym++ — PATH first, /nix/store fallback.
-_resolve_symcc_tool() {
-  local tool="$1"
-  if command -v "$tool" >/dev/null 2>&1; then
-    command -v "$tool"; return 0
-  fi
-  local found
-  found=$(find /nix/store -maxdepth 4 -type f -executable -name "$tool" 2>/dev/null | head -1)
-  if [ -n "$found" ]; then
-    echo "[symcc-fallback] '$tool' not in PATH — using nix-store: $found" >&2
-    echo "$found"; return 0
-  fi
-  return 1
-}
-
-SYMCC_BIN_TOOL=$(_resolve_symcc_tool symcc) || {
-  echo "ERROR: symcc not in PATH and not found under /nix/store." >&2
-  echo "       Run scripts/install-symcc.sh first, then 'source ~/.bashrc'." >&2
-  exit 1
-}
-SYMPP_BIN_TOOL=$(_resolve_symcc_tool "sym++") || {
-  echo "ERROR: sym++ not in PATH and not found under /nix/store." >&2
-  echo "       Run scripts/install-symcc.sh first, then 'source ~/.bashrc'." >&2
-  exit 1
-}
+# Resolve symcc and sym++ via nix-env.json (captured at session start) with
+# PATH fallback. nix_require prints a fix-it diagnostic and exits 2 on miss.
+SYMCC_BIN_TOOL=$(nix_require symcc)
+SYMPP_BIN_TOOL=$(nix_require "sym++")
 # Prepend the directory containing the resolved tools to PATH so the
 # tokenizer substitution below finds the right binaries.
 _SYMCC_DIR="$(dirname "$SYMCC_BIN_TOOL")"

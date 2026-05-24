@@ -27,6 +27,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FUZZ_ROOT="${FUZZ_ROOT:-fuzz}"
 STATE_DIR="$FUZZ_ROOT/state"
 FINDINGS="$STATE_DIR/findings.jsonl"
+OPS="$SCRIPT_DIR/_lib/findings_ops.py"        # jsonl transforms
+CHECKS="$SCRIPT_DIR/_lib/state_checks.py"     # `field` reader for harness-built.json
+HB_JSON="$STATE_DIR/harness-built.json"
 
 mkdir -p "$STATE_DIR"
 [ -f "$FINDINGS" ] || touch "$FINDINGS"
@@ -43,23 +46,7 @@ _write_harnesses_txt() {
   local harnesses_dir="$FUZZ_ROOT/crashes/known/$id"
   [ -d "$harnesses_dir" ] || return 0   # finding's repro dir not created yet
   local list
-  list=$(FINDINGS="$FINDINGS" ID="$id" python3 - <<'PY' 2>/dev/null
-import json, os
-target = os.environ['ID']
-with open(os.environ['FINDINGS']) as f:
-    for line in f:
-        line = line.strip()
-        if not line: continue
-        try:
-            d = json.loads(line)
-        except Exception:
-            continue
-        if d.get('id') == target:
-            for h in sorted(set(d.get('harnesses') or [])):
-                print(h)
-            break
-PY
-)
+  list=$(FINDINGS="$FINDINGS" ID="$id" python3 "$OPS" harnesses-txt 2>/dev/null)
   if [ -n "$list" ]; then
     echo "$list" > "$harnesses_dir/harnesses.txt.tmp"
     mv "$harnesses_dir/harnesses.txt.tmp" "$harnesses_dir/harnesses.txt"
@@ -162,12 +149,7 @@ EOF
       if [ -n "$HARNESS_CTX" ] && is_multi; then
         HARNESS_BIN=$(harness_binary "$HARNESS_CTX")
       else
-        HARNESS_BIN=$(python3 -c "
-import json, sys
-try:
-    print(json.load(open('$STATE_DIR/harness-built.json')).get('harness_binary', ''))
-except: pass
-" 2>/dev/null)
+        HARNESS_BIN=$(python3 "$CHECKS" field "$HB_JSON" harness_binary 2>/dev/null)
       fi
 
       if [ -z "$HARNESS_BIN" ] || [ ! -x "$HARNESS_BIN" ]; then
@@ -218,13 +200,7 @@ except: pass
         VERIFY_BIN=$(harness_field "$HARNESS_CTX" verify_binary)
         [ "$VERIFY_BIN" = "None" ] && VERIFY_BIN=""
       else
-        VERIFY_BIN=$(python3 -c "
-import json, sys
-try:
-    v = json.load(open('$STATE_DIR/harness-built.json')).get('verify_binary') or ''
-    print(v)
-except: pass
-" 2>/dev/null)
+        VERIFY_BIN=$(python3 "$CHECKS" field "$HB_JSON" verify_binary 2>/dev/null)
       fi
 
       if [ -n "$VERIFY_BIN" ] && [ -x "$VERIFY_BIN" ]; then
@@ -273,13 +249,7 @@ except: pass
     # Capture the build hash from harness-built.json so we know what build
     # this finding was verified against. After a rebuild, the orchestrator
     # re-verifies and moves stale findings to crashes/stale/.
-    BUILD_HASH=$(python3 -c "
-import json
-try:
-    d = json.load(open('$STATE_DIR/harness-built.json'))
-    print(d.get('build_command_hash', '') or '')
-except: pass
-" 2>/dev/null)
+    BUILD_HASH=$(python3 "$CHECKS" field "$HB_JSON" build_command_hash 2>/dev/null)
 
     # Snapshot the harness binary alongside the reproducer.
     # When the harness is rebuilt later, the original binary is preserved
@@ -310,31 +280,10 @@ except: pass
     # mode write finding/v1 (unchanged from v8).
     IS_MULTI_FLAG=0
     if is_multi && [ -n "$HARNESS_CTX" ]; then IS_MULTI_FLAG=1; fi
-    NEW_LINE=$(IS_MULTI="$IS_MULTI_FLAG" HARNESS="$HARNESS_CTX" python3 - "$LOCATION" "$ROOT_CAUSE" "$REPRODUCER" "$EXCERPT" <<PY
-import json, os, sys
-is_multi = os.environ.get('IS_MULTI','0') == '1'
-d = {
-  'schema': 'finding/v2' if is_multi else 'finding/v1',
-  'id': '$NEW_ID',
-  'stack_hash': '$STACK_HASH',
-  'category': '$CATEGORY',
-  'location': sys.argv[1],
-  'exploitability': '$EXPLOITABILITY',
-  'root_cause': sys.argv[2],
-  'reproducer': sys.argv[3],
-  'verified_against_build': '$BUILD_HASH',
-  'first_seen': '$NOW',
-  'last_seen': '$NOW',
-  'dedup_count': 1,
-}
-if is_multi:
-    d['harnesses'] = [os.environ['HARNESS']]
-excerpt = sys.argv[4]
-if excerpt:
-    d['sanitizer_report_excerpt'] = excerpt
-print(json.dumps(d, separators=(',', ':')))
-PY
-)
+    NEW_LINE=$(IS_MULTI="$IS_MULTI_FLAG" HARNESS="$HARNESS_CTX" \
+               NEW_ID="$NEW_ID" STACK_HASH="$STACK_HASH" CATEGORY="$CATEGORY" \
+               EXPLOITABILITY="$EXPLOITABILITY" BUILD_HASH="$BUILD_HASH" NOW="$NOW" \
+               python3 "$OPS" build-finding "$LOCATION" "$ROOT_CAUSE" "$REPRODUCER" "$EXCERPT")
 
     # Append atomically
     echo "$NEW_LINE" >> "$FINDINGS"
@@ -366,43 +315,23 @@ PY
     if is_multi && [ -n "$HARNESS_CTX" ]; then
       HARNESS_TO_APPEND="$HARNESS_CTX"
     fi
-    HARNESS_APPEND="$HARNESS_TO_APPEND" python3 - <<PY > "$TMP" 2>/dev/null
-import json, os
-target = "$STACK_HASH"
-now = "$NOW"
-append_harness = os.environ.get('HARNESS_APPEND','')
-with open("$FINDINGS") as f:
-    for line in f:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            d = json.loads(line)
-        except Exception:
-            print(line)
-            continue
-        if d.get("stack_hash") == target:
-            d["dedup_count"] = d.get("dedup_count", 1) + 1
-            d["last_seen"] = now
-            if append_harness:
-                hs = d.get('harnesses') or []
-                if append_harness not in hs:
-                    hs.append(append_harness)
-                    d['harnesses'] = hs
-        print(json.dumps(d, separators=(',', ':')))
-PY
+    FINDINGS="$FINDINGS" STACK_HASH="$STACK_HASH" NOW="$NOW" \
+      HARNESS_APPEND="$HARNESS_TO_APPEND" \
+      python3 "$OPS" dedup > "$TMP" 2>/dev/null
 
     if [ -s "$TMP" ]; then
       mv "$TMP" "$FINDINGS"
-      # Print the matching id for the caller
-      MATCH_ID=$(grep "\"stack_hash\":\"$STACK_HASH\"" "$FINDINGS" \
-        | python3 -c "import sys,json
-for line in sys.stdin:
-    line = line.strip()
-    if line:
-        print(json.loads(line).get('id', ''))
-        break")
+      # Print the matching id for the caller AND warn when dedup_count crosses
+      # the high-dup threshold (v0.18). The triager re-runs the four-principle
+      # artifact filter on high-dup findings before recording another duplicate.
+      DEDUP_THRESHOLD="${FINDINGS_DEDUP_THRESHOLD:-5}"
+      OUT=$(grep "\"stack_hash\":\"$STACK_HASH\"" "$FINDINGS" | python3 "$OPS" dedup-info)
+      MATCH_ID=$(echo "$OUT" | awk '{print $1}')
+      MATCH_COUNT=$(echo "$OUT" | awk '{print $2}')
       echo "$MATCH_ID"
+      if [ -n "$MATCH_COUNT" ] && [ "$MATCH_COUNT" -ge "$DEDUP_THRESHOLD" ] 2>/dev/null; then
+        echo "WARN: dedup_count crossed $DEDUP_THRESHOLD for $MATCH_ID (now $MATCH_COUNT). Triager should re-run the four-principle artifact filter on this stack hash before next dedup — high-frequency repeats often turn out to be harness artifacts." >&2
+      fi
       # In multi mode, refresh the harnesses.txt sidecar so it stays in sync.
       if [ -n "$HARNESS_TO_APPEND" ] && [ -n "$MATCH_ID" ]; then
         _write_harnesses_txt "$MATCH_ID"
@@ -427,29 +356,8 @@ for line in sys.stdin:
     fi
 
     TMP="$FINDINGS.tmp"
-    FINDINGS_PATH="$FINDINGS" APPEND_ID="$ID" APPEND_HARNESS="$HARNESS_NAME" python3 - <<'PY' > "$TMP" 2>/dev/null
-import json, os
-target = os.environ['APPEND_ID']
-harness = os.environ['APPEND_HARNESS']
-appended = False
-with open(os.environ['FINDINGS_PATH']) as f:
-    for line in f:
-        line = line.strip()
-        if not line: continue
-        try:
-            d = json.loads(line)
-        except Exception:
-            print(line); continue
-        if d.get('id') == target:
-            hs = d.get('harnesses') or []
-            if harness not in hs:
-                hs.append(harness)
-                d['harnesses'] = hs
-                appended = True
-        print(json.dumps(d, separators=(',', ':')))
-import sys
-sys.stderr.write('appended\n' if appended else 'noop\n')
-PY
+    FINDINGS="$FINDINGS" APPEND_ID="$ID" APPEND_HARNESS="$HARNESS_NAME" \
+      python3 "$OPS" add-harness > "$TMP" 2>/dev/null
     RC=$?
 
     if [ -s "$TMP" ]; then
@@ -473,28 +381,18 @@ PY
     # Outputs a table: id <tab> status (ok|stale|missing)
     # Findings whose reproducer no longer crashes are marked stale.
     # Findings are NOT modified - run findings.sh stale-mark to act on results.
-    HARNESS_BIN=$(python3 -c "
-import json
-try: print(json.load(open('$STATE_DIR/harness-built.json')).get('harness_binary', ''))
-except: pass
-" 2>/dev/null)
+    HARNESS_BIN=$(python3 "$CHECKS" field "$HB_JSON" harness_binary 2>/dev/null)
     if [ -z "$HARNESS_BIN" ] || [ ! -x "$HARNESS_BIN" ]; then
       echo "ERROR: harness binary not found in harness-built.json" >&2
       exit 2
     fi
-    VERIFY_BIN=$(python3 -c "
-import json
-try:
-    v = json.load(open('$STATE_DIR/harness-built.json')).get('verify_binary') or ''
-    print(v)
-except: pass
-" 2>/dev/null)
+    VERIFY_BIN=$(python3 "$CHECKS" field "$HB_JSON" verify_binary 2>/dev/null)
 
     TARGET_ID="${1:-}"
     while IFS= read -r line; do
       [ -z "$line" ] && continue
-      ID=$(echo "$line" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('id',''))" 2>/dev/null)
-      REPRO=$(echo "$line" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('reproducer',''))" 2>/dev/null)
+      ID=$(echo "$line" | python3 "$OPS" field-stdin id 2>/dev/null)
+      REPRO=$(echo "$line" | python3 "$OPS" field-stdin reproducer 2>/dev/null)
       [ -z "$ID" ] && continue
       [ -n "$TARGET_ID" ] && [ "$TARGET_ID" != "$ID" ] && continue
 
@@ -552,35 +450,80 @@ except: pass
       exit 1
     fi
 
-    CURRENT_BUILD=$(python3 -c "
-import json
-try: print(json.load(open('$STATE_DIR/harness-built.json')).get('build_command_hash', '') or '')
-except: pass
-" 2>/dev/null)
+    CURRENT_BUILD=$(python3 "$CHECKS" field "$HB_JSON" build_command_hash 2>/dev/null)
 
     mkdir -p "$FUZZ_ROOT/crashes/stale"
     mv "$KNOWN" "$STALE"
     # Update findings.jsonl
-    python3 - <<PY > "$FINDINGS.tmp"
-import json
-with open("$FINDINGS") as f:
-    for line in f:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            d = json.loads(line)
-        except:
-            print(line)
-            continue
-        if d.get("id") == "$ID":
-            d["status"] = "stale"
-            d["stale_against_build"] = "$CURRENT_BUILD"
-            d["reproducer"] = d.get("reproducer", "").replace("crashes/known/", "crashes/stale/")
-        print(json.dumps(d, separators=(',', ':')))
-PY
+    FINDINGS="$FINDINGS" ID="$ID" CURRENT_BUILD="$CURRENT_BUILD" \
+      python3 "$OPS" stale-mark > "$FINDINGS.tmp"
     mv "$FINDINGS.tmp" "$FINDINGS"
     echo "$ID marked stale (was $KNOWN, now $STALE)"
+    ;;
+
+  drop)
+    # findings.sh drop <crash_file> <stage> <reason> [--principle <name>] [--evidence <text>]
+    #
+    # Appends a record to fuzz/state/dropped_crashes.jsonl (schema dropped-crash/v1).
+    # The triager calls this for every crash candidate it filters out before that
+    # candidate becomes a finding — transparency log per STATE_SCHEMA.md.
+    if [ "$#" -lt 3 ]; then
+      echo "Usage: findings.sh drop <crash_file> <stage> <reason> [--principle <name>] [--evidence <text>]" >&2
+      echo "  stage in: artifact_filter | deterministic_replay | target_realistic_reproducer" >&2
+      echo "  principle (required only when stage=artifact_filter):" >&2
+      echo "    harness_correctness | api_contract | public_api_reachability | entry_point_currency" >&2
+      exit 2
+    fi
+    DROP_CRASH_FILE="$1"
+    DROP_STAGE="$2"
+    DROP_REASON="$3"
+    shift 3
+    DROP_PRINCIPLE=""
+    DROP_EVIDENCE=""
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --principle) DROP_PRINCIPLE="${2:-}"; shift 2 ;;
+        --evidence)  DROP_EVIDENCE="${2:-}";  shift 2 ;;
+        *) echo "ERROR: drop: unknown flag '$1'" >&2; exit 2 ;;
+      esac
+    done
+
+    case "$DROP_STAGE" in
+      artifact_filter|deterministic_replay|target_realistic_reproducer) ;;
+      *)
+        echo "ERROR: drop: invalid stage '$DROP_STAGE'" >&2
+        echo "       valid: artifact_filter | deterministic_replay | target_realistic_reproducer" >&2
+        exit 2
+        ;;
+    esac
+
+    if [ "$DROP_STAGE" = "artifact_filter" ]; then
+      case "$DROP_PRINCIPLE" in
+        harness_correctness|api_contract|public_api_reachability|entry_point_currency) ;;
+        *)
+          echo "ERROR: drop: --principle is required when stage=artifact_filter" >&2
+          echo "       valid: harness_correctness | api_contract | public_api_reachability | entry_point_currency" >&2
+          exit 2
+          ;;
+      esac
+    fi
+
+    DROPS_LOG="$STATE_DIR/dropped_crashes.jsonl"
+    touch "$DROPS_LOG"
+
+    # Compute a short hash if the crash file exists (helps maintainer correlate
+    # without exposing full sha256). If the file is gone, leave the field null.
+    DROP_HASH=""
+    if [ -r "$DROP_CRASH_FILE" ]; then
+      DROP_HASH=$(sha256sum "$DROP_CRASH_FILE" 2>/dev/null | awk '{print substr($1,1,8)}')
+    fi
+
+    NOW_ISO=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    CRASH="$DROP_CRASH_FILE" STAGE="$DROP_STAGE" REASON="$DROP_REASON" \
+      PRINCIPLE="$DROP_PRINCIPLE" EVIDENCE="$DROP_EVIDENCE" \
+      HASH="$DROP_HASH" TS="$NOW_ISO" \
+      python3 "$OPS" drop-record >> "$DROPS_LOG"
+    echo "dropped: $DROP_CRASH_FILE (stage=$DROP_STAGE${DROP_PRINCIPLE:+, principle=$DROP_PRINCIPLE})"
     ;;
 
   help|*)
@@ -609,9 +552,13 @@ Commands:
   stale-mark <id>    Move a finding's crashes/known/<id>/ tree to crashes/stale/<id>/
                      and add status=stale + stale_against_build to findings.jsonl.
   dedup H            Increment dedup_count and update last_seen for finding with stack_hash H.
-                     Refuses if H already exists - call 'dedup' instead.
-  dedup H            Increment dedup_count and update last_seen for finding with stack_hash H.
                      Prints the matching finding's id.
+  drop CRASH_FILE STAGE REASON [--principle P] [--evidence E]
+                     Append a record to fuzz/state/dropped_crashes.jsonl explaining why
+                     a crash candidate was filtered out by the triager (transparency log).
+                     STAGE in: artifact_filter | deterministic_replay | target_realistic_reproducer.
+                     PRINCIPLE required when STAGE=artifact_filter:
+                       harness_correctness | api_contract | public_api_reachability | entry_point_currency
 
 Per STATE_SCHEMA.md, this is the ONLY tool that should write to findings.jsonl.
 EOF

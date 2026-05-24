@@ -14,8 +14,10 @@
 # === Encoded traversal ===
 "%2e%2e%2f"
 "%2e%2e%5c"
-"%252e%252e%252f"   # double encoded
-"%c0%ae%c0%ae%c0%af"   # overlong UTF-8
+# double encoded
+"%252e%252e%252f"
+# overlong UTF-8
+"%c0%ae%c0%ae%c0%af"
 
 # === Mixed separators ===
 "..\\..//..\\"
@@ -31,7 +33,8 @@
 "C:\\windows\\system32"
 
 # === Archive-specific ===
-"/foo/bar"               # ZIP slip
+# ZIP slip
+"/foo/bar"
 "../../../etc/cron.d/x"
 "foo/../../etc/passwd"
 

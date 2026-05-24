@@ -53,20 +53,9 @@ warn() { WARNINGS+=("$1"); }
 #------------------------------------------------------------------------------
 MODE="singular"
 DECLARED_HARNESSES=()
+CHECKS="$SCRIPT_DIR/_lib/state_checks.py"
 if [ -f "$STATE_DIR/fuzz-config.json" ]; then
-  NAMES=$(CFG="$STATE_DIR/fuzz-config.json" python3 - <<'PY' 2>/dev/null
-import json, os
-try:
-    d = json.load(open(os.environ['CFG']))
-    hs = d.get('harnesses') or []
-    if isinstance(hs, list):
-        for h in hs:
-            if isinstance(h, dict) and h.get('name'):
-                print(h['name'])
-except Exception:
-    pass
-PY
-)
+  NAMES=$(CFG="$STATE_DIR/fuzz-config.json" python3 "$CHECKS" config-harness-names 2>/dev/null)
   if [ -n "$NAMES" ]; then
     MODE="multi"
     while IFS= read -r n; do
@@ -208,50 +197,9 @@ validate_json() {
   [ -f "$file" ] || { err "missing required file: $file"; return; }
 
   local result
-  result=$(python3 - <<PY 2>&1
-import json, sys
-try:
-    with open("$file") as f:
-        d = json.load(f)
-except json.JSONDecodeError as e:
-    print(f"PARSE_ERROR: {e}")
-    sys.exit(1)
-except Exception as e:
-    print(f"READ_ERROR: {e}")
-    sys.exit(1)
-
-if not isinstance(d, dict):
-    print(f"NOT_OBJECT: top-level must be a JSON object, got {type(d).__name__}")
-    sys.exit(1)
-
-schema = d.get("schema")
-if schema != "$expected_schema":
-    print(f"WRONG_SCHEMA: expected '$expected_schema', got '{schema}'")
-    sys.exit(1)
-
-required = set("$required".split(",")) if "$required" else set()
-allowed = set("$allowed".split(",")) if "$allowed" else set()
-allowed.add("schema")
-lenient = "$mode" == "lenient"
-
-actual = set(d.keys())
-missing = required - actual
-unrecognized = actual - allowed
-
-if missing:
-    print(f"MISSING_FIELDS: {sorted(missing)}")
-    sys.exit(1)
-if unrecognized:
-    # In lenient mode the validator still surfaces the extra fields, but as
-    # a warning so old snapshots don't block the campaign. The "WARN:" prefix
-    # is interpreted by the caller below.
-    prefix = "WARN: " if lenient else ""
-    print(f"{prefix}UNRECOGNIZED_FIELDS: {sorted(unrecognized)}")
-    sys.exit(0 if lenient else 1)
-
-print("OK")
-PY
-)
+  result=$(FILE="$file" SCHEMA="$expected_schema" REQUIRED="$required" \
+           ALLOWED="$allowed" LENIENT="$mode" \
+           python3 "$CHECKS" validate-json 2>&1)
 
   case "$result" in
     OK) ;;
@@ -279,14 +227,9 @@ if [ -f "$STATE_DIR/harness-built.json" ]; then
   fi
 
   # Coverage/cmplog/fuzzing_mode cross-checks apply identically to both schemas.
-  TRACK=$(python3 -c "
-import json
-try: print(json.load(open('$STATE_DIR/harness-built.json')).get('coverage_tracking', False))
-except: pass" 2>/dev/null)
-  COV_BIN=$(python3 -c "
-import json
-try: print(json.load(open('$STATE_DIR/harness-built.json')).get('coverage_binary') or '')
-except: pass" 2>/dev/null)
+  HB="$STATE_DIR/harness-built.json"
+  TRACK=$(python3 "$CHECKS" field "$HB" coverage_tracking False 2>/dev/null)
+  COV_BIN=$(python3 "$CHECKS" field "$HB" coverage_binary 2>/dev/null)
   if [ "$TRACK" = "True" ]; then
     if [ -z "$COV_BIN" ]; then
       err "harness-built.json: coverage_tracking=true but coverage_binary is null/missing"
@@ -294,23 +237,14 @@ except: pass" 2>/dev/null)
       err "harness-built.json: coverage_binary not executable: $COV_BIN"
     fi
   else
-    REASON=$(python3 -c "
-import json
-try: print(json.load(open('$STATE_DIR/harness-built.json')).get('coverage_disabled_reason') or '')
-except: pass" 2>/dev/null)
+    REASON=$(python3 "$CHECKS" field "$HB" coverage_disabled_reason 2>/dev/null)
     if [ -z "$REASON" ]; then
       warn "harness-built.json: coverage_tracking=false but no coverage_disabled_reason set. Run migrate-state.sh to backfill, or rebuild with /cc-fuzzer:campaign --reset to enable coverage."
     fi
   fi
 
-  CMPLOG_TRACK=$(python3 -c "
-import json
-try: print(json.load(open('$STATE_DIR/harness-built.json')).get('cmplog_enabled', False))
-except: pass" 2>/dev/null)
-  CMPLOG_BIN=$(python3 -c "
-import json
-try: print(json.load(open('$STATE_DIR/harness-built.json')).get('cmplog_binary') or '')
-except: pass" 2>/dev/null)
+  CMPLOG_TRACK=$(python3 "$CHECKS" field "$HB" cmplog_enabled False 2>/dev/null)
+  CMPLOG_BIN=$(python3 "$CHECKS" field "$HB" cmplog_binary 2>/dev/null)
   if [ "$CMPLOG_TRACK" = "True" ]; then
     if [ -z "$CMPLOG_BIN" ]; then
       err "harness-built.json: cmplog_enabled=true but cmplog_binary is null/missing"
@@ -318,36 +252,20 @@ except: pass" 2>/dev/null)
       warn "harness-built.json: cmplog_binary not executable: $CMPLOG_BIN (run-fuzzer.sh will continue without -c)"
     fi
   else
-    CMPLOG_REASON=$(python3 -c "
-import json
-try: print(json.load(open('$STATE_DIR/harness-built.json')).get('cmplog_disabled_reason') or '')
-except: pass" 2>/dev/null)
+    CMPLOG_REASON=$(python3 "$CHECKS" field "$HB" cmplog_disabled_reason 2>/dev/null)
     if [ -z "$CMPLOG_REASON" ]; then
       warn "harness-built.json: cmplog_enabled=false but no cmplog_disabled_reason set. Run migrate-state.sh to backfill."
     fi
   fi
 
-  FMODE=$(python3 -c "
-import json
-try: print(json.load(open('$STATE_DIR/harness-built.json')).get('fuzzing_mode',''))
-except: pass" 2>/dev/null)
+  FMODE=$(python3 "$CHECKS" field "$HB" fuzzing_mode 2>/dev/null)
   case "$FMODE" in
     in_process|process_based) ;;
     "") err "harness-built.json: fuzzing_mode missing (run migrate-state.sh to backfill)" ;;
     *) err "harness-built.json: invalid fuzzing_mode '$FMODE' (expected in_process or process_based)" ;;
   esac
 
-  HASH_CHECK=$(python3 -c "
-import json, re
-try:
-    d = json.load(open('$STATE_DIR/harness-built.json'))
-    for k in ('target_source_hash','build_command_hash'):
-        v = d.get(k, '')
-        if not re.match(r'^[0-9a-f]{16}\$', v or ''):
-            print(f'{k}={v}')
-except Exception as e:
-    print(f'parse_error={e}')
-" 2>/dev/null)
+  HASH_CHECK=$(python3 "$CHECKS" hash-check "$HB" 2>/dev/null)
   if [ -n "$HASH_CHECK" ]; then
     while IFS= read -r line; do
       [ -z "$line" ] && continue
@@ -369,71 +287,7 @@ if [ "$MODE" = "multi" ]; then
               DECLARED="$(declared_env)" \
               REQUIRED_V6="$HARNESS_BUILT_REQUIRED_V6" \
               ALLOWED_V6="$HARNESS_BUILT_ALLOWED_V6" \
-              python3 - <<'PY' 2>&1
-import json, os, re
-SLUG = re.compile(r'^[a-z0-9][a-z0-9_-]{0,31}$')
-required = set(os.environ['REQUIRED_V6'].split(',')) | {'schema'}
-allowed  = set(os.environ['ALLOWED_V6'].split(',')) | {'schema'}
-declared = [n for n in os.environ['DECLARED'].splitlines() if n.strip()]
-
-try:
-    doc = json.load(open(os.environ['HARNESSES_PATH']))
-except Exception as e:
-    print(f'harnesses.json: parse error: {e}'); raise SystemExit(0)
-
-hs = doc.get('harnesses') or []
-if not hs:
-    print('harnesses.json: harnesses[] is empty (multi mode requires at least one entry)')
-    raise SystemExit(0)
-
-seen = set()
-for i, h in enumerate(hs):
-    if not isinstance(h, dict):
-        print(f'harnesses.json: harnesses[{i}] is not an object'); continue
-    if h.get('schema') != 'harness-built/v6':
-        print(f"harnesses.json: harnesses[{i}].schema is '{h.get('schema')}' (expected harness-built/v6)")
-    name = h.get('name','')
-    if not SLUG.match(name or ''):
-        print(f"harnesses.json: harnesses[{i}].name '{name}' invalid (regex ^[a-z0-9][a-z0-9_-]{{0,31}}$)")
-    if name in seen:
-        print(f"harnesses.json: duplicate harness name '{name}'")
-    seen.add(name)
-    keys = set(h.keys())
-    missing = required - keys
-    unrec  = keys - allowed
-    if missing:
-        print(f'harnesses.json: harnesses[{i}] ({name!r}) missing fields {sorted(missing)}')
-    if unrec:
-        print(f'harnesses.json: harnesses[{i}] ({name!r}) unrecognized fields {sorted(unrec)}')
-
-# Cross-ref: harnesses.json names must equal the fuzz-config.json:harnesses[] name set
-config_names = set(declared)
-hs_names = {h.get('name') for h in hs if isinstance(h, dict)}
-extra_in_hs = hs_names - config_names
-missing_in_hs = config_names - hs_names
-if extra_in_hs:
-    print(f"harnesses.json declares {sorted(extra_in_hs)} not in fuzz-config.json:harnesses[]")
-if missing_in_hs:
-    print(f"fuzz-config.json:harnesses[] declares {sorted(missing_in_hs)} not in harnesses.json")
-
-# Mirror invariant: state/harness-built.json must equal harnesses[0] field-by-field
-mirror_path = os.environ['MIRROR_PATH']
-if os.path.isfile(mirror_path) and hs:
-    try:
-        mirror = json.load(open(mirror_path))
-    except Exception as e:
-        print(f'harness-built.json: parse error reading mirror: {e}')
-    else:
-        head = hs[0]
-        all_keys = set(mirror.keys()) | set(head.keys())
-        drift = []
-        for k in all_keys:
-            if mirror.get(k) != head.get(k):
-                drift.append(k)
-        if drift:
-            print(f"harness-built.json: MIRROR DRIFT vs harnesses.json[0] on fields {sorted(drift)} (mirror file is read-only; writes must go to harnesses.json)")
-PY
-)
+              python3 "$CHECKS" harnesses-mirror 2>&1)
     if [ -n "$HS_ERRS" ]; then
       while IFS= read -r line; do
         [ -z "$line" ] && continue
@@ -448,33 +302,25 @@ if [ -f "$STATE_DIR/current.json" ]; then
   if [ "$MODE" = "singular" ]; then
     validate_json "$STATE_DIR/current.json" "cc-fuzzer-current/v1" \
       "now,tick_number,fuzzer,fuzzers,harness,coverage,fuzzer_stats,findings,gaps,recommendation" \
-      "now,tick_number,fuzzer,fuzzers,harness,coverage,fuzzer_stats,findings,gaps,recommendation,last_report_at,multi_fuzzer"
+      "now,tick_number,fuzzer,fuzzers,harness,coverage,fuzzer_stats,findings,gaps,recommendation,last_report_at,multi_fuzzer,tick_coverage,consult_state,yolo_state"
   else
     validate_json "$STATE_DIR/current.json" "cc-fuzzer-current/v2" \
       "now,tick_number,active_harness,harnesses,fuzzers,findings,recommendation" \
-      "now,tick_number,active_harness,harnesses,fuzzers,findings,recommendation,last_report_at,multi_fuzzer,coverage,fuzzer_stats,gaps,fuzzer,harness"
+      "now,tick_number,active_harness,harnesses,fuzzers,findings,recommendation,last_report_at,multi_fuzzer,coverage,fuzzer_stats,gaps,fuzzer,harness,tick_coverage,consult_state,yolo_state"
 
     # active_harness + recommendation.harness must reference declared harnesses
-    ACTIVE=$(python3 -c "
-import json
-try: print(json.load(open('$STATE_DIR/current.json')).get('active_harness',''))
-except: pass" 2>/dev/null)
+    CUR="$STATE_DIR/current.json"
+    ACTIVE=$(python3 "$CHECKS" field "$CUR" active_harness 2>/dev/null)
     if [ -n "$ACTIVE" ] && ! is_known_harness "$ACTIVE"; then
       err "current.json: active_harness '$ACTIVE' is not a declared harness"
     fi
-    REC_H=$(python3 -c "
-import json
-try: print(json.load(open('$STATE_DIR/current.json')).get('recommendation', {}).get('harness',''))
-except: pass" 2>/dev/null)
+    REC_H=$(python3 "$CHECKS" field "$CUR" recommendation.harness 2>/dev/null)
     if [ -n "$REC_H" ] && ! is_known_harness "$REC_H"; then
       err "current.json: recommendation.harness '$REC_H' is not a declared harness"
     fi
   fi
 
-  BRANCH=$(python3 -c "
-import json
-try: print(json.load(open('$STATE_DIR/current.json')).get('recommendation', {}).get('branch', ''))
-except: pass" 2>/dev/null)
+  BRANCH=$(python3 "$CHECKS" field "$STATE_DIR/current.json" recommendation.branch 2>/dev/null)
   case "$BRANCH" in
     sleep|restart_fuzzer|fix_instrumentation|triage|analyze_gaps|reanalyze_gaps|generate_seeds|concolic|mutator|stop) ;;
     "") ;; # empty is fine, will be set on next update
@@ -494,73 +340,16 @@ fi
 if [ -f "$STATE_DIR/fuzz-config.json" ]; then
   if [ "$MODE" = "singular" ]; then
     validate_json "$STATE_DIR/fuzz-config.json" "fuzz-config/v2" \
-      "fuzz_forks" "fuzz_forks,fuzzer_slots"
+      "fuzz_forks" "fuzz_forks,fuzzer_slots,tick,cve,yolo,code_review"
   else
     validate_json "$STATE_DIR/fuzz-config.json" "fuzz-config/v3" \
-      "fuzz_forks,harnesses,fuzzer_slots" "fuzz_forks,harnesses,fuzzer_slots"
+      "fuzz_forks,harnesses,fuzzer_slots" "fuzz_forks,harnesses,fuzzer_slots,tick,cve,yolo,code_review"
   fi
 
   SLOT_ERRS=$(MODE="$MODE" \
               DECLARED="$(declared_env)" \
               CFG="$STATE_DIR/fuzz-config.json" \
-              python3 - <<'PY' 2>&1
-import json, re, os
-mode = os.environ.get('MODE','singular')
-declared = {n for n in os.environ.get('DECLARED','').splitlines() if n.strip()}
-try:
-    d = json.load(open(os.environ['CFG']))
-except Exception:
-    raise SystemExit(0)
-slots = d.get('fuzzer_slots') or []
-if not isinstance(slots, list):
-    print('fuzz-config.json: fuzzer_slots must be a list'); raise SystemExit(0)
-slot_re = re.compile(r'^[a-z0-9-]{1,32}$')
-seen = set()
-for i, s in enumerate(slots):
-    if not isinstance(s, dict):
-        print(f'fuzz-config.json: fuzzer_slots[{i}] is not an object'); continue
-    name = s.get('slot','')
-    if not slot_re.match(name):
-        print(f'fuzz-config.json: fuzzer_slots[{i}].slot "{name}" invalid (regex ^[a-z0-9-]{{1,32}}$)')
-    if name in seen:
-        print(f'fuzz-config.json: duplicate slot name "{name}"')
-    seen.add(name)
-    engine = s.get('engine','')
-    if engine not in ('libfuzzer','aflpp'):
-        print(f'fuzz-config.json: fuzzer_slots[{i}].engine "{engine}" must be libfuzzer or aflpp')
-    role = s.get('role')
-    if role is not None and role not in ('master','secondary'):
-        print(f'fuzz-config.json: fuzzer_slots[{i}].role "{role}" must be master, secondary, or null')
-    sched = s.get('afl_power_schedule')
-    if sched is not None and sched not in ('explore','exploit','fast','coe','quad','lin','seek','rare'):
-        print(f'fuzz-config.json: fuzzer_slots[{i}].afl_power_schedule "{sched}" not a valid AFL++ schedule')
-    if mode == 'multi':
-        h = s.get('harness','')
-        if not h:
-            print(f'fuzz-config.json: fuzzer_slots[{i}] ({name!r}) missing required field harness (multi mode)')
-        elif h not in declared:
-            print(f'fuzz-config.json: fuzzer_slots[{i}] ({name!r}) references undeclared harness "{h}"')
-
-if mode == 'multi':
-    hs = d.get('harnesses') or []
-    if not isinstance(hs, list) or not hs:
-        print('fuzz-config.json: multi mode requires non-empty harnesses[]')
-    else:
-        slug = re.compile(r'^[a-z0-9][a-z0-9_-]{0,31}$')
-        names = set()
-        for i, h in enumerate(hs):
-            if not isinstance(h, dict):
-                print(f'fuzz-config.json: harnesses[{i}] is not an object'); continue
-            n = h.get('name','')
-            if not slug.match(n or ''):
-                print(f'fuzz-config.json: harnesses[{i}].name "{n}" invalid (regex ^[a-z0-9][a-z0-9_-]{{0,31}}$)')
-            if n in names:
-                print(f'fuzz-config.json: duplicate harness name "{n}"')
-            names.add(n)
-            if not h.get('entry_function'):
-                print(f'fuzz-config.json: harnesses[{i}] ({n!r}) missing entry_function')
-PY
-)
+              python3 "$CHECKS" slots 2>&1)
   if [ -n "$SLOT_ERRS" ]; then
     while IFS= read -r line; do
       [ -z "$line" ] && continue
@@ -579,31 +368,7 @@ if [ -f "$STATE_DIR/fuzzers.json" ]; then
   MAN_ERRS=$(MODE="$MODE" \
              DECLARED="$(declared_env)" \
              MANIFEST_PATH="$STATE_DIR/fuzzers.json" \
-             python3 - <<'PY' 2>&1
-import json, os
-mode = os.environ.get('MODE','singular')
-declared = {n for n in os.environ.get('DECLARED','').splitlines() if n.strip()}
-required_base = {"slot","engine","binary","pid","pgid","started_at","log_file","pid_file","engine_file","restart_count"}
-required = required_base | ({"harness"} if mode == 'multi' else set())
-try:
-    d = json.load(open(os.environ['MANIFEST_PATH']))
-except Exception:
-    raise SystemExit(0)
-slots = d.get('slots') or []
-for i, s in enumerate(slots):
-    if not isinstance(s, dict):
-        print(f'fuzzers.json: slots[{i}] is not an object'); continue
-    missing = required - set(s.keys())
-    if missing:
-        slot_name = s.get('slot','?')
-        print(f'fuzzers.json: slots[{i}] ({slot_name!r}) missing fields {sorted(missing)}')
-    if mode == 'multi':
-        h = s.get('harness','')
-        if h and h not in declared:
-            slot_name = s.get('slot','?')
-            print(f'fuzzers.json: slots[{i}] ({slot_name!r}) harness "{h}" not declared in fuzz-config.json')
-PY
-)
+             python3 "$CHECKS" fuzzers-manifest 2>&1)
   if [ -n "$MAN_ERRS" ]; then
     while IFS= read -r line; do
       [ -z "$line" ] && continue
@@ -618,88 +383,7 @@ if [ -f "$STATE_DIR/findings.jsonl" ]; then
   PY_OUT=$(MODE="$MODE" \
            DECLARED="$(declared_env)" \
            FINDINGS="$STATE_DIR/findings.jsonl" \
-           python3 - <<'PY' 2>&1
-import json, re, os
-mode = os.environ.get('MODE','singular')
-declared = {n for n in os.environ.get('DECLARED','').splitlines() if n.strip()}
-
-if mode == 'singular':
-    expected_schema = 'finding/v1'
-    required = {"schema","id","stack_hash","category","location","exploitability","root_cause","reproducer","first_seen","last_seen","dedup_count"}
-    allowed  = required | {"subcategory","sanitizer_report_excerpt","verified_against_build","status","stale_against_build"}
-else:
-    expected_schema = 'finding/v2'
-    required = {"schema","id","stack_hash","category","location","exploitability","root_cause","reproducer","first_seen","last_seen","dedup_count","harnesses"}
-    allowed  = required | {"subcategory","sanitizer_report_excerpt","verified_against_build","status","stale_against_build"}
-
-allowed_categories = {"heap-buffer-overflow","heap-use-after-free","stack-buffer-overflow","global-buffer-overflow","stack-overflow","null-deref","assertion-failure","oom","timeout","flaky","harness-artifact"}
-allowed_exploitability = {"likely","medium","unlikely","harness-artifact"}
-ID_RE = re.compile(r"^f[0-9]{3,}$")
-
-seen_hashes = {}
-seen_ids = set()
-
-with open(os.environ['FINDINGS']) as f:
-    for ln, line in enumerate(f, 1):
-        line = line.strip()
-        if not line: continue
-        try:
-            d = json.loads(line)
-        except Exception as e:
-            print(f"findings.jsonl line {ln}: parse error: {e}")
-            continue
-        if d.get("schema") != expected_schema:
-            print(f"findings.jsonl line {ln}: wrong schema '{d.get('schema')}' (expected {expected_schema})")
-            continue
-        keys = set(d.keys())
-        missing = required - keys
-        unrec = keys - allowed
-        if missing: print(f"findings.jsonl line {ln}: missing fields {sorted(missing)}")
-        if unrec:   print(f"findings.jsonl line {ln}: unrecognized fields {sorted(unrec)}")
-
-        fid = d.get("id", "")
-        if fid and not ID_RE.match(fid):
-            print(f"findings.jsonl line {ln}: invalid id format '{fid}' (must match ^f[0-9]{{3,}}$)")
-        if fid in seen_ids:
-            print(f"findings.jsonl line {ln}: duplicate id '{fid}'")
-        seen_ids.add(fid)
-
-        cat = d.get("category", "")
-        if cat and cat not in allowed_categories and not cat.startswith("ubsan-"):
-            print(f"findings.jsonl line {ln}: invalid category '{cat}'")
-
-        expl = d.get("exploitability", "")
-        if expl and expl not in allowed_exploitability:
-            print(f"findings.jsonl line {ln}: invalid exploitability '{expl}'")
-
-        sh = d.get("stack_hash", "")
-        if sh:
-            if sh in seen_hashes and seen_hashes[sh] != fid:
-                print(f"findings.jsonl line {ln}: stack_hash '{sh}' already used by {seen_hashes[sh]} (use findings.sh dedup)")
-            seen_hashes[sh] = fid
-
-        rep = d.get("reproducer", "")
-        status = d.get("status", "")
-        if rep and fid:
-            if status == "stale":
-                expected = f"fuzz/crashes/stale/{fid}/repro.bin"
-            else:
-                expected = f"fuzz/crashes/known/{fid}/repro.bin"
-            if rep != expected:
-                print(f"findings.jsonl line {ln}: reproducer '{rep}' should be '{expected}'")
-        if rep and not os.path.isfile(rep):
-            print(f"findings.jsonl line {ln}: reproducer file does not exist: {rep}")
-
-        if mode == 'multi':
-            hs = d.get('harnesses')
-            if not isinstance(hs, list) or not hs:
-                print(f"findings.jsonl line {ln}: harnesses[] is empty (multi mode requires >=1 source harness)")
-            else:
-                for h in hs:
-                    if h not in declared:
-                        print(f"findings.jsonl line {ln}: harnesses[] contains undeclared harness '{h}'")
-PY
-)
+           python3 "$CHECKS" findings 2>&1)
   if [ -n "$PY_OUT" ]; then
     while IFS= read -r line; do
       [ -n "$line" ] && err "$line"
@@ -707,28 +391,31 @@ PY
   fi
 fi
 
+# 3d3. harness-corrections.jsonl - v0.18 triager → harness-writer feedback.
+# Lightweight per-line schema check.
+if [ -f "$STATE_DIR/harness-corrections.jsonl" ]; then
+  HC_OUT=$(HCS="$STATE_DIR/harness-corrections.jsonl" python3 "$CHECKS" jsonl-corrections 2>&1)
+  if [ -n "$HC_OUT" ]; then
+    while IFS= read -r line; do
+      [ -n "$line" ] && err "$line"
+    done <<< "$HC_OUT"
+  fi
+fi
+
+# 3d2. dropped_crashes.jsonl - v0.18 transparency log. Lightweight: every line
+# must be a dropped-crash/v1 record with required fields and a valid stage.
+if [ -f "$STATE_DIR/dropped_crashes.jsonl" ]; then
+  DROP_OUT=$(DROPS="$STATE_DIR/dropped_crashes.jsonl" python3 "$CHECKS" jsonl-dropped 2>&1)
+  if [ -n "$DROP_OUT" ]; then
+    while IFS= read -r line; do
+      [ -n "$line" ] && err "$line"
+    done <<< "$DROP_OUT"
+  fi
+fi
+
 # 3e. events.jsonl - lightweight check (unchanged across modes)
 if [ -f "$STATE_DIR/events.jsonl" ]; then
-  PY_OUT=$(python3 - <<PY 2>&1
-import json
-required_base = {"schema","ts","tick","event"}
-with open("$STATE_DIR/events.jsonl") as f:
-    for ln, line in enumerate(f, 1):
-        line = line.strip()
-        if not line: continue
-        try:
-            d = json.loads(line)
-        except Exception as e:
-            print(f"events.jsonl line {ln}: parse error: {e}")
-            continue
-        if d.get("schema") != "event/v1":
-            print(f"events.jsonl line {ln}: wrong schema")
-            continue
-        missing = required_base - set(d.keys())
-        if missing:
-            print(f"events.jsonl line {ln}: missing {sorted(missing)}")
-PY
-)
+  PY_OUT=$(EVENTS="$STATE_DIR/events.jsonl" python3 "$CHECKS" jsonl-events 2>&1)
   if [ -n "$PY_OUT" ]; then
     while IFS= read -r line; do
       [ -n "$line" ] && err "$line"
@@ -773,46 +460,69 @@ if [ -d "$SNAPSHOTS_DIR" ]; then
       "timestamp,gaps_targeted,seeds_used,inputs_generated,inputs_validated,inputs_promoted_to_corpus,symcc_timeouts,symcc_errors,harness" \
       lenient
   done
+  # tick-coverage roundup (v0.18): one aggregate per tick across all harnesses.
+  # Lenient for the same reason — the schema may grow before downstream code
+  # catches up.
+  for f in "$SNAPSHOTS_DIR"/tick-coverage-*.json; do
+    [ -f "$f" ] || continue
+    validate_json "$f" \
+      "tick-coverage/v1" \
+      "timestamp,mode,harnesses,overall" \
+      "timestamp,mode,harnesses,overall,stale_harnesses,stale_threshold_seconds" \
+      lenient
+  done
+  # Planner-consult artifacts (v0.18): the briefing the orchestrator hands to
+  # campaign-planner consult mode, and the verdict the planner returns.
+  for f in "$SNAPSHOTS_DIR"/tick-briefing-*.json; do
+    [ -f "$f" ] || continue
+    validate_json "$f" \
+      "tick-briefing/v1" \
+      "ts,tick_number,trigger,coverage,active_gaps,sonnet_recommendation" \
+      "ts,tick_number,trigger,last_consult_ts,last_consult_tick,ticks_since_last_consult,coverage,active_gaps,dispatched_since_last_consult,findings_since_last_consult,sonnet_recommendation" \
+      lenient
+  done
+  for f in "$SNAPSHOTS_DIR"/planner-consult-*.json; do
+    [ -f "$f" ] || continue
+    validate_json "$f" \
+      "planner-consult/v1" \
+      "ts,verdict,reason" \
+      "ts,tick_number,briefing_file,verdict,reason,tactic,rationale" \
+      lenient
+  done
+  # CVE intelligence artifacts (v0.18 WS-E). One context file per refresh of
+  # the cache; agents read the latest. Lenient on extra fields.
+  for f in "$SNAPSHOTS_DIR"/cve-context-*.json; do
+    [ -f "$f" ] || continue
+    validate_json "$f" \
+      "cve-context/v1" \
+      "ts,target,nvd_query,fetch_stats,hotspots,pattern_frequency,cves" \
+      "ts,target,nvd_query,fetch_stats,hotspots,pattern_frequency,patch_idioms,time_since_last_high_cve_days,cves" \
+      lenient
+  done
+  # Code-review artifacts (v0.18 WS-H). Prescan is Tier-1 (deterministic);
+  # the full review is the Sonnet+optional-Opus output. Both lenient.
+  for f in "$SNAPSHOTS_DIR"/code-review-prescan-*.json; do
+    [ -f "$f" ] || continue
+    validate_json "$f" \
+      "code-review-prescan/v1" \
+      "ts,target_root,scope,top_candidates" \
+      "ts,target_root,scope,top_candidates,full_inventory_summary" \
+      lenient
+  done
+  for f in "$SNAPSHOTS_DIR"/code-review-*.json; do
+    case "$(basename "$f")" in code-review-prescan-*.json) continue ;; esac
+    [ -f "$f" ] || continue
+    validate_json "$f" \
+      "code-review/v1" \
+      "ts,target,scope,tiers_run,findings,focus_areas" \
+      "ts,target,scope,tiers_run,findings,focus_areas,model_costs" \
+      lenient
+  done
 
   if [ "$MODE" = "multi" ]; then
     SNAP_ERRS=$(SNAPS_DIR="$SNAPSHOTS_DIR" \
                 DECLARED="$(declared_env)" \
-                python3 - <<'PY' 2>&1
-import json, os, re, glob
-declared = {n for n in os.environ['DECLARED'].splitlines() if n.strip()}
-patterns = [
-    ('coverage', re.compile(r'^coverage-([a-z0-9][a-z0-9_-]{0,31})-(\d+)\.json$')),
-    ('gaps',     re.compile(r'^gaps-([a-z0-9][a-z0-9_-]{0,31})-(\d+)\.json$')),
-    ('concolic', re.compile(r'^concolic-([a-z0-9][a-z0-9_-]{0,31})-(\d+)\.json$')),
-]
-singular_re = re.compile(r'^(coverage|gaps|concolic)-\d+\.json$')
-for path in sorted(glob.glob(os.path.join(os.environ['SNAPS_DIR'], '*.json'))):
-    base = os.path.basename(path)
-    if base.startswith('plan-') or base.startswith('delta-'):
-        continue
-    matched = False
-    for kind, pat in patterns:
-        m = pat.match(base)
-        if not m: continue
-        matched = True
-        harness = m.group(1)
-        if harness not in declared:
-            print(f'snapshots/{base}: filename prefix references undeclared harness "{harness}"')
-            break
-        try:
-            d = json.load(open(path))
-        except Exception:
-            break
-        h_field = d.get('harness')
-        if h_field is None:
-            print(f'snapshots/{base}: multi-mode snapshot must carry top-level "harness" field')
-        elif h_field != harness:
-            print(f'snapshots/{base}: harness field "{h_field}" disagrees with filename prefix "{harness}"')
-        break
-    if not matched and singular_re.match(base):
-        print(f'snapshots/{base}: singular-mode filename in multi mode (the upgrade should have renamed it to include a harness prefix)')
-PY
-)
+                python3 "$CHECKS" snapshot-multi 2>&1)
     if [ -n "$SNAP_ERRS" ]; then
       while IFS= read -r line; do
         [ -z "$line" ] && continue
@@ -828,29 +538,14 @@ fi
 
 # Harness binary executable
 if [ "$MODE" = "singular" ] && [ -f "$STATE_DIR/harness-built.json" ]; then
-  HBIN=$(python3 -c "
-import json
-try: print(json.load(open('$STATE_DIR/harness-built.json')).get('harness_binary', ''))
-except: pass" 2>/dev/null)
+  HBIN=$(python3 "$CHECKS" field "$STATE_DIR/harness-built.json" harness_binary 2>/dev/null)
   if [ -n "$HBIN" ] && [ ! -x "$HBIN" ]; then
     warn "harness binary referenced but not executable: $HBIN"
   fi
 fi
 
 if [ "$MODE" = "multi" ] && [ -f "$STATE_DIR/harnesses.json" ]; then
-  BIN_REPORT=$(HS_PATH="$STATE_DIR/harnesses.json" python3 - <<'PY' 2>&1
-import json, os
-try:
-    doc = json.load(open(os.environ['HS_PATH']))
-except Exception:
-    raise SystemExit(0)
-for h in doc.get('harnesses', []):
-    name = h.get('name','?')
-    b = h.get('harness_binary','')
-    if b and not (os.path.isfile(b) and os.access(b, os.X_OK)):
-        print(f'harness "{name}" binary not executable: {b}')
-PY
-)
+  BIN_REPORT=$(HS_PATH="$STATE_DIR/harnesses.json" python3 "$CHECKS" harness-bins 2>&1)
   if [ -n "$BIN_REPORT" ]; then
     while IFS= read -r line; do
       [ -z "$line" ] && continue

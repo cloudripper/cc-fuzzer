@@ -15,6 +15,7 @@ set -u
 # Path anchor - refuses cwd inside fuzz/, refuses recursive fuzz/fuzz/
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/_lib/path-anchor.sh"
+. "$SCRIPT_DIR/_lib/nix-tools.sh"
 FUZZ_ROOT="${FUZZ_ROOT:-fuzz}"
 STATE_DIR="$FUZZ_ROOT/state"
 mkdir -p "$STATE_DIR"
@@ -22,39 +23,30 @@ mkdir -p "$STATE_DIR"
 OUT="$STATE_DIR/preflight.json"
 TMP="$STATE_DIR/.preflight.json.tmp"
 
-probe_llvm_tool() {
-  local tool="$1"
-  if command -v "$tool" >/dev/null 2>&1; then
-    command -v "$tool"
-    return 0
-  fi
+# Resolve tools. nix_tool consults fuzz/state/nix-env.json first (captured by
+# the SessionStart hook), then falls back to PATH. Empty when neither resolves.
+CLANG=$(nix_tool clang 2>/dev/null || true)
+CLANGPP=$(nix_tool clang++ 2>/dev/null || true)
+
+LLVM_COV=$(nix_tool llvm-cov 2>/dev/null || true)
+LLVM_PROFDATA=$(nix_tool llvm-profdata 2>/dev/null || true)
+# Host-tools fallback: Debian/Ubuntu/Kali install LLVM userland into
+# /usr/lib/llvm-NN/bin/ rather than PATH. Walk highest-version down.
+if [ -z "$LLVM_COV" ] || [ -z "$LLVM_PROFDATA" ]; then
   for v in 21 20 19 18 17 16 15 14 13 12 11; do
-    if [ -x "/usr/lib/llvm-$v/bin/$tool" ]; then
-      echo "/usr/lib/llvm-$v/bin/$tool"
-      return 0
-    fi
+    [ -z "$LLVM_COV" ]      && [ -x "/usr/lib/llvm-$v/bin/llvm-cov" ]      && LLVM_COV="/usr/lib/llvm-$v/bin/llvm-cov"
+    [ -z "$LLVM_PROFDATA" ] && [ -x "/usr/lib/llvm-$v/bin/llvm-profdata" ] && LLVM_PROFDATA="/usr/lib/llvm-$v/bin/llvm-profdata"
   done
-  return 1
-}
+fi
 
-# Required for fuzzing
-CLANG=$(command -v clang 2>/dev/null || true)
-CLANGPP=$(command -v clang++ 2>/dev/null || true)
+ADDR2LINE=$(nix_tool addr2line 2>/dev/null || true)
+GDB=$(nix_tool gdb 2>/dev/null || true)
+AFL_FUZZ=$(nix_tool afl-fuzz 2>/dev/null || true)
+AFL_CC=$(nix_tool afl-clang-fast 2>/dev/null || true)
 
-# Required for coverage tracking
-LLVM_COV=$(probe_llvm_tool llvm-cov 2>/dev/null || true)
-LLVM_PROFDATA=$(probe_llvm_tool llvm-profdata 2>/dev/null || true)
-
-# Optional but recommended
-ADDR2LINE=$(command -v addr2line 2>/dev/null || true)
-GDB=$(command -v gdb 2>/dev/null || true)
-AFL_FUZZ=$(command -v afl-fuzz 2>/dev/null || true)
-AFL_CC=$(command -v afl-clang-fast 2>/dev/null || true)
-
-# Optional for concolic
-SYMCC=$(command -v symcc 2>/dev/null || true)
-SYMPP=$(command -v sym++ 2>/dev/null || true)
-Z3=$(command -v z3 2>/dev/null || true)
+SYMCC=$(nix_tool symcc 2>/dev/null || true)
+SYMPP=$(nix_tool "sym++" 2>/dev/null || true)
+Z3=$(nix_tool z3 2>/dev/null || true)
 
 # Probe libFuzzer
 LIBFUZZER_AVAILABLE=false

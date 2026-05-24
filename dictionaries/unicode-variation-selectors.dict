@@ -17,64 +17,106 @@
 
 # === Variation Selectors 1-16 (U+FE00..U+FE0F) ===
 # Used for CJK glyph variants and emoji presentation
-"\xef\xb8\x80"   # VS1 (U+FE00)
-"\xef\xb8\x81"   # VS2
-"\xef\xb8\x82"   # VS3
-"\xef\xb8\x83"   # VS4
-"\xef\xb8\x84"   # VS5
-"\xef\xb8\x85"   # VS6
-"\xef\xb8\x86"   # VS7
-"\xef\xb8\x87"   # VS8
-"\xef\xb8\x88"   # VS9
-"\xef\xb8\x89"   # VS10
-"\xef\xb8\x8a"   # VS11
-"\xef\xb8\x8b"   # VS12
-"\xef\xb8\x8c"   # VS13
-"\xef\xb8\x8d"   # VS14
-"\xef\xb8\x8e"   # VS15 (text presentation selector)
-"\xef\xb8\x8f"   # VS16 (emoji presentation selector)
+# VS1 (U+FE00)
+"\xef\xb8\x80"
+# VS2
+"\xef\xb8\x81"
+# VS3
+"\xef\xb8\x82"
+# VS4
+"\xef\xb8\x83"
+# VS5
+"\xef\xb8\x84"
+# VS6
+"\xef\xb8\x85"
+# VS7
+"\xef\xb8\x86"
+# VS8
+"\xef\xb8\x87"
+# VS9
+"\xef\xb8\x88"
+# VS10
+"\xef\xb8\x89"
+# VS11
+"\xef\xb8\x8a"
+# VS12
+"\xef\xb8\x8b"
+# VS13
+"\xef\xb8\x8c"
+# VS14
+"\xef\xb8\x8d"
+# VS15 (text presentation selector)
+"\xef\xb8\x8e"
+# VS16 (emoji presentation selector)
+"\xef\xb8\x8f"
 
 # === Sample IVS (Ideographic Variation Selectors) U+E0100..U+E01EF ===
 # 4-byte UTF-8 sequences - the smuggling channel
-"\xf3\xa0\x84\x80"   # VS17 (U+E0100) - first IVS
-"\xf3\xa0\x84\x81"   # VS18
-"\xf3\xa0\x84\x90"   # VS33
-"\xf3\xa0\x84\xa0"   # VS49
-"\xf3\xa0\x87\xaf"   # VS256 (U+E01EF) - last IVS
+# VS17 (U+E0100) - first IVS
+"\xf3\xa0\x84\x80"
+# VS18
+"\xf3\xa0\x84\x81"
+# VS33
+"\xf3\xa0\x84\x90"
+# VS49
+"\xf3\xa0\x84\xa0"
+# VS256 (U+E01EF) - last IVS
+"\xf3\xa0\x87\xaf"
 
 # === Zero-Width Joiners / Non-Joiners ===
 # Critical for emoji ZWJ sequences and parser confusion
-"\xe2\x80\x8c"   # ZWNJ (U+200C)
-"\xe2\x80\x8d"   # ZWJ (U+200D)
+# ZWNJ (U+200C)
+"\xe2\x80\x8c"
+# ZWJ (U+200D)
+"\xe2\x80\x8d"
 
 # === Combining marks (zero-width modifications) ===
-"\xcc\x80"       # combining grave (U+0300)
-"\xcc\x81"       # combining acute (U+0301)
-"\xcc\xa0"       # combining left half ring below (U+0320)
+# combining grave (U+0300)
+"\xcc\x80"
+# combining acute (U+0301)
+"\xcc\x81"
+# combining left half ring below (U+0320)
+"\xcc\xa0"
 
 # === Common emoji that take VS modifiers ===
 # Useful as anchor characters for VS-bearing inputs
-"\xe2\x98\x80"           # sun (U+2600) - takes VS15/VS16
-"\xe2\x99\xa5"           # heart (U+2665)
-"\xe2\x9c\x8c"           # victory hand (U+270C)
-"\xf0\x9f\x98\x80"       # grinning face (U+1F600)
-"\xf0\x9f\x91\x8d"       # thumbs up (U+1F44D)
+# sun (U+2600) - takes VS15/VS16
+"\xe2\x98\x80"
+# heart (U+2665)
+"\xe2\x99\xa5"
+# victory hand (U+270C)
+"\xe2\x9c\x8c"
+# grinning face (U+1F600)
+"\xf0\x9f\x98\x80"
+# thumbs up (U+1F44D)
+"\xf0\x9f\x91\x8d"
 
 # === Common ZWJ emoji sequences (multi-codepoint glyphs) ===
-"\xf0\x9f\x91\xa8\xe2\x80\x8d\xf0\x9f\x91\xa9\xe2\x80\x8d\xf0\x9f\x91\xa6"   # family man+woman+boy
-"\xf0\x9f\x91\xa9\xe2\x80\x8d\xf0\x9f\x92\xbb"                              # woman technologist
+# family man+woman+boy
+"\xf0\x9f\x91\xa8\xe2\x80\x8d\xf0\x9f\x91\xa9\xe2\x80\x8d\xf0\x9f\x91\xa6"
+# woman technologist
+"\xf0\x9f\x91\xa9\xe2\x80\x8d\xf0\x9f\x92\xbb"
 
 # === Emoji + VS combinations (the smuggling pattern) ===
 # emoji followed immediately by an IVS - this is the article's payload shape
-"\xe2\x98\x80\xf3\xa0\x84\x80"               # sun + VS17
-"\xe2\x9c\x8c\xf3\xa0\x84\x90"               # victory hand + VS33
-"\xf0\x9f\x98\x80\xf3\xa0\x84\xa0"           # grinning + VS49
-"\xf0\x9f\x91\x8d\xf3\xa0\x87\xaf"           # thumbs up + VS256
+# sun + VS17
+"\xe2\x98\x80\xf3\xa0\x84\x80"
+# victory hand + VS33
+"\xe2\x9c\x8c\xf3\xa0\x84\x90"
+# grinning + VS49
+"\xf0\x9f\x98\x80\xf3\xa0\x84\xa0"
+# thumbs up + VS256
+"\xf0\x9f\x91\x8d\xf3\xa0\x87\xaf"
 
 # === Tag characters U+E0001..U+E007F (smuggling channel) ===
 # Each is 4-byte UTF-8. These are deprecated but still parsed by many libs.
-"\xf3\xa0\x80\x81"   # LANGUAGE TAG (U+E0001)
-"\xf3\xa0\x81\xa0"   # TAG SPACE (U+E0020)
-"\xf3\xa0\x81\xa1"   # TAG LATIN SMALL LETTER A (U+E0061)
-"\xf3\xa0\x81\xb0"   # TAG digit 0 (U+E0030)
-"\xf3\xa0\x81\xbf"   # CANCEL TAG (U+E007F)
+# LANGUAGE TAG (U+E0001)
+"\xf3\xa0\x80\x81"
+# TAG SPACE (U+E0020)
+"\xf3\xa0\x81\xa0"
+# TAG LATIN SMALL LETTER A (U+E0061)
+"\xf3\xa0\x81\xa1"
+# TAG digit 0 (U+E0030)
+"\xf3\xa0\x81\xb0"
+# CANCEL TAG (U+E007F)
+"\xf3\xa0\x81\xbf"
