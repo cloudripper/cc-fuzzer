@@ -11,7 +11,8 @@
 # crash-storm guard.
 #
 # Subcommands:
-#   yolo-state.sh enable    [--mode guided|hybrid|self_loop] [--interval SEC] [--max-ticks N] [--max-cost USD]
+#   yolo-state.sh enable    [--mode guided|hybrid|self_loop] [--aggressiveness conservative|balanced|aggressive]
+#                           [--interval SEC] [--max-ticks N] [--max-cost USD]
 #                           [--stop-on-no-progress N] [--crash-storm-threshold N]
 #                           [--redundancy-threshold N] [--soft-cost-fraction F] [--max-backoff-multiplier N]
 #       Set yolo.enabled=true, optionally override defaults. Records
@@ -23,6 +24,20 @@
 #                   is a fallback (default)
 #         self_loop orchestrator reasons freely from signals + plan; the table
 #                   is a menu. Hard caps + the redundancy/cost ledger still bind.
+#
+#       --aggressiveness shapes the deterministic disposition (act vs wait) and
+#       the wait-backoff. Defaults from --mode when omitted (guided→conservative,
+#       hybrid→balanced, self_loop→aggressive):
+#         conservative  self-climbing fuzzer or no gap move ⇒ wait (legacy)
+#         balanced      act on a concrete gap move even while climbing
+#         aggressive    never idle on a self-climbing fuzzer; pursue the
+#                       strategic toolbox when no gap move remains; backoff does
+#                       not compound; soft_cost default rises to 0.8
+#
+#       --no-cap removes cost as a constraint entirely: no soft throttle (the
+#       `throttle` posture that defers Opus past soft_cost_fraction) AND no hard
+#       --max-cost halt. The campaign then runs until a non-cost halt fires
+#       (tick cap / no-progress / crash-storm) or you stop it. --cap re-enables.
 #
 #   yolo-state.sh disable [--reason TEXT]
 #       Set yolo.enabled=false. Records last_halt_reason.
@@ -37,13 +52,14 @@
 #
 # Defaults (when fields are absent):
 #   mode:                        hybrid
+#   aggressiveness:              derived from mode (balanced for hybrid)
 #   interval_seconds:            1800 (30 min)
 #   max_ticks:                   24
 #   max_cost_usd:                10.0
 #   stop_on_no_progress_ticks:   30
 #   crash_storm_threshold:       10
 #   redundancy_threshold:        2
-#   soft_cost_fraction:          0.6
+#   soft_cost_fraction:          0.6 (0.8 when aggressiveness=aggressive)
 #   max_backoff_multiplier:      4
 
 set -u
@@ -115,11 +131,14 @@ except: print(0)
 # ---------------------------------------------------------------------------
 _cmd_enable() {
   _have_config
-  local mode="" interval="" max_ticks="" max_cost="" stop_no_prog="" crash_storm=""
-  local redundancy="" soft_cost="" max_backoff=""
+  local mode="" aggressiveness="" interval="" max_ticks="" max_cost="" stop_no_prog="" crash_storm=""
+  local redundancy="" soft_cost="" max_backoff="" cost_cap=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --mode)                   mode="${2:-}";        shift 2 ;;
+      --aggressiveness)         aggressiveness="${2:-}"; shift 2 ;;
+      --no-cap)                 cost_cap="false";     shift 1 ;;
+      --cap)                    cost_cap="true";      shift 1 ;;
       --interval)               interval="${2:-}";    shift 2 ;;
       --max-ticks)              max_ticks="${2:-}";   shift 2 ;;
       --max-cost)               max_cost="${2:-}";    shift 2 ;;
@@ -137,13 +156,18 @@ _cmd_enable() {
     *) echo "ERROR: --mode must be guided, hybrid, or self_loop (got '$mode')" >&2; exit 2 ;;
   esac
 
+  case "$aggressiveness" in
+    ""|conservative|balanced|aggressive) ;;
+    *) echo "ERROR: --aggressiveness must be conservative, balanced, or aggressive (got '$aggressiveness')" >&2; exit 2 ;;
+  esac
+
   # Read current values from the config so we only override fields the user
   # explicitly provided, while filling defaults for genuinely-missing ones.
   local now tick
   now=$(date +%s)
   tick=$(_current_tick)
 
-  MODE="$mode" INTERVAL="$interval" MAX_TICKS="$max_ticks" MAX_COST="$max_cost" \
+  MODE="$mode" AGGR="$aggressiveness" COST_CAP="$cost_cap" INTERVAL="$interval" MAX_TICKS="$max_ticks" MAX_COST="$max_cost" \
   STOP_NO_PROG="$stop_no_prog" CRASH_STORM="$crash_storm" \
   REDUNDANCY="$redundancy" SOFT_COST="$soft_cost" MAX_BACKOFF="$max_backoff" \
   NOW="$now" TICK="$tick" \
@@ -171,13 +195,36 @@ def _override(field, env, default, cast):
         yolo[field] = cast(default)
 
 _override("mode",                     "MODE",         os.environ["DEF_MODE"],         str)
+
+# aggressiveness: explicit --aggressiveness wins; else keep an existing value;
+# else derive from the (now-resolved) mode. self_loop ships aggressive.
+_MODE_POSTURE = {"guided": "conservative", "hybrid": "balanced", "self_loop": "aggressive"}
+_aggr = os.environ.get("AGGR", "")
+if _aggr in ("conservative", "balanced", "aggressive"):
+    yolo["aggressiveness"] = _aggr
+elif "aggressiveness" not in yolo:
+    yolo["aggressiveness"] = _MODE_POSTURE.get(yolo.get("mode", "hybrid"), "balanced")
+
+# soft_cost default tracks posture: aggressive throttles Opus later (0.8).
+_soft_default = 0.8 if yolo["aggressiveness"] == "aggressive" else float(os.environ["DEF_SOFT_COST"])
+
+# cost_cap_enabled: --no-cap ⇒ false, --cap ⇒ true, else keep/default true.
+# Removes BOTH the soft throttle posture and the hard max_cost halt.
+_cost_cap = os.environ.get("COST_CAP", "")
+if _cost_cap == "false":
+    yolo["cost_cap_enabled"] = False
+elif _cost_cap == "true":
+    yolo["cost_cap_enabled"] = True
+elif "cost_cap_enabled" not in yolo:
+    yolo["cost_cap_enabled"] = True
+
 _override("interval_seconds",         "INTERVAL",     os.environ["DEF_INTERVAL"],     int)
 _override("max_ticks",                "MAX_TICKS",    os.environ["DEF_MAX_TICKS"],    int)
 _override("max_cost_usd",             "MAX_COST",     os.environ["DEF_MAX_COST"],     float)
 _override("stop_on_no_progress_ticks","STOP_NO_PROG", os.environ["DEF_STOP_NO_PROG"], int)
 _override("crash_storm_threshold",    "CRASH_STORM",  os.environ["DEF_CRASH_STORM"],  int)
 _override("redundancy_threshold",     "REDUNDANCY",   os.environ["DEF_REDUNDANCY"],   int)
-_override("soft_cost_fraction",       "SOFT_COST",    os.environ["DEF_SOFT_COST"],    float)
+_override("soft_cost_fraction",       "SOFT_COST",    _soft_default,                  float)
 _override("max_backoff_multiplier",   "MAX_BACKOFF",  os.environ["DEF_MAX_BACKOFF"],  int)
 
 yolo["enabled"]         = True
@@ -192,13 +239,15 @@ with open(tmp, "w") as f:
     f.write("\n")
 os.replace(tmp, cfg_path)
 
-print(f"yolo enabled mode={yolo['mode']} at tick={yolo['enabled_at_tick']} "
+print(f"yolo enabled mode={yolo['mode']} aggressiveness={yolo['aggressiveness']} "
+      f"at tick={yolo['enabled_at_tick']} "
       f"interval={yolo['interval_seconds']}s "
       f"max_ticks={yolo['max_ticks']} "
       f"max_cost=${yolo['max_cost_usd']:.2f} "
       f"stop_on_no_progress={yolo['stop_on_no_progress_ticks']} "
       f"redundancy={yolo['redundancy_threshold']} "
-      f"soft_cost={yolo['soft_cost_fraction']}")
+      f"soft_cost={yolo['soft_cost_fraction']} "
+      f"cost_cap={'on' if yolo.get('cost_cap_enabled', True) else 'OFF'}")
 PY
 }
 
@@ -257,13 +306,16 @@ else:
     print(f"yolo: {state}")
     if y.get("enabled"):
         print(f"  mode:                     {y.get('mode', 'hybrid')}")
+        print(f"  aggressiveness:           {y.get('aggressiveness', 'balanced')}")
         print(f"  interval:                 {y.get('interval_seconds', '?')}s")
         print(f"  max_ticks:                {y.get('max_ticks', '?')}")
         print(f"  max_cost_usd:             ${y.get('max_cost_usd', 0):.2f}")
         print(f"  stop_on_no_progress:      {y.get('stop_on_no_progress_ticks', '?')} ticks")
         print(f"  crash_storm_threshold:    {y.get('crash_storm_threshold', '?')} findings/tick")
         print(f"  redundancy_threshold:     {y.get('redundancy_threshold', 2)} unproductive dispatches")
-        print(f"  soft_cost_fraction:       {y.get('soft_cost_fraction', 0.6)} of max_cost (throttle Opus)")
+        _cap = y.get('cost_cap_enabled', True)
+        print(f"  soft_cost_fraction:       {y.get('soft_cost_fraction', 0.6)} of max_cost (throttle Opus)" + ("" if _cap else " [DISABLED via --no-cap]"))
+        print(f"  cost_cap:                 {'on' if _cap else 'OFF (--no-cap: no soft throttle and no hard max_cost halt; other halts still apply)'}")
         print(f"  enabled_at_tick:          {y.get('enabled_at_tick', '?')}")
         print(f"  enabled_at_ts:            {y.get('enabled_at_ts', '?')}")
     halt = y.get("last_halt_reason")

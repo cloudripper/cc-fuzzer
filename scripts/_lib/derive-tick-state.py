@@ -110,6 +110,9 @@ def compute_yolo_state(state_dir, snaps_dir, tick_n, now, doc=None):
     interval = int(yolo_cfg.get("interval_seconds", 1800))
     max_ticks = int(yolo_cfg.get("max_ticks", 24))
     max_cost = float(yolo_cfg.get("max_cost_usd", 10.0))
+    # --no-cap removes cost as a constraint entirely: no soft throttle (see
+    # yolo_evaluate) AND no hard cost halt below. Other halts still bind.
+    cost_cap_enabled = bool(yolo_cfg.get("cost_cap_enabled", True))
     stop_no_prog = int(yolo_cfg.get("stop_on_no_progress_ticks", 30))
     crash_storm = int(yolo_cfg.get("crash_storm_threshold", 10))
     enabled_at_tick = int(yolo_cfg.get("enabled_at_tick", 0))
@@ -189,7 +192,7 @@ def compute_yolo_state(state_dir, snaps_dir, tick_n, now, doc=None):
 
     halt_conditions = {
         "tick_cap":    ticks_used >= max_ticks,
-        "cost_cap":    cost_used >= max_cost,
+        "cost_cap":    cost_cap_enabled and cost_used >= max_cost,
         "no_progress": consecutive_no_progress >= stop_no_prog,
         "crash_storm": new_findings_last_tick >= crash_storm,
     }

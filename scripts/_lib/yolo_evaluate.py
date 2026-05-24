@@ -17,6 +17,11 @@ This is consumed by all three YOLO modes:
   - self_loop : the orchestrator reasons freely from these signals + the plan;
                 the table is a menu, not a mandate. Caps still bind.
 
+Each mode carries an `aggressiveness` posture (overridable via the config field
+of the same name): guided→conservative, hybrid→balanced, self_loop→aggressive.
+The posture shapes `suggested_disposition` (how readily we say `act` vs `wait`)
+and the wait-backoff (aggressive does not compound, so priorities stay fresh).
+
 Output is the `evaluation` sub-block of `yolo_state` (see compute below). It is
 ADVISORY: hard halts (tick/cost/no_progress/crash_storm) remain in
 compute_yolo_state; this block never halts, it only recommends.
@@ -26,6 +31,11 @@ import datetime
 import glob
 import json
 import os
+
+try:
+    import toolbox_eval  # sibling _lib module (deterministic lever board)
+except Exception:
+    toolbox_eval = None
 
 
 # Agents dispatched at each model tier. Opus agents are the cost/spam risk YOLO
@@ -38,6 +48,11 @@ OPUS_AGENTS = {
 
 # Coverage-driving specialists whose redundancy is judged against coverage gain.
 COVERAGE_AGENTS = {"seed-generator", "mutator", "coverage-analyst", "concolic-executor"}
+
+# Default aggressiveness posture per mode, used when the yolo config carries no
+# explicit `aggressiveness`. self_loop ships aggressive (pursue the strategic
+# toolbox even while the fuzzer self-climbs); hybrid balanced; guided conservative.
+_MODE_POSTURE = {"guided": "conservative", "hybrid": "balanced", "self_loop": "aggressive"}
 
 # recommendation.branch -> the agent it dispatches (for throttle/suppression).
 BRANCH_AGENT = {
@@ -129,8 +144,18 @@ def evaluate(state_dir, snaps_dir, cfg, doc, enabled_at_ts, enabled_at_tick, tic
     mode = yolo.get("mode", "hybrid")
     if mode not in ("guided", "hybrid", "self_loop"):
         mode = "hybrid"
+    # Aggressiveness posture governs how readily the deterministic disposition
+    # says `act` vs `wait`, and how hard the wait-backoff compounds. An explicit
+    # `aggressiveness` field wins; otherwise it's derived from the mode so the
+    # mode name carries the posture (self_loop is aggressive by default).
+    aggressiveness = yolo.get("aggressiveness")
+    if aggressiveness not in ("conservative", "balanced", "aggressive"):
+        aggressiveness = _MODE_POSTURE.get(mode, "balanced")
     redundancy_threshold = int(yolo.get("redundancy_threshold", 2))
     soft_fraction = float(yolo.get("soft_cost_fraction", 0.6))
+    # --no-cap removes cost as a constraint: no soft throttle here AND no hard
+    # cost halt in compute_yolo_state. posture then never leaves `normal`.
+    cost_cap_enabled = bool(yolo.get("cost_cap_enabled", True))
     max_cost = float(yolo.get("max_cost_usd", 10.0))
     interval = int(yolo.get("interval_seconds", 1800))
     max_backoff = int(yolo.get("max_backoff_multiplier", 4))
@@ -159,7 +184,9 @@ def evaluate(state_dir, snaps_dir, cfg, doc, enabled_at_ts, enabled_at_tick, tic
             opus_usd += (ti * ri) + (to * ro)
             opus_calls += 1
     fraction = (total_usd / max_cost) if max_cost > 0 else 0.0
-    if fraction >= 1.0:
+    if not cost_cap_enabled:
+        posture = "normal"   # --no-cap: cost never throttles or halts
+    elif fraction >= 1.0:
         posture = "halt"
     elif fraction >= soft_fraction:
         posture = "throttle"
@@ -230,37 +257,102 @@ def evaluate(state_dir, snaps_dir, cfg, doc, enabled_at_ts, enabled_at_tick, tic
             consecutive_waits += 1
         else:
             break
-    backoff_mult = min(2 ** consecutive_waits, max_backoff) if max_backoff > 0 else 1
+    # Aggressive posture keeps ticks frequent: the wait-backoff does NOT compound,
+    # so priorities never go stale across a long idle stretch. Balanced and
+    # conservative compound up to the configured cap (legacy behavior).
+    eff_max_backoff = 1 if aggressiveness == "aggressive" else max_backoff
+    backoff_mult = min(2 ** consecutive_waits, eff_max_backoff) if eff_max_backoff > 0 else 1
     wait_seconds = interval * max(1, backoff_mult)
 
-    # ---- suggested disposition (advisory) -----------------------------------
+    # ---- toolbox lever board (the whole toolbox, materialized) -------------
+    toolbox = None
+    if toolbox_eval is not None:
+        try:
+            toolbox = toolbox_eval.compute(
+                state_dir, snaps_dir, yolo, doc, events, findings,
+                enabled_at_ts, posture, suppressed, redundancy_threshold, now,
+            )
+        except Exception:
+            toolbox = None
+    tunnel = bool(toolbox and toolbox.get("tunnel_vision"))
+    suggested_lever = (toolbox or {}).get("suggested_lever")
+
+    # ---- suggested disposition (advisory, posture-aware) --------------------
     rec = (doc or {}).get("recommendation") or {}
     branch = rec.get("branch") or ""
     branch_agent = BRANCH_AGENT.get(branch, "")
     branch_suppressed = branch_agent in suppressed
     branch_is_opus = branch_agent in OPUS_AGENTS
+    # The gap-closing recommendation engine only covers triage/coverage/seed/
+    # concolic/mutator. When it has no move (`sleep`/empty), the *strategic*
+    # toolbox (harness extension, CVE intel, code review, PoC, plan revision) is
+    # still available — that's invisible here, so an aggressive posture treats it
+    # as a reason to act, not idle.
+    no_gap_move = branch in ("", "sleep", "stop")
+
+    def _loop_reason(a):
+        n = ledger.get(a, {}).get("consecutive_unproductive")
+        return f"{a} looping ({n}x no result); reconsider tactic"
 
     if posture == "halt":
         disposition, rationale = "wait", "cost cap reached; halt pending"
-    elif branch in ("", "sleep", "stop"):
-        disposition, rationale = "wait", "no actionable recommendation this tick"
-    elif self_climbing:
-        disposition = "wait"
-        rationale = f"fuzzer still climbing (last roundup gained); let it run (backoff x{backoff_mult})"
-    elif branch_suppressed:
-        # The recommended agent is looping. If everything actionable is spent,
-        # ask Opus for a new tactic — unless throttling, then wait.
-        if posture == "throttle":
-            disposition, rationale = "wait", f"{branch_agent} looping and cost throttled; wait"
+
+    elif aggressiveness == "aggressive":
+        # self_loop default. A self-climbing fuzzer is NOT a reason to idle:
+        # pursue the strategic toolbox in parallel. Only the hard cost halt
+        # (handled above) forces a true wait.
+        if tunnel and suggested_lever:
+            # Riding one lever family while others sit eligible — redirect to the
+            # highest-priority neglected lever to force toolbox breadth.
+            disposition, rationale = "act", f"tunnel vision (rode {(toolbox or {}).get('distinct_recent_families', 1)} lever family); switch to neglected lever '{suggested_lever}'"
+        elif tunnel and posture != "throttle":
+            disposition, rationale = "consult", "tunnel vision and no affordable neglected lever; reconsider strategy"
+        elif branch_suppressed and posture != "throttle":
+            disposition, rationale = "consult", _loop_reason(branch_agent)
+        elif no_gap_move:
+            disposition, rationale = "act", "no gap-closing move; pursue strategic toolbox (harness/CVE/review/PoC/plan)"
+        elif posture == "throttle" and branch_is_opus:
+            disposition, rationale = "act", f"cost throttled; act on a non-Opus lever instead of {branch_agent}"
         else:
-            disposition, rationale = "consult", f"{branch_agent} looping ({ledger.get(branch_agent,{}).get('consecutive_unproductive')}x no result); reconsider tactic"
-    elif posture == "throttle" and branch_is_opus:
-        disposition, rationale = "wait", f"cost throttled; defer Opus action ({branch_agent})"
-    else:
-        disposition, rationale = "act", f"act on '{branch}' ({branch_agent or 'infra'})"
+            tail = " alongside self-climbing fuzzer" if self_climbing else ""
+            disposition, rationale = "act", f"act on '{branch}' ({branch_agent or 'infra'}){tail}"
+
+    elif aggressiveness == "balanced":
+        # hybrid default. Act on a concrete, affordable gap move even while the
+        # fuzzer climbs; only idle when there's genuinely no gap move (let it run)
+        # or a constraint binds. Does NOT chase the strategic toolbox on its own.
+        if no_gap_move:
+            disposition, rationale = "wait", "no gap-closing move; let the fuzzer run"
+        elif branch_suppressed:
+            if posture == "throttle":
+                disposition, rationale = "wait", f"{branch_agent} looping and cost throttled; wait"
+            else:
+                disposition, rationale = "consult", _loop_reason(branch_agent)
+        elif posture == "throttle" and branch_is_opus:
+            disposition, rationale = "wait", f"cost throttled; defer Opus action ({branch_agent})"
+        else:
+            tail = " while fuzzer also climbs" if self_climbing else ""
+            disposition, rationale = "act", f"act on '{branch}' ({branch_agent or 'infra'}){tail}"
+
+    else:  # conservative (guided) — legacy precedence, unchanged.
+        if no_gap_move:
+            disposition, rationale = "wait", "no actionable recommendation this tick"
+        elif self_climbing:
+            disposition = "wait"
+            rationale = f"fuzzer still climbing (last roundup gained); let it run (backoff x{backoff_mult})"
+        elif branch_suppressed:
+            if posture == "throttle":
+                disposition, rationale = "wait", f"{branch_agent} looping and cost throttled; wait"
+            else:
+                disposition, rationale = "consult", _loop_reason(branch_agent)
+        elif posture == "throttle" and branch_is_opus:
+            disposition, rationale = "wait", f"cost throttled; defer Opus action ({branch_agent})"
+        else:
+            disposition, rationale = "act", f"act on '{branch}' ({branch_agent or 'infra'})"
 
     return {
         "mode": mode,
+        "aggressiveness": aggressiveness,
         "cost": {
             "total_usd": round(total_usd, 4),
             "opus_usd": round(opus_usd, 4),
@@ -268,6 +360,7 @@ def evaluate(state_dir, snaps_dir, cfg, doc, enabled_at_ts, enabled_at_tick, tic
             "fraction_of_cap": round(fraction, 3),
             "posture": posture,
             "soft_cost_fraction": soft_fraction,
+            "cost_cap_enabled": cost_cap_enabled,
         },
         "agent_ledger": ledger,
         "suppressed_agents": sorted(suppressed),
@@ -280,6 +373,7 @@ def evaluate(state_dir, snaps_dir, cfg, doc, enabled_at_ts, enabled_at_tick, tic
         "suggested_wait_seconds": wait_seconds,
         "redundancy_threshold": redundancy_threshold,
         "rationale": rationale,
+        "toolbox": toolbox,
     }
 
 

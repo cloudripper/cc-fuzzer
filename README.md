@@ -162,13 +162,15 @@ Each slot gets its own `fuzzer-<slot>.{pid,engine,log}`; the live manifest is `f
 
 ### YOLO (self-looping)
 
-`/cc-fuzzer:yolo on [--mode guided|hybrid|self_loop]` opts into auto-ticking (off by default; the orchestrator calls `ScheduleWakeup` at end-of-tick). All modes share hard halt caps (tick / cost / no-progress / crash-storm) and a deterministic per-tick **evaluation** block — cost posture (throttles Opus agents past a soft fraction of the cost cap), a per-agent **redundancy ledger** (suppresses an agent that loops without producing results), and a self-climbing signal.
+`/cc-fuzzer:yolo on [--mode guided|hybrid|self_loop] [--aggressiveness conservative|balanced|aggressive]` opts into auto-ticking (off by default; the orchestrator calls `ScheduleWakeup` at end-of-tick). All modes share hard halt caps (tick / cost / no-progress / crash-storm) and a deterministic per-tick **evaluation** block — cost posture (throttles Opus agents past a soft fraction of the cost cap), a per-agent **redundancy ledger** (suppresses an agent that loops without producing results), and a self-climbing signal.
 
-| Mode | Per-tick decision |
-|---|---|
-| `guided` | Legacy deterministic precedence table; `sleep` is the last resort. |
-| `hybrid` (default) | The orchestrator reasons over the evaluation signals to choose **wait / act / consult**. Waiting (with adaptive backoff) is first-class — it lets the fuzzer run while it's productive and defers expensive work when an agent is looping or cost is throttling. |
-| `self_loop` | Maximum autonomy: the orchestrator reasons freely toward the goal, pursuing multi-step strategy across ticks. Still fenced by the caps + redundancy/cost ledger. |
+| Mode | Default posture | Per-tick decision |
+|---|---|---|
+| `guided` | `conservative` | Legacy deterministic precedence table; `sleep` is the last resort; a self-climbing fuzzer means wait. |
+| `hybrid` (default) | `balanced` | The orchestrator reasons over the evaluation signals to choose **wait / act / consult**, and acts on a concrete gap move *even while the fuzzer climbs*. Waits (with backoff) when there's no gap move, an agent is looping, or cost is throttling Opus. |
+| `self_loop` | `aggressive` | Maximum autonomy: the orchestrator reasons freely toward the goal, pursuing multi-step strategy across ticks. A self-climbing fuzzer is **not** a reason to idle — when no gap move remains it pursues the strategic toolbox (harness/CVE/review/PoC/plan) in parallel; the backoff does not compound. Still fenced by the caps + redundancy/cost ledger. |
+
+**Aggressiveness** decouples "how hard a tick pushes to act" from the mode and defaults from it (override with `--aggressiveness`). `aggressive` never idles on a self-climbing fuzzer, treats an empty gap-branch as "pursue the strategic toolbox", keeps the wait-backoff from compounding (so priorities never go stale), and raises the Opus-throttle point to 0.8 of the cost cap.
 
 `/cc-fuzzer:stop` always disables YOLO.
 
@@ -181,6 +183,8 @@ cp $CLAUDE_PLUGIN_ROOT/templates/guidance.md fuzz/guidance.md
 ```
 
 When present, `seed-generator` (input classes, formats, dictionaries), `coverage-analyst` (coverage targets, out-of-scope code), and `fuzz-orchestrator` read it during the loop. Absent, all three fall back to default heuristics — guidance is purely additive.
+
+For longer reference material — protocol specs, RFCs, format notes, prior advisories — drop files in **`fuzz/docs/`**. Under YOLO `self_loop`, the toolbox board's `references` signal surfaces `guidance.md` and `fuzz/docs/` (with a `changed_recently` flag) so the orchestrator re-reads them and reasons about moves the built-in lever catalog can't express. The board is explicitly a *floor, not a ceiling*: it guarantees no known lever is forgotten, while your steering drives the creative, open-ended reasoning on top.
 
 ## Reproducible toolchain (Nix)
 

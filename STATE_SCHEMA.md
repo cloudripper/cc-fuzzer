@@ -329,9 +329,10 @@ The single file the orchestrator reads on warm ticks. Schema is already document
   "interval_seconds": 1800,
   "evaluation": {
     "mode": "hybrid",
+    "aggressiveness": "balanced",
     "cost": {
       "total_usd": 0.42, "opus_usd": 0.10, "opus_calls": 1,
-      "fraction_of_cap": 0.042, "posture": "normal", "soft_cost_fraction": 0.6
+      "fraction_of_cap": 0.042, "posture": "normal", "soft_cost_fraction": 0.6, "cost_cap_enabled": true
     },
     "agent_ledger": {
       "concolic-executor": {"dispatches": 3, "consecutive_unproductive": 2, "suppressed": true}
@@ -341,13 +342,34 @@ The single file the orchestrator reads on warm ticks. Schema is already document
     "suggested_disposition": "wait",
     "suggested_wait_seconds": 1800,
     "redundancy_threshold": 2,
-    "rationale": "fuzzer still climbing; let it run"
+    "rationale": "fuzzer still climbing; let it run",
+    "toolbox": {
+      "non_exhaustive": true,
+      "note": "Floor, not ceiling: also reason creatively beyond these; fold in `references`.",
+      "eligible_levers": [
+        {"lever": "harness_extend", "agent": "harness-writer", "evidence": "for_harness=2 (also check uncovered CVE hotspots)", "cost_tier": "sonnet", "idle_ticks": 6, "suppressed": false},
+        {"lever": "poc_build", "agent": "poc-builder", "evidence": "1 confirmed finding(s) without an exploit bundle", "cost_tier": "opus", "idle_ticks": 9, "suppressed": false}
+      ],
+      "eligible_count": 2,
+      "neglected_levers": ["harness_extend", "poc_build"],
+      "recent_lever_families": ["seedgen", "seedgen", "concolic", "seedgen"],
+      "distinct_recent_families": 2,
+      "tunnel_vision": false,
+      "suggested_lever": null,
+      "references": {
+        "guidance_md": {"path": "fuzz/guidance.md", "mtime": 1779200000, "changed_since_enable": false},
+        "docs": [{"path": "fuzz/docs/protocol.md", "mtime": 1779190000}],
+        "changed_recently": false
+      }
+    }
   }
 }
 ```
 When `active=false` the orchestrator treats yolo as off (other fields may be absent). When `halt_triggered=true` the orchestrator MUST NOT schedule the next wake; instead it runs `scripts/yolo-state.sh disable --reason "<halt_reason>"` and surfaces the reason in the tick output.
 
-**`evaluation`** (v0.18+, computed by `_lib/yolo_evaluate.py`) is the **advisory** dynamic-YOLO signal block — it never halts (the hard caps above own that). `posture` ∈ {`normal`, `throttle`, `halt`} engages Opus-throttling at `soft_cost_fraction` of `max_cost_usd`. `agent_ledger[agent].suppressed` flags an agent that has been dispatched `≥ redundancy_threshold` times with no result (concolic → 0 inputs promoted; coverage agents → no weighted-coverage gain; triager → no new finding). `suggested_disposition` ∈ {`wait`, `act`, `consult`} and `suggested_wait_seconds` (adaptive backoff) are recommendations; how strictly the orchestrator follows them depends on `mode` (see the `yolo` config block).
+**`evaluation`** (v0.18+, computed by `_lib/yolo_evaluate.py`) is the **advisory** dynamic-YOLO signal block — it never halts (the hard caps above own that). `posture` ∈ {`normal`, `throttle`, `halt`} engages Opus-throttling at `soft_cost_fraction` of `max_cost_usd` (unless `cost_cap_enabled` is `false`, in which case cost is not a constraint at all — posture stays `normal`, and the hard cost halt in `compute_yolo_state` is suppressed too). `agent_ledger[agent].suppressed` flags an agent that has been dispatched `≥ redundancy_threshold` times with no result (concolic → 0 inputs promoted; coverage agents → no weighted-coverage gain; triager → no new finding). `suggested_disposition` ∈ {`wait`, `act`, `consult`} and `suggested_wait_seconds` (adaptive backoff) are recommendations; how strictly the orchestrator follows them depends on `mode` (see the `yolo` config block). `aggressiveness` ∈ {`conservative`, `balanced`, `aggressive`} (defaults from `mode`; overridable) shapes the disposition: under `aggressive` a self-climbing fuzzer no longer forces `wait`, an empty/`sleep` gap-branch becomes `act` ("pursue strategic toolbox"), and `suggested_wait_seconds` does not compound across consecutive waits.
+
+**`toolbox`** (v0.19+, computed by `_lib/toolbox_eval.py`) is the **materialized lever board** — the whole known orchestrator toolbox computed deterministically each tick so the model doesn't tunnel-vision on the gap-closing agents the recommendation engine happens to surface. `eligible_levers[]` lists every actionable lever (`lever`, `agent`, `evidence`, `cost_tier` ∈ {cheap, haiku, sonnet, opus}, `idle_ticks`, `suppressed`); ineligible levers are omitted to keep the block compact (`eligible_count` is the total). `neglected_levers[]` are eligible+affordable levers idle ≥3 ticks (opus levers drop out under `posture: throttle`). `tunnel_vision` is true when the last ≥3 *act* ticks rode ≤1 distinct lever family while ≥2 levers (or ≥1 neglected lever) were eligible; `suggested_lever` is the highest-priority neglected lever, and under `aggressive` the disposition is steered to `act` on it (or to `consult` if none is affordable). **`non_exhaustive` is always `true`**: the board is a floor, not a ceiling — it captures only deterministically-detectable moves. `references` reports operator steering (`fuzz/guidance.md`, `fuzz/docs/*`) with `changed_recently`, so the orchestrator re-reads it and pursues moves the catalog can't express. The lever set maps to the Action menu in `agents/fuzz-orchestrator.md`: instrumentation, coverage_reanalysis, seedgen, concolic, mutator, dictionary, harness_extend, cve_refresh, code_review, verification_fill, poc_build, poc_upgrade, plan_revise, slot_engine.
 
 **`consult_state` block** (v0.18+) — signals whether a strategic check-in is due this tick:
 ```json
@@ -453,6 +475,7 @@ Toggled via `/cc-fuzzer:review [--deep] [--refresh] [--delta]`. Auto-runs at COL
 "yolo": {
   "enabled": true,
   "mode": "hybrid",
+  "aggressiveness": "balanced",
   "interval_seconds": 1800,
   "max_ticks": 24,
   "max_cost_usd": 10.0,
@@ -460,6 +483,7 @@ Toggled via `/cc-fuzzer:review [--deep] [--refresh] [--delta]`. Auto-runs at COL
   "crash_storm_threshold": 10,
   "redundancy_threshold": 2,
   "soft_cost_fraction": 0.6,
+  "cost_cap_enabled": true,
   "max_backoff_multiplier": 4,
   "enabled_at_ts": 1779200000,
   "enabled_at_tick": 42,
@@ -472,20 +496,22 @@ Toggled via `/cc-fuzzer:review [--deep] [--refresh] [--delta]`. Auto-runs at COL
   - `guided` — the legacy deterministic precedence table; `sleep` is the last resort. No per-tick reasoning beyond the table.
   - `hybrid` — the orchestrator (Sonnet) reasons over `yolo_state.evaluation` (cost posture, redundancy ledger, progress) to choose **wait / act / consult** and which action; the precedence table is a fallback prior. `wait` is first-class.
   - `self_loop` — the orchestrator reasons freely from the evaluation signals + `plan.md`; the precedence table is a menu, not a mandate. It may chain a multi-step strategy across ticks. The hard caps and the redundancy/cost ledger still bind.
-- `interval_seconds` — base delay between auto-scheduled ticks (default 1800 = 30 min). Hard floor: 60s. Under `hybrid`/`self_loop` a `wait` disposition applies adaptive backoff up to `max_backoff_multiplier × interval_seconds`.
+- `aggressiveness` — `conservative` / `balanced` / `aggressive`; how readily a tick acts vs waits, decoupled from `mode`. Defaults from `mode` when absent (guided→conservative, hybrid→balanced, self_loop→aggressive). Under `aggressive`: a self-climbing fuzzer never forces `wait`; an empty/`sleep` gap-branch maps to `act` (pursue the strategic toolbox the gap engine can't see — harness/CVE/review/PoC/plan); the wait-backoff does not compound; and the `soft_cost_fraction` default rises to 0.8. Written by `scripts/yolo-state.sh enable` (from `--aggressiveness` or derived from `--mode`).
+- `interval_seconds` — base delay between auto-scheduled ticks (default 1800 = 30 min). Hard floor: 60s. Under `hybrid`/`self_loop` a `wait` disposition applies adaptive backoff up to `max_backoff_multiplier × interval_seconds` — except under `aggressiveness: aggressive`, where the backoff does not compound (stays at `interval_seconds`) so priorities never go stale across a long idle stretch.
 - `max_ticks` — hard tick cap (default 24 ≈ 12 hours at the 30-min interval). Counted from `enabled_at_tick`.
 - `max_cost_usd` — soft cost cap (default 10.0). Estimated from `events.jsonl:agent_call` token totals; not a billing source of truth. The hard halt fires at 100%.
 - `stop_on_no_progress_ticks` — halt after N consecutive zero-delta tick-coverage roundups (default 30 ≈ 15 hours stuck).
 - `crash_storm_threshold` — halt when one interval yields ≥ N new findings (default 10).
 - `redundancy_threshold` — (hybrid/self_loop) suppress an agent after this many consecutive unproductive dispatches (default 2). Surfaced in `yolo_state.evaluation.agent_ledger`.
-- `soft_cost_fraction` — (hybrid/self_loop) fraction of `max_cost_usd` at which cost `posture` becomes `throttle`: prefer cheap/deterministic actions and defer Opus agents (default 0.6).
+- `soft_cost_fraction` — (hybrid/self_loop) fraction of `max_cost_usd` at which cost `posture` becomes `throttle`: prefer cheap/deterministic actions and defer Opus agents (default 0.6; default 0.8 when `aggressiveness: aggressive`, so strategic Opus levers stay available longer).
+- `cost_cap_enabled` — when `false` (set by `/cc-fuzzer:yolo on --no-cap`), cost is removed as a constraint entirely: the soft `throttle` posture is never entered **and** the hard `max_cost_usd` halt is suppressed, so the campaign runs regardless of spend until a non-cost halt fires (tick cap / no-progress / crash-storm) or the operator stops it. Default `true`. Surfaced in `yolo_state.evaluation.cost.cost_cap_enabled`; the hard-halt gate lives in `_lib/derive-tick-state.py`.
 - `max_backoff_multiplier` — (hybrid/self_loop) cap on adaptive wait backoff (default 4).
 - `enabled_at_ts` / `enabled_at_tick` — written by `scripts/yolo-state.sh enable`; used to scope halt-condition + evaluation computation.
 - `last_halt_reason` — human-readable reason from the most recent auto-halt (or null when never halted / freshly enabled).
 
-Toggled via `/cc-fuzzer:yolo on [--mode ...]|off|status` which wraps `scripts/yolo-state.sh`. `/cc-fuzzer:stop` always sets `enabled=false` (escape hatch).
+Toggled via `/cc-fuzzer:yolo on [--mode ...] [--aggressiveness ...]|off|status` which wraps `scripts/yolo-state.sh`. `/cc-fuzzer:stop` always sets `enabled=false` (escape hatch).
 
-**Operator stance during yolo**: see the corresponding section in `agents/fuzz-orchestrator.md`. The short version: under `guided`, `sleep` is the last resort. Under `hybrid`/`self_loop`, **wait is a first-class choice** — the orchestrator waits (with backoff) when the fuzzer is self-climbing or every actionable agent is suppressed or cost is throttling, and otherwise acts on the cheapest high-value move that isn't suppressed.
+**Operator stance during yolo**: see the corresponding section in `agents/fuzz-orchestrator.md`. The short version: under `guided`/`conservative`, `sleep` is the last resort and a self-climbing fuzzer means wait. Under `hybrid`/`balanced`, the orchestrator acts on a concrete gap move even while the fuzzer climbs, and waits (with backoff) only when there's no gap move, every actionable agent is suppressed, or cost is throttling Opus. Under `self_loop`/`aggressive`, a self-climbing fuzzer is **not** a reason to idle — when no gap move remains it pursues the strategic toolbox (harness/CVE/review/PoC/plan) in parallel, and waits only when a hard constraint binds.
 
 **Lifecycle**: REWRITABLE. Single canonical version. Replaced atomically.
 
