@@ -53,6 +53,22 @@ _write_harnesses_txt() {
   fi
 }
 
+# Did a harness run ($1=exit code, $2=combined stdout+stderr) crash? Any of:
+#   - killed by a deadly signal directly: rc >= 128 (= 128 + signal)
+#   - a sanitizer printed a report: "SUMMARY: <Sanitizer>"
+#   - libFuzzer caught the fault itself. libFuzzer installs its own signal
+#     handlers, so a SIGABRT/SIGSEGV (assert, abort(), or any non-sanitizer
+#     fault) is reported as "ERROR: libFuzzer: deadly signal" (also out-of-memory
+#     / timeout) and the process exits **1, not 128+N**, with no sanitizer
+#     SUMMARY. The rc>=128 + sanitizer gate alone misses this and routes a real
+#     crash to crashes/flaky/.
+_crashed() {
+  local rc="$1" out="$2"
+  [ "$rc" -ge 128 ] 2>/dev/null && return 0
+  printf '%s\n' "$out" | grep -qE \
+    'SUMMARY: (AddressSanitizer|UndefinedBehaviorSanitizer|LeakSanitizer|ThreadSanitizer|MemorySanitizer|libFuzzer:)|ERROR: libFuzzer:'
+}
+
 cmd="${1:-help}"
 shift || true
 
@@ -172,7 +188,7 @@ EOF
         RC=$?
         echo "=== stage1 attempt $i rc=$RC ===" >> "$VERIFY_LOG"
         echo "$OUT" >> "$VERIFY_LOG"
-        if [ "$RC" -ge 128 ] || echo "$OUT" | grep -qE 'SUMMARY: AddressSanitizer|SUMMARY: UndefinedBehaviorSanitizer|SUMMARY: LeakSanitizer|SUMMARY: ThreadSanitizer'; then
+        if _crashed "$RC" "$OUT"; then
           CRASHES=$((CRASHES + 1))
         fi
       done
@@ -212,7 +228,7 @@ EOF
           RC2=$?
           echo "=== stage2 attempt $i rc=$RC2 ===" >> "$VERIFY_LOG"
           echo "$OUT2" >> "$VERIFY_LOG"
-          if [ "$RC2" -ge 128 ] || echo "$OUT2" | grep -qE 'SUMMARY: AddressSanitizer|SUMMARY: UndefinedBehaviorSanitizer|SUMMARY: LeakSanitizer|SUMMARY: ThreadSanitizer'; then
+          if _crashed "$RC2" "$OUT2"; then
             S2_CRASHES=$((S2_CRASHES + 1))
           fi
         done
@@ -407,7 +423,7 @@ EOF
               UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1:abort_on_error=1 \
               timeout 30 "$HARNESS_BIN" "$REPRO" 2>&1 || true)
         RC=$?
-        if [ "$RC" -ge 128 ] || echo "$OUT" | grep -qE 'SUMMARY: AddressSanitizer|SUMMARY: UndefinedBehaviorSanitizer|SUMMARY: LeakSanitizer'; then
+        if _crashed "$RC" "$OUT"; then
           CRASHED=$((CRASHED + 1))
         fi
       done
@@ -421,7 +437,7 @@ EOF
                    UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1:abort_on_error=1 \
                    timeout 30 "$VERIFY_BIN" "$REPRO" 2>&1 || true)
             RC2=$?
-            if [ "$RC2" -ge 128 ] || echo "$OUT2" | grep -qE 'SUMMARY: AddressSanitizer|SUMMARY: UndefinedBehaviorSanitizer'; then
+            if _crashed "$RC2" "$OUT2"; then
               S2_CRASHED=$((S2_CRASHED + 1))
             fi
           done

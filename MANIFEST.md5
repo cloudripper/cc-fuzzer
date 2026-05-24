@@ -82,7 +82,7 @@ c0fd4660cc4073a2591f43d00ea102d8  scripts/enforce-readonly.sh
 d648918216e180b7cc9f683dbfe2089d  scripts/events.sh
 a4cd368b5c389602f6917c2220693a55  scripts/extract-cmplog-dict.sh
 b6c93200cb33c51d12fc4cb2450a655b  scripts/find-delta-targets.sh
-7ee72304389e146f54177641d7ee2bd4  scripts/findings.sh
+9d5e083cba7a448396678ca37dfebe94  scripts/findings.sh
 5f2ce65aca62fad4b86c5b7bbd58108a  scripts/install-symcc.sh
 1ca2ce057eb7ad54c704630567e3bacf  scripts/integrity-check.sh
 42f3d84cf8333b4cc5f8736c2c937852  scripts/is-crash.sh
