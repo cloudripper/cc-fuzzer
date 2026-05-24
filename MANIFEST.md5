@@ -2,7 +2,7 @@
 # Generated at release time. Used by integrity-check.sh to detect drift.
 # Format: <md5>  <relative-path>
 #
-62e73bd7ba7bedb3d345dfce957a5c3e  .claude-plugin/plugin.json
+c9472a6800b9c16fdacfbb35bc8feb67  .claude-plugin/plugin.json
 8bbfae0e4e51013880be0ddf30d8fff3  STATE_SCHEMA.md
 f4135a2586a20fec38aac140022635ff  agents/campaign-planner.md
 1c10e5f08e8401b18c66d468834d492c  agents/code-reviewer-deep.md
@@ -69,10 +69,10 @@ b6410cf1db0046a956ea73473f27f4c7  scripts/_lib/write_harness_built.py
 274dd447aee7389af202e59121adfa26  scripts/check-campaign-state.sh
 c85439a714d198b8e04795d1f5562e7f  scripts/check-seed-safety.sh
 f1d8add21adeac6f4e072a122c021f42  scripts/check-slot-liveness.sh
-077e3021aeb8cab6c72b38ce666d9330  scripts/code-review-run.sh
+415f2f7e6df6e4b14e87d3dfb45d510e  scripts/code-review-run.sh
 ecada11063d5b0a981db98d2c25a5101  scripts/corpus-quarantine.sh
 ce16a758653e543f03e36c51a07564ff  scripts/cross-ref-findings.sh
-222dedf7c998e521d06f69c51846cecb  scripts/cve-context-build.sh
+5163c5eac87cd41b9470fd7d6b47b99c  scripts/cve-context-build.sh
 6cc42ad94c0d4c4fa38189aace915f9e  scripts/cve-lookup.py
 1777e2f2c84a60f7657fff85ff494e56  scripts/detect-crashes.sh
 e476621cf87969c1f80c999aa03477b1  scripts/dictionaries.sh

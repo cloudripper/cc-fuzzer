@@ -71,7 +71,14 @@ CFG_TARGET_ROOT=""
 CFG_MAX=""
 CFG_EXCLUDES=""
 if [ -f "$CFG_FILE" ]; then
-  read -r CFG_TARGET_ROOT CFG_MAX CFG_EXCLUDES <<< "$(python3 - <<PY
+  # One field per line, read line-by-line. The target root is a filesystem path
+  # (can contain spaces) and excludes is a joined list; a single `read -r A B C`
+  # would word-split them across the other fields. Reading whole lines keeps
+  # space-containing values intact.
+  { read -r CFG_TARGET_ROOT
+    read -r CFG_MAX
+    read -r CFG_EXCLUDES
+  } <<< "$(python3 - <<PY
 import json
 try:
     d = json.load(open("$CFG_FILE"))
@@ -82,11 +89,11 @@ try:
     excl = cr.get("excluded_paths") or []
     if isinstance(excl, list):
         excl = ",".join(excl)
-    print(paths or "",
-          cr.get("max_functions_to_review", "") or "",
-          excl or "")
+    print(paths or "")
+    print(cr.get("max_functions_to_review", "") or "")
+    print(excl or "")
 except Exception:
-    print("", "", "")
+    print(); print(); print()
 PY
 )"
 fi
