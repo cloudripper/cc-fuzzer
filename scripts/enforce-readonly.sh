@@ -2,8 +2,9 @@
 # enforce-readonly.sh
 #
 # Filesystem-level enforcement of the plugin-read-only rule. Sets a-w on
-# every file under ${CLAUDE_PLUGIN_ROOT} so any agent that tries to Edit
-# or Write a plugin file gets EACCES.
+# every file under ${CLAUDE_PLUGIN_ROOT} (EXCEPT flake.lock, which nix must be
+# able to write) so any agent that tries to Edit or Write a plugin source file
+# gets EACCES.
 #
 # Why this exists: the prompt-level read-only rule has been violated four
 # times in documented campaigns (snapshot-coverage.sh, update-current.sh,
@@ -40,7 +41,13 @@ fi
 # this enforcement is bypassable when Claude Code runs as root. In that case
 # you also lose the prompt-banner protection because the agent has free run
 # of the system. Don't run Claude Code as root.
-find "$PLUGIN_ROOT" -type f -exec chmod a-w {} \; 2>/dev/null
+# Exclude flake.lock: it is nix-managed state, NOT plugin source. The plugin
+# ships without a committed lock (gitignored, not in MANIFEST), so nix writes/
+# refreshes it in place whenever the plugin flake is evaluated (`nix develop
+# <plugin>`, `nix run <plugin>#init`). Locking it read-only makes nix fail with
+# "cannot write modified lock file … Permission denied". Keep it writable.
+find "$PLUGIN_ROOT" -type f ! -name flake.lock -exec chmod a-w {} \; 2>/dev/null
+[ -f "$PLUGIN_ROOT/flake.lock" ] && chmod u+w "$PLUGIN_ROOT/flake.lock" 2>/dev/null || true
 
 # Verify - check that the chmod actually changed mode bits
 if [ -f "$PLUGIN_ROOT/MANIFEST.md5" ]; then

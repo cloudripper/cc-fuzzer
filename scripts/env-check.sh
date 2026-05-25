@@ -108,6 +108,28 @@ if [ "$IN_FUZZ_PROJECT" -eq 1 ]; then
     cc_fuzzer_fhs_active)
       REV="${CC_FUZZER_FLAKE_REV:-unknown}"
       CTX_PARTS+=("cc-fuzzer environment: pinned toolchain ACTIVE (flake rev: $REV). Builds will be reproducible.")
+      # If this project has a campaign flake (per-target deps) but we're in the
+      # BARE plugin shell (no project-shell marker), the target's build deps are
+      # missing — the harness build will likely fail. Point at the composed shell.
+      if [ "${CC_FUZZER_PROJECT_SHELL:-}" != "1" ] && [ -f "flake.nix" ] && [ -f "fuzz/nix-deps.nix" ]; then
+        CTX_PARTS+=("cc-fuzzer environment: WARNING - this project has a campaign flake (fuzz/nix-deps.nix) but you are in the BARE plugin shell, so the target's build deps are NOT loaded. Re-enter the composed shell: exit, then 'nix run \${CLAUDE_PLUGIN_ROOT}#init' (or 'nix develop -c claude' from this dir).")
+        {
+          echo ""
+          echo "=============================================================="
+          echo " cc-fuzzer: campaign flake present, but deps NOT loaded"
+          echo "=============================================================="
+          echo " You're in the bare cc-fuzzer shell, not this campaign's"
+          echo " composed shell — so the target build deps in fuzz/nix-deps.nix"
+          echo " are missing and the harness build will likely fail."
+          echo ""
+          echo " Re-enter the campaign shell:"
+          echo "   exit"
+          echo "   nix run \$CLAUDE_PLUGIN_ROOT#init      # (idempotent)"
+          echo "   # or, from this dir:  nix develop -c claude"
+          echo "=============================================================="
+          echo ""
+        } >&2
+      fi
       ;;
     nix_shell_other)
       CTX_PARTS+=("cc-fuzzer environment: WARNING - you are in a nix shell, but not the cc-fuzzer dev shell. Toolchain may differ from what cc-fuzzer expects. For reproducible builds, exit and re-enter with: nix develop \${CLAUDE_PLUGIN_ROOT}")

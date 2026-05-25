@@ -229,6 +229,8 @@ For `process_based`:
 
 Up to 5 attempts total. Categorize the error, apply minimal fix, rerun.
 
+**Missing system library / header (`fatal error: foo.h: No such file`, `cannot find -lfoo`, `Package foo was not found` from pkg-config):** the campaign's nix dev shell is missing a build dep. **Do NOT hack include/lib paths into `build.sh`.** Instead, if `fuzz/nix-deps.nix` exists (a v0.19.2+/multi campaign launched via `nix run #init`), append the needed nixpkgs attr to it (it's a `pkgs: with pkgs; [ ... ]` list, in your writable `fuzz/` scope — headers usually live in the `.dev` output, e.g. `expat.dev`), then **stop and tell the orchestrator the dep was added and the shell must be rebuilt**: the user re-enters with `nix run ${CLAUDE_PLUGIN_ROOT}#init` (idempotent) or `nix develop -c claude`, then re-runs the campaign. You cannot pick up a new nix dep inside the running shell. If `fuzz/nix-deps.nix` is absent (legacy/host-tools campaign), report the missing lib to the user instead.
+
 **Coverage-build-specific repair guidance:**
 - `undefined reference to __llvm_profile_*` → ensure `-fprofile-instr-generate` is on the link line, not just compile.
 - `inline asm with input/output operands` → coverage binary may need `-fno-asm` or skip the offending TU. Report and ask user.

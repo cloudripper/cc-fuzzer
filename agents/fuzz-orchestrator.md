@@ -50,10 +50,12 @@ Output dictates the entire flow:
 
 Do this once, completely, then stop:
 
+> **Autonomous COLD (`self_loop`)**: when `yolo_state.mode == "self_loop"` and COLD was started with **no target specified** (the `/cc-fuzzer:yolo on --mode self_loop` autonomous bootstrap), run the whole sequence **without pausing for the user** — no guidance prompt, no "which file?" question. The `campaign-planner` selects the target itself (its "Autonomous target selection"); you carry that through. The only stops are hard blockers (preflight tool failure, or the planner reporting no fuzzable target). In `guided`/`hybrid`, keep the interactive checks below.
+
 1. `migrate-state.sh` (no-op for fresh projects)
 2. `preflight.sh` — stop on failure, tell the user to fix tools
-3. **GUIDANCE CHECK** — if `fuzz/guidance.md` is absent, tell the user about `${CLAUDE_PLUGIN_ROOT}/templates/guidance.md` and offer to pause so they can fill it out. Do not create the file yourself.
-4. **PLAN** — delegate to `campaign-planner` (fresh mode). It writes `fuzz/state/plan.md`. Do not write the plan yourself.
+3. **GUIDANCE CHECK** — if `fuzz/guidance.md` is absent, tell the user about `${CLAUDE_PLUGIN_ROOT}/templates/guidance.md` and offer to pause so they can fill it out. Do not create the file yourself. **(Skip this offer on the autonomous `self_loop` path — proceed without guidance; the planner falls back to source-only reasoning.)**
+4. **PLAN** — delegate to `campaign-planner` (fresh mode). It writes `fuzz/state/plan.md`. Do not write the plan yourself. **On the autonomous `self_loop` path (no target given), tell the planner to self-select the target from the project; it documents the choice in `## Target`.**
 5. **DICTIONARY SUGGESTION** — surface the planner's `## Dictionaries` list with `/cc-fuzzer:dictionaries add <name>` commands. Do not auto-add.
 6. **DECLARE HARNESS SET** — make the campaign multi-harness from the start so its on-disk schema never has to migrate (a single harness is just the degenerate one-entry case). Determine the entry function from the `/cc-fuzzer:campaign` arguments or the planner's `## Target` in `plan.md`; if neither names one, use the target source basename. Then run `bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-set.sh init --entry <entry-function>` and capture the `name=<name>` from its `HARNESS_SET …` line — that is the harness name for every step below. (It's idempotent: a re-run on an already-multi campaign is a no-op.)
 7. **HARNESS** — delegate to `harness-writer --harness <name>` (it reads the entry function from `plan.md`). See "Harness build requirements" below. The `--harness` flag scopes the build into `fuzz/harnesses/<name>/` and makes `write-harness-built.sh` upsert into `harnesses.json`.

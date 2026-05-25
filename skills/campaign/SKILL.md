@@ -16,6 +16,8 @@ Auto-detects campaign state via `${CLAUDE_PLUGIN_ROOT}/scripts/check-campaign-st
 | `stale` | Refuse — target source changed; use `--reset` or accept the stale build |
 | `corrupted` | Refuse — print validation errors |
 
+The target argument is **required for `guided`/`hybrid`**, but **optional under autonomous `self_loop` YOLO**: with no target given, the `campaign-planner` self-selects one from the project (see campaign-planner "Autonomous target selection") and never asks the user.
+
 ## Flags
 
 - `--reset` — wipe campaign state (with confirmation) before COLD start

@@ -2,16 +2,16 @@
 # Generated at release time. Used by integrity-check.sh to detect drift.
 # Format: <md5>  <relative-path>
 #
-e6424abb285aa3cd5cf10429c50cdf16  .claude-plugin/plugin.json
+31673d495cefa661160ad63a7da12425  .claude-plugin/plugin.json
 6439608285fc4bff51254911049f605e  STATE_SCHEMA.md
-777ff0f8894b1c01838d9db529cfe854  agents/campaign-planner.md
+e091c82f4f3a9fe49c8d32e42e26b0f8  agents/campaign-planner.md
 1c10e5f08e8401b18c66d468834d492c  agents/code-reviewer-deep.md
 bfef867f5ae8807860c6bc3873a967d7  agents/code-reviewer.md
 3a86b57bf2cc87f5748cd2ccff8fe26e  agents/concolic-executor.md
 06e4b37d0e315d97035c72cd17b363d0  agents/coverage-analyst.md
 424d70e2d8dde69eff32f1a9860994db  agents/crash-triager.md
-df829822bc04010d1253443d9422ba9e  agents/fuzz-orchestrator.md
-5f28f25720c6399c8dfb4119db4fcf24  agents/harness-writer.md
+bc39fec2010c594d3c3472215e6e5ea4  agents/fuzz-orchestrator.md
+d03f7abd100449f0cc2a53d85d055629  agents/harness-writer.md
 54c1fe1fa0d493691c343ffbe8105403  agents/mutator.md
 abf7a236d12d4e42a66cd6d181be1d76  agents/planner-consult.md
 3cfeb964b2861bcc470881df7471bd30  agents/poc-builder.md
@@ -45,6 +45,7 @@ b6410cf1db0046a956ea73473f27f4c7  scripts/_lib/write_harness_built.py
 0854d8085d4bf17da1d74c3d5eea97da  scripts/blame-finding.sh
 00cd198a005441e59a775fe6886b3acb  scripts/build-poc-repro.sh
 2a53dbea5427effbd8a9d24598410ed4  scripts/build-symcc-target.sh
+204433ac856be7d273091228e0d994ef  scripts/campaign-init.sh
 8d9e4f12f8a70aa02b8050027d4c81b6  scripts/capture-nix-env.sh
 274dd447aee7389af202e59121adfa26  scripts/check-campaign-state.sh
 c85439a714d198b8e04795d1f5562e7f  scripts/check-seed-safety.sh
@@ -57,8 +58,8 @@ e1e55dc17855a03463fa278b8b5e5a4f  scripts/cve-context-build.sh
 1777e2f2c84a60f7657fff85ff494e56  scripts/detect-crashes.sh
 a98c113ed1699420b35641515fe9f0a7  scripts/dictionaries.sh
 d37987431d781210c4c5442b8d132974  scripts/doctor.sh
-c0fd4660cc4073a2591f43d00ea102d8  scripts/enforce-readonly.sh
-8954d7dcac103fe3d6f0ed703ca67355  scripts/env-check.sh
+95b3c99d7a948d167e3d168c499a651d  scripts/enforce-readonly.sh
+b98e0739822cd41ad1b63033c7f4173d  scripts/env-check.sh
 d648918216e180b7cc9f683dbfe2089d  scripts/events.sh
 a4cd368b5c389602f6917c2220693a55  scripts/extract-cmplog-dict.sh
 b6c93200cb33c51d12fc4cb2450a655b  scripts/find-delta-targets.sh
@@ -84,7 +85,7 @@ dffa84b25ecf0668bfc5fe97fb402824  scripts/status.sh
 6be6f3f6a21497bf3586fd5140f60fd4  scripts/validate-state.sh
 3aa481b6351bc17d581bfb2d6c45df65  scripts/write-harness-built.sh
 be92be6440faeb656bb50c4dd4760ba2  scripts/yolo-state.sh
-cba39e66ef3649dd08e2ecf1e7948c97  skills/campaign/SKILL.md
+c21d025974bef7c3de82f50d4bbd8e7e  skills/campaign/SKILL.md
 6718a7c80fbe4ae0abce9e5850582fe7  skills/concolic/SKILL.md
 ae8df8c4167849e40e6334ccdd59cf73  skills/coverage/SKILL.md
 96d22d5824c9df2a24c977329ea3d8e9  skills/delta/SKILL.md
@@ -104,5 +105,7 @@ b01264a1bfc405bc70751a53dcfb6360  skills/stop/SKILL.md
 898f82f250d5399b6bf923fcff45a233  skills/tick/SKILL.md
 a60644abfae7712dc21c437c1f6d1635  skills/triage/SKILL.md
 063d157eeaaa1a8a49ba342ab7d02311  skills/validate/SKILL.md
-23dd00732019063fccdc2d376ba5ac11  skills/yolo/SKILL.md
+38f24e9ad3e741a267b2aff025ae2ba8  skills/yolo/SKILL.md
 242ae89e95acebaf99e020e8c1f7ced2  templates/guidance.md
+c19001f0356b4e10dcd99423d650b984  templates/nix-deps.nix
+a86a9fe9cfe353ab684f5c5f9fcc5853  templates/project-flake.nix

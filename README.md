@@ -6,29 +6,71 @@ cc-fuzzer is **not** a Cyber Reasoning System. It covers the dynamic-analysis ha
 
 ## Quick start
 
+Install the plugin once, inside Claude Code:
+
 ```
-# 1. Install (one-time, inside Claude Code)
 /plugin marketplace add ./cc-fuzzer
 /plugin install cc-fuzzer
-
-# 2. (Recommended) pinned-toolchain dev shell — see Prerequisites for the no-nix path
-cd ~/projects/your-target
-nix develop $CLAUDE_PLUGIN_ROOT
-claude
-
-# 3. Start a campaign and drive the loop
-/cc-fuzzer:campaign src/parser.c parse_message
-/loop 10m /cc-fuzzer:tick
-
-# 4. Check progress (pure shell, no LLM call) / render findings / stop
-/cc-fuzzer:status
-/cc-fuzzer:report
-/cc-fuzzer:stop
 ```
 
-`/cc-fuzzer:campaign` runs COLD setup once (analyze → harness → 3 binaries → seed corpus → launch fuzzer). `/loop 10m /cc-fuzzer:tick` fires WARM ticks every 10 minutes. `/cc-fuzzer:report` re-runs every recorded reproducer against the current harness binary and writes `fuzz/state/FINDINGS-REPORT.md`. To pick a stopped campaign back up without re-analyzing, `/cc-fuzzer:resume-campaign`.
+### With nix (recommended): clone → bootstrap → set-and-forget
 
-Prefer not to babysit each decision? `/cc-fuzzer:yolo on` opts into a self-driving loop (off by default) — one command, then it runs ticks automatically until a halt cap or you stop it. See [YOLO](#yolo-self-looping).
+```
+# 1. Clone the target you want to fuzz
+git clone https://github.com/<owner>/<target> && cd <target>
+
+# 2. Bootstrap the campaign shell. Builds cc-fuzzer's pinned toolchain + this
+#    target's build deps (auto-detected by a headless scan) and locks the flake.
+#    It does NOT launch Claude — it prints the launch commands when done.
+nix run github:cloudripper/cc-fuzzer#init
+
+# 3. Launch Claude into that shell and go full autonomous — ONE command.
+#    The prompt arg fires the campaign the moment Claude starts; self_loop
+#    auto-selects a target, builds the harness, and self-drives ticks unattended
+#    (each schedules the next via ScheduleWakeup) until a hard halt or yolo off.
+nix run .#claude -- --dangerously-skip-permissions "/cc-fuzzer:yolo on --mode self_loop --no-cap"
+#    Then walk away. Check in any time with /cc-fuzzer:status or /cc-fuzzer:report.
+```
+
+`#init` flags: `--dep <nixpkgs-attr>` (seed a build dep, repeatable — suppresses the scan), `--no-scan` (skip dep auto-detect), `--force` (regenerate the flake and re-scan deps). It writes a project `flake.nix` + `fuzz/nix-deps.nix`; if a build later needs another system library, the harness-writer appends it and you re-run `#init`. An empty `nix-deps.nix` is fine for a self-contained target; re-run with `--force` to re-scan, or hand-edit it.
+
+`nix run .#claude` launches Claude in the campaign shell: plain `nix run .#claude`, or `nix run .#claude -- <claude args>` (nix needs the `--` before any `--flag`). `nix develop` (or `nix run .#default`) opens the shell without Claude.
+
+**Resuming a campaign — skip `#init`.** `#init` is a one-time bootstrap; re-running it re-resolves the plugin flake every time. To come back to an existing campaign, re-enter the shell directly — it uses the committed `flake.lock` + cached FHS env and is fast:
+
+```
+cd ~/projects/<target>
+nix run .#claude -- --dangerously-skip-permissions   # launch Claude in the campaign shell
+# plain:  nix run .#claude            interactive shell:  nix develop  (then run `claude`)
+```
+
+Only re-run `#init` to change build deps (`--force` re-scans) or bump the plugin version.
+
+### Without nix: host tools
+
+You provide the toolchain — clang + compiler-rt, AFL++, `llvm-cov`/`llvm-profdata`, gdb (SymCC optional). The SessionStart hook reports what's missing. Then:
+
+```
+git clone https://github.com/<owner>/<target> && cd <target>
+claude --dangerously-skip-permissions            # unattended; or plain `claude`
+/cc-fuzzer:yolo on --mode self_loop --no-cap      # autonomous: picks a target, fuzzes, self-drives
+```
+
+There's no composed dep shell off-nix, so if a harness build needs a system library, install it on the host — the harness-writer names the exact one.
+
+### Drive it yourself (with or without nix)
+
+Prefer to approve each step over full autonomy? Skip YOLO and run the loop by hand:
+
+```
+/cc-fuzzer:campaign src/parser.c parse_message   # COLD: plan → harness (3 binaries) → seed → launch
+/cc-fuzzer:tick                                   # one LLM decision; repeat, or wrap in: /loop 10m /cc-fuzzer:tick
+/cc-fuzzer:status      # progress — pure shell, no LLM call
+/cc-fuzzer:report      # re-verify reproducers → fuzz/state/FINDINGS-REPORT.md
+/cc-fuzzer:stop        # stop the fuzzer (also disables YOLO)
+```
+
+`/cc-fuzzer:campaign` runs COLD setup once (analyze → harness → 3 binaries → seed corpus → launch). To pick a stopped campaign back up without re-analyzing: `/cc-fuzzer:resume-campaign`. The full self-driving model is in [YOLO](#yolo-self-looping).
 
 ## How it works
 

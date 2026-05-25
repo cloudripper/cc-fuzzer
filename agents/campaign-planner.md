@@ -64,12 +64,12 @@ Everything else is fair game: seed strategy, dictionary picks, concolic posture,
 
 ### Both modes
 
-1. **Target source** — read the entry function and 2-3 levels of callees. Identify input format, length limits, state preconditions, and the hot parsing/decoding/transform paths.
+1. **Target source** — read the entry function and 2-3 levels of callees. Identify input format, length limits, state preconditions, and the hot parsing/decoding/transform paths. **If no target was specified (the autonomous `self_loop` start), select one yourself first — see "Autonomous target selection" — then analyze it the same way.**
 2. **`fuzz/guidance.md`** (optional, user-controlled) — if present, treat its sections as constraints, not suggestions. Carry over target description, input classes, recommended dictionaries, format expectations, known-irrelevant classes, coverage targets, out-of-scope code, delta range, references. If absent, fall back to source-only reasoning and explicitly note this in the plan.
 3. **`${CLAUDE_PLUGIN_ROOT}/templates/guidance.md`** — read once for context on the section names you mirror in plan.md. Do not copy verbatim.
 4. **Bundled dictionaries** — `${CLAUDE_PLUGIN_ROOT}/dictionaries/INDEX.md` describes each.
 5. **Code review** (fresh mode prerequisite) — if `fuzz/state/code-review.md` is missing or stale, the `/cc-fuzzer:campaign` command will have run `/cc-fuzzer:review` before invoking you. Read `code-review.md` + the latest `snapshots/code-review-<ts>.json`. If absent (binary-only target or user opt-out), say so in the plan and proceed without.
-6. **CVE intelligence** (fresh mode prerequisite) — run `bash ${CLAUDE_PLUGIN_ROOT}/scripts/cve-context-build.sh` before composing. If `fuzz/state/fuzz-config.json:cve.query` is empty in fresh mode, **stop and ask the user** to set it. **The query must be a short product/library keyword — ideally ONE token (`libpng`, `openssl`, `zlib`), at most two.** NVD's `keywordSearch` requires *every* space-separated term to appear in a CVE description, so a descriptive phrase like `<product> <format> parser config message validation` ANDs down to zero matches even for a heavily-CVE'd library. (The builder auto-broadens an over-specific query to its product token as a safety net, but set it right to begin with.) When `fetch_stats.total == 0` (offline), include `## Known prior art` noting "CVE lookup unavailable; re-run after connecting." In revise mode, only refresh if the latest `cve-context-*.json` is older than 30 days or the user passes `--refresh-cve`.
+6. **CVE intelligence** (fresh mode prerequisite) — run `bash ${CLAUDE_PLUGIN_ROOT}/scripts/cve-context-build.sh` before composing. If `fuzz/state/fuzz-config.json:cve.query` is empty in fresh mode, **stop and ask the user** to set it — **except on the autonomous `self_loop` path, where you set `cve.query` yourself from the product/library name you discovered (see "Autonomous target selection"), never blocking on the user.** **The query must be a short product/library keyword — ideally ONE token (`libpng`, `openssl`, `zlib`), at most two.** NVD's `keywordSearch` requires *every* space-separated term to appear in a CVE description, so a descriptive phrase like `<product> <format> parser config message validation` ANDs down to zero matches even for a heavily-CVE'd library. (The builder auto-broadens an over-specific query to its product token as a safety net, but set it right to begin with.) When `fetch_stats.total == 0` (offline), include `## Known prior art` noting "CVE lookup unavailable; re-run after connecting." In revise mode, only refresh if the latest `cve-context-*.json` is older than 30 days or the user passes `--refresh-cve`.
 
 ### Revise mode adds
 
@@ -80,6 +80,15 @@ Everything else is fair game: seed strategy, dictionary picks, concolic posture,
 11. **`fuzz/state/findings.jsonl`** — every line. Cluster locations and root causes tell you where bug-density actually is.
 12. **Recent coverage trend** — `ls -t fuzz/state/snapshots/coverage-*.json | head -5`. Use for plateau character only.
 13. **Recent events (optional)** — `tail -50 fuzz/state/events.jsonl` for dispatch patterns (e.g., "concolic dispatched 10x, 0 inputs promoted").
+
+## Autonomous target selection (self_loop / no target given)
+
+When invoked for a fresh COLD campaign with **no target specified** — the `self_loop` autonomous path (`/cc-fuzzer:yolo on --mode self_loop` on a project with no campaign) — **you pick the target yourself. Do NOT ask the user.** `self_loop` means YOLO directs the whole campaign, target selection included.
+
+1. **Scan the project** from `$CC_FUZZER_PROJECT_ROOT` (the cwd / repo root): enumerate C/C++ sources, headers, and build files (`*.c`, `*.cc`, `*.cpp`, `*.h`, `CMakeLists.txt`, `configure.ac`, `Makefile`, `meson.build`). Identify what the project *is* (its library/program name) and where untrusted input enters.
+2. **Rank candidate entry points** by attacker-reachability and bug-density signal: functions that parse / deserialize / validate untrusted input (file formats, network or IPC/protocol messages, config, argument handling), public API surface, and anything flagged by `code-review.md` focus areas or `cve-context-*.json` hotspots when present. Prefer a self-contained function with a clear `(buffer, length)` / string / fd input over deep internal helpers.
+3. **Pick ONE primary target** (entry function + source file). Set `cve.query` to the discovered product/library name (one token). Document the pick, the runner-up candidates, and your ranking rationale in `## Target`, so a human can audit or redirect later via `/cc-fuzzer:plan` or `/cc-fuzzer:campaign --reset`.
+4. **Only surface back to the human if there is genuinely nothing to fuzz** — no buildable C/C++ input surface (e.g. pure scripts, no parseable entry). Then write a `## Target` note that autonomous selection found no suitable target and recommend the user name one. That is the *only* case the autonomous path stops; never stop merely because a target wasn't handed to you.
 
 ## What you decide
 

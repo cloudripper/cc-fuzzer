@@ -13,8 +13,16 @@
 
   outputs = { self, nixpkgs, llm-agents }:
     let
-      system = "x86_64-linux";
-      pkgs = import nixpkgs { inherit system; };
+      # buildFHSEnv (and the bwrap it relies on) are Linux-only, so we build
+      # for the Linux systems — not darwin. Add more here if needed.
+      systems = [ "x86_64-linux" "aarch64-linux" ];
+      forAllSystems = nixpkgs.lib.genAttrs systems;
+
+      # Everything that depends on a concrete system/pkgs is built per-system;
+      # the outputs below map it over `systems` via forAllSystems.
+      perSystem = system:
+        let
+          pkgs = import nixpkgs { inherit system; };
 
       # ----------------------------------------------------------------------
       # Toolchain coupling note
@@ -33,7 +41,11 @@
       #   imposes the toolchain *shape*.
       # ----------------------------------------------------------------------
 
-      ccFuzzerEnv = pkgs.buildFHSEnv {
+      # mkEnv builds the FHS dev shell. `extra` is a `pkgs: [ ... ]` function
+      # supplying a campaign's target-specific build deps (composed in by a
+      # project flake via `lib.mkDevShell`); `projectShell` flags that composed
+      # shell so env-check can tell it apart from the bare plugin shell.
+      mkEnv = { extra ? (_: []), projectShell ? false }: pkgs.buildFHSEnv {
         name = "cc-fuzzer-env";
 
         # ------------------------------------------------------------------
@@ -44,7 +56,7 @@
         # were written assuming this layout; running them under pure nix
         # without FHSEnv hits hardcoded path expectations and fragile cc-
         # wrapper interactions. FHSEnv eliminates that whole class of bugs.
-        targetPkgs = pkgs: with pkgs; [
+        targetPkgs = pkgs: (with pkgs; [
           # -- Compilers / sanitizer runtimes
           # stdenv-provided clang carries a matching compiler-rt with
           # libclang_rt.fuzzer.a. That's what `-fsanitize=fuzzer` links
@@ -97,17 +109,13 @@
           git
           jq
 
-          # -- Common library headers/bits some targets need
+          # -- Common library headers/bits many targets need. Anything
+          # target-SPECIFIC (e.g. dbus, expat, systemd) does NOT belong here —
+          # it composes in per-campaign via the project flake's `nix-deps.nix`
+          # (see `lib.mkDevShell` + `apps.init`). Keep this base generic.
           glib.dev
           zlib.dev
           openssl.dev
-
-          # --build support for d-bugs
-          expat.dev
-          systemd.dev
-          dbus.dev
-          pam
-          duktape
 
           # -- State-script runtime
           python3
@@ -118,7 +126,7 @@
           fd             # fd
           bat            # nicer cat for plugin debugging
           tree
-        ] ++ [ llm-agents.packages.${system}.claude-code ];
+        ] ++ [ llm-agents.packages.${system}.claude-code ]) ++ (extra pkgs);
 
         # ------------------------------------------------------------------
         # Marker env vars + project bind
@@ -138,6 +146,7 @@
         # the user may not realize their project is bind-mounted).
         profile = ''
           export CC_FUZZER_FHS=1
+          ${pkgs.lib.optionalString projectShell "export CC_FUZZER_PROJECT_SHELL=1"}
           export CC_FUZZER_FLAKE_REV="${self.rev or "dirty"}"
           export CC_FUZZER_PROJECT_ROOT="$PWD"
 
@@ -165,21 +174,60 @@
 
         runScript = "bash";
       };
-    in {
-      # ----------------------------------------------------------------------
-      # devShells.default
-      # ----------------------------------------------------------------------
-      # `.env` is the trick that makes a buildFHSEnv consumable by `nix
-      # develop`. Without `.env`, you'd get a wrapper script that you have
-      # to run as `result/bin/cc-fuzzer-env`, which doesn't fit the
-      # `nix develop <plugin-path>` workflow.
-      devShells.${system}.default = ccFuzzerEnv.env;
 
-      # Also expose the wrapper directly for users who'd rather invoke
-      # `nix run .#dev` instead of `nix develop`.
-      apps.${system}.dev = {
-        type = "app";
-        program = "${ccFuzzerEnv}/bin/cc-fuzzer-env";
-      };
+      # `nix run <cc-fuzzer>#init` — the campaign bootstrap. Runs on the host:
+      # scaffolds ./flake.nix + ./fuzz/nix-deps.nix, headlessly resolves the
+      # target's build deps, locks, then PRINTS the commands to launch Claude
+      # (`nix run .#claude …`) and open the shell (`nix develop`). It does NOT
+      # launch Claude itself. PATH carries the tools the script needs; host
+      # `nix` stays on PATH (writeShellScriptBin does not reset it). CCFUZZER_SRC
+      # pins the project flake's `ccfuzzer` input to exactly this plugin source.
+      initApp = pkgs.writeShellScriptBin "cc-fuzzer-init" ''
+        export PATH="${pkgs.lib.makeBinPath [ pkgs.git pkgs.gnused pkgs.gnugrep pkgs.coreutils llm-agents.packages.${system}.claude-code ]}:$PATH"
+        export CCFUZZER_SRC="${self}"
+        export CCFUZZER_SYSTEM="${system}"
+        export CCFUZZER_INIT_CAP="''${CCFUZZER_INIT_CAP:-10}"
+        exec ${pkgs.bash}/bin/bash ${self}/scripts/campaign-init.sh "$@"
+      '';
+        in { inherit pkgs mkEnv initApp; };
+    in {
+      # `.env` makes a buildFHSEnv consumable by `nix develop`. One per system.
+      devShells = forAllSystems (system: {
+        default = ((perSystem system).mkEnv {}).env;
+      });
+
+      # Extension point for per-campaign project flakes (see
+      # templates/project-flake.nix). `extra` is a `pkgs: [ ... ]` of the
+      # target's build deps; the result composes them onto the base toolchain
+      # in one FHS env. Marked as a project shell so env-check can detect it.
+      lib = forAllSystems (system: let ps = perSystem system; in {
+        # `.env` form, for `nix develop`.
+        mkDevShell = extra: (ps.mkEnv { inherit extra; projectShell = true; }).env;
+        # The raw FHS wrapper derivation. Its `/bin/cc-fuzzer-env` runs the FHS
+        # sandbox (runScript = bash), so a command runs inside it via:
+        #   <wrapper>/bin/cc-fuzzer-env -c "claude …"
+        # This is how you run a command in the sandbox — `nix develop -c <cmd>`
+        # does NOT work for a buildFHSEnv (its shellHook execs the wrapper
+        # before the -c command runs, dropping you into FHS bash instead).
+        mkFhsEnv = extra: ps.mkEnv { inherit extra; projectShell = true; };
+        # A `claude` runner for the project flake: forwards its args straight to
+        # `claude` inside the composed FHS sandbox, so `nix run .#claude` (plain)
+        # and `nix run .#claude -- <args>` both work (nix needs `--` before any
+        # `--flag`). cc-fuzzer-env's runScript is bash, so `-c 'claude "$@"' _ "$@"`
+        # runs `claude <args>` inside the sandbox.
+        mkClaudeApp = extra:
+          let fhs = ps.mkEnv { inherit extra; projectShell = true; };
+          in ps.pkgs.writeShellScript "ccfuzz-claude" ''
+            exec ${fhs}/bin/cc-fuzzer-env -c 'claude "$@"' ccfuzz-claude "$@"
+          '';
+      });
+
+      # `nix run .#dev` — the dev-shell wrapper; `nix run #init` — the pre-claude
+      # campaign bootstrap (see initApp). Both under one per-system attrset.
+      apps = forAllSystems (system:
+        let ps = perSystem system; in {
+          dev  = { type = "app"; program = "${ps.mkEnv {}}/bin/cc-fuzzer-env"; };
+          init = { type = "app"; program = "${ps.initApp}/bin/cc-fuzzer-init"; };
+        });
     };
 }
