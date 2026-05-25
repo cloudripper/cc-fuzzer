@@ -305,7 +305,7 @@ The single file the orchestrator reads on warm ticks. Schema is already document
 
 **Optional fields**: `last_report_at` (integer unix timestamp, set by reporting-agent after writing `FINDINGS-REPORT.md`).
 
-**`yolo_state` block** (v0.18+) — computed by `update-current.sh` from `fuzz-config.json:yolo` + campaign signals (coverage roundups, events.jsonl token totals, findings.jsonl). Tells the orchestrator whether to call `ScheduleWakeup` at end-of-tick:
+**`yolo_state` block** (v0.18+) — computed by `update-current.sh` from `fuzz-config.json:yolo` + campaign signals (coverage roundups, events.jsonl token totals, findings.jsonl). Drives the end-of-tick decision: the orchestrator (a subagent) reads it and emits a `YOLO_NEXT:` directive; the main-thread `/cc-fuzzer:tick` skill turns that into a `ScheduleWakeup` for the next tick (the orchestrator never calls `ScheduleWakeup` itself — a subagent's wakeup can't re-fire the main conversation):
 ```json
 "yolo_state": {
   "active": true,
@@ -470,7 +470,7 @@ Schema: **`fuzz-config/v2`** (introduced by schema-version v8 / plugin v0.17). B
 
 Toggled via `/cc-fuzzer:review [--deep] [--refresh] [--delta]`. Auto-runs at COLD between `cve-context-build` and `campaign-planner`; never auto-runs on WARM ticks (deliberate one-time-ish cost).
 
-**`yolo` block** (optional, v0.18+, **off by default**) — auto-tick self-loop:
+**`yolo` block** (optional, v0.18+, **off by default**) — config for the self-driving loop (`/cc-fuzzer:yolo on` runs a tick and chains the next via the main-thread tick skill's `ScheduleWakeup`):
 ```json
 "yolo": {
   "enabled": true,
@@ -491,7 +491,7 @@ Toggled via `/cc-fuzzer:review [--deep] [--refresh] [--delta]`. Auto-runs at COL
 }
 ```
 - An absent `yolo` block — or `enabled: false` — means yolo is off and the campaign is driven manually by `/cc-fuzzer:tick`. Yolo is a deliberate user opt-in via `/cc-fuzzer:yolo on`.
-- `enabled` — when true, the orchestrator schedules its own next tick via `ScheduleWakeup` at end of each WARM tick AND follows the operator stance for the active `mode` (see `agents/fuzz-orchestrator.md`).
+- `enabled` — when true, each WARM tick emits a `YOLO_NEXT:` next-tick directive (consumed by the main-thread `/cc-fuzzer:tick` skill, which chains the next tick via `ScheduleWakeup`) AND the orchestrator follows the operator stance for the active `mode` (see `agents/fuzz-orchestrator.md`). `/cc-fuzzer:yolo on` starts the chain (runs the first tick immediately); it then self-advances unattended until a halt or `off`.
 - `mode` — how each tick decides what to do (default `hybrid`):
   - `guided` — the legacy deterministic precedence table; `sleep` is the last resort. No per-tick reasoning beyond the table.
   - `hybrid` — the orchestrator (Sonnet) reasons over `yolo_state.evaluation` (cost posture, redundancy ledger, progress) to choose **wait / act / consult** and which action; the precedence table is a fallback prior. `wait` is first-class.
@@ -1065,6 +1065,8 @@ Produced by `scripts/cve-context-build.sh`. The orchestrator runs the script at 
 **Required fields**: schema, ts, target, nvd_query, fetch_stats, hotspots, pattern_frequency, cves.
 **Optional fields**: patch_idioms, time_since_last_high_cve_days.
 
+`target` is the campaign's configured `cve.query`; `nvd_query` is the keyword that **actually** ran. NVD's `keywordSearch` ANDs every space-separated term, so an over-specific `target` ("<product> <format> parser config validation …") matches nothing — the builder then auto-broadens to the product token (e.g. `openssl`) and records *that* in `nvd_query`. When the two differ, the query was too narrow; prefer a one-token `cve.query`.
+
 **Per-CVE required**: id, description_summary, patches.
 **Per-CVE optional**: cvss_v3_1, cwe_id, advisories, raw_references, poc, tags, patch_idioms, published, last_modified.
 
@@ -1179,7 +1181,9 @@ Lifecycle: REWRITABLE. May be deleted only by `/cc-fuzzer:reset`.
 
 ## Multi-Harness Mode (schema v9)
 
-A "campaign" in multi-harness mode targets N entry functions in the same library, each with its own harness binary, corpus, and coverage state, while sharing a single findings DB, plan, and budget. Multi-harness mode is **opt-in**: it activates only when `state/fuzz-config.json` declares a non-empty `harnesses[]` array. Without that declaration, the campaign runs in singular mode exactly as it did in v8 — same filesystem layout, same schemas, same behavior. The two modes coexist; singular mode remains the default and is supported indefinitely.
+A "campaign" in multi-harness mode targets N entry functions in the same library, each with its own harness binary, corpus, and coverage state, while sharing a single findings DB, plan, and budget. Mode is decided by one signal: multi-harness mode is on iff `state/fuzz-config.json` declares a non-empty `harnesses[]` array.
+
+**Since v0.19.2, every new campaign declares `harnesses[]` at COLD (via `scripts/harness-set.sh init`) and therefore runs in multi-harness mode from the start — even with a single harness, which is just the degenerate one-entry case.** This is deliberate: a campaign's on-disk layout and schemas never have to migrate when a second harness is added later (`harness-set.sh add` simply appends). **Singular mode is the legacy layout** — it is what pre-v0.19.2 campaigns (which have no `harnesses[]` array) use, and it remains fully supported and unchanged. The v8→v9 migration does NOT convert an existing singular campaign to multi; it stays singular until the user runs the explicit singular→multi upgrade below. The two modes coexist.
 
 ### Activation
 

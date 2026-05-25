@@ -1,12 +1,11 @@
 ---
 name: yolo
-description: "Toggle YOLO mode (auto-tick self-looping). Off by default — `/cc-fuzzer:yolo on` opts in. When active, the orchestrator schedules its own next tick and follows the operator stance for the chosen mode (guided / hybrid / self_loop) and aggressiveness posture (conservative / balanced / aggressive, defaulted from the mode). — usage: on [--mode guided|hybrid|self_loop] [--aggressiveness conservative|balanced|aggressive] [--no-cap] [--interval 30m] [--max-ticks N] [--max-cost USD] | off [--reason \"...\"] | status"
+description: "Toggle YOLO — a self-driving fuzzing loop. `/cc-fuzzer:yolo on` is set-and-forget: it sets the per-tick auto-pilot posture (guided / hybrid / self_loop + aggressiveness), runs a tick immediately, and chains each next tick via ScheduleWakeup so the campaign advances unattended until a hard halt or `/cc-fuzzer:yolo off`. No /loop, no babysitting. — usage: on [--mode guided|hybrid|self_loop] [--aggressiveness conservative|balanced|aggressive] [--no-cap] [--interval 30m] [--max-ticks N] [--max-cost USD] | off [--reason \"...\"] | status"
 argument-hint: "on [--mode guided|hybrid|self_loop] [--aggressiveness conservative|balanced|aggressive] [--no-cap] [--interval 30m] [--max-ticks N] [--max-cost USD] | off [--reason \"...\"] | status"
-allowed-tools: Bash, Read
 disable-model-invocation: true
 ---
 
-**YOLO is off by default — opt in with `/cc-fuzzer:yolo on`.** The plugin's default tick driver is manual (`/cc-fuzzer:tick` or `/loop`). YOLO is a separate, explicit commitment to letting the orchestrator self-pace.
+**YOLO is off by default — opt in with `/cc-fuzzer:yolo on`.** Without it, advance the campaign manually with `/cc-fuzzer:tick`. `yolo on` is the **set-and-forget** path: it starts a self-driving loop (one command, no `/loop`) that runs ticks automatically until a hard halt or you turn it off.
 
 Parse `$ARGUMENTS`. The first positional decides the action:
 
@@ -49,7 +48,7 @@ Every tick the evaluation block carries `toolbox` — the **whole known lever se
 
 ### `off [--reason "<text>"]` — disable YOLO
 
-Sets `yolo.enabled: false` in `fuzz/state/fuzz-config.json`. The orchestrator stops scheduling wakeups. `/cc-fuzzer:stop` also disables YOLO as a side effect.
+Sets `yolo.enabled: false` in `fuzz/state/fuzz-config.json`. A pending wakeup can't be force-cancelled, so the self-loop stops on the **next** fired tick — it sees `yolo_state.active=false`, the orchestrator emits `YOLO_NEXT: inactive`, and the tick skill doesn't reschedule. `/cc-fuzzer:stop` also disables YOLO as a side effect.
 
 ### `status` — print current configuration and runtime state
 
@@ -57,4 +56,16 @@ Sets `yolo.enabled: false` in `fuzz/state/fuzz-config.json`. The orchestrator st
 
 Translate the parsed action into a `${CLAUDE_PLUGIN_ROOT}/scripts/yolo-state.sh` call (convert human-readable intervals to seconds first), then run `${CLAUDE_PLUGIN_ROOT}/scripts/update-current.sh` so `current.json:yolo_state` reflects the change before the next tick reads it.
 
-For the operator-stance behavior during active YOLO ticks (auto-pilot survey, action precedence, halt conditions, `ScheduleWakeup` mechanics), see the "YOLO operator stance" section in `${CLAUDE_PLUGIN_ROOT}/agents/fuzz-orchestrator.md`.
+## Starting the self-loop (action `on`)
+
+YOLO self-drives from the **main thread**: each tick schedules the next via `ScheduleWakeup`, so once started the campaign advances unattended — no `/loop`, no cron, no babysitting. (The orchestrator is a subagent and only *recommends* each delay via its `YOLO_NEXT:` line; the main thread owns the `ScheduleWakeup` call. This works because a main-thread `ScheduleWakeup` fires and chains even outside a `/loop` — validated.)
+
+**Before enabling**, read `fuzz/state/fuzz-config.json` and note whether `yolo.enabled` was already `true`. Then, after the `yolo-state.sh enable` + `update-current.sh` steps:
+
+1. **Was already enabled (settings update)** — a chain is presumably already live. Do **not** start another (parallel chains waste cost). Just report the updated config. If the user believes the loop died (e.g. after a session restart), tell them to run `/cc-fuzzer:yolo off` then `on` to restart it cleanly.
+2. **Campaign is running, fresh enable** — start the loop NOW: perform one tick immediately by following the `/cc-fuzzer:tick` flow (dispatch `fuzz-orchestrator` for one WARM tick, then chain via `ScheduleWakeup` per its `YOLO_NEXT:` line). Then tell the user: *"YOLO `<mode>` is self-driving — first tick ran now, next in ~`<interval>`. It continues unattended until a hard halt (tick / cost / no-progress / crash-storm cap) or `/cc-fuzzer:yolo off` / `/cc-fuzzer:stop`."*
+3. **No campaign running yet, fresh enable** — don't tick. Tell the user the loop will start automatically when the campaign launches (`/cc-fuzzer:campaign` repeats this bootstrap once COLD setup completes).
+
+Determine campaign state with `${CLAUDE_PLUGIN_ROOT}/scripts/check-campaign-state.sh`.
+
+For the operator-stance behavior during active YOLO ticks (auto-pilot survey, action precedence, halt conditions, and the `YOLO_NEXT:` next-tick directive the tick skill consumes to chain the loop), see the "YOLO operator stance" / "Halt-or-schedule decision" sections in `${CLAUDE_PLUGIN_ROOT}/agents/fuzz-orchestrator.md`.

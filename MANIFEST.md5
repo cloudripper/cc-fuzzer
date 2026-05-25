@@ -2,16 +2,16 @@
 # Generated at release time. Used by integrity-check.sh to detect drift.
 # Format: <md5>  <relative-path>
 #
-b173531eed9dc180bab1e407e763755c  .claude-plugin/plugin.json
-6d9070fb9f29821f7268b12fd7837b5c  STATE_SCHEMA.md
-f4135a2586a20fec38aac140022635ff  agents/campaign-planner.md
+19aa027c2822b92aad4d16c1252aa677  .claude-plugin/plugin.json
+6439608285fc4bff51254911049f605e  STATE_SCHEMA.md
+777ff0f8894b1c01838d9db529cfe854  agents/campaign-planner.md
 1c10e5f08e8401b18c66d468834d492c  agents/code-reviewer-deep.md
 bfef867f5ae8807860c6bc3873a967d7  agents/code-reviewer.md
 3a86b57bf2cc87f5748cd2ccff8fe26e  agents/concolic-executor.md
 06e4b37d0e315d97035c72cd17b363d0  agents/coverage-analyst.md
 424d70e2d8dde69eff32f1a9860994db  agents/crash-triager.md
-ba677742d22828346020db9783e2b584  agents/fuzz-orchestrator.md
-cc92eb913026de18c7be2ef03042bce2  agents/harness-writer.md
+df829822bc04010d1253443d9422ba9e  agents/fuzz-orchestrator.md
+5f28f25720c6399c8dfb4119db4fcf24  agents/harness-writer.md
 54c1fe1fa0d493691c343ffbe8105403  agents/mutator.md
 abf7a236d12d4e42a66cd6d181be1d76  agents/planner-consult.md
 137e81f8eb3563eb1bb7d2a5d81f3dd1  agents/poc-builder.md
@@ -26,7 +26,7 @@ d6e48134299bc68341ef7fbe64f7afd4  dictionaries/utf-edge-cases.dict
 525a0966c5c0f0d3ef7e68d62d9e998a  scripts/_lib/build_current_multi.py
 61b5bff8b00f2d1bdf9c67d06ccf8885  scripts/_lib/build_current_singular.py
 2ad590572f685c903ed6f3e2e3342d01  scripts/_lib/code_review_prescan.py
-983c48191f585d5739556cf0b3e033a5  scripts/_lib/cve-context-builder.py
+0780e8e7c890f31664f58c1ff2b4dbcf  scripts/_lib/cve-context-builder.py
 0ecb7ba1b53bc7158b009e6ae71fb9e9  scripts/_lib/cve_patterns.py
 3e5421f0c317575da597fe7089b5aa80  scripts/_lib/cve_poc_trust.py
 728a80eba881d2adbf3cbce07400125b  scripts/_lib/cve_sources.py
@@ -52,7 +52,7 @@ f1d8add21adeac6f4e072a122c021f42  scripts/check-slot-liveness.sh
 415f2f7e6df6e4b14e87d3dfb45d510e  scripts/code-review-run.sh
 ecada11063d5b0a981db98d2c25a5101  scripts/corpus-quarantine.sh
 ce16a758653e543f03e36c51a07564ff  scripts/cross-ref-findings.sh
-5163c5eac87cd41b9470fd7d6b47b99c  scripts/cve-context-build.sh
+e1e55dc17855a03463fa278b8b5e5a4f  scripts/cve-context-build.sh
 6cc42ad94c0d4c4fa38189aace915f9e  scripts/cve-lookup.py
 1777e2f2c84a60f7657fff85ff494e56  scripts/detect-crashes.sh
 a98c113ed1699420b35641515fe9f0a7  scripts/dictionaries.sh
@@ -63,6 +63,7 @@ d648918216e180b7cc9f683dbfe2089d  scripts/events.sh
 a4cd368b5c389602f6917c2220693a55  scripts/extract-cmplog-dict.sh
 b6c93200cb33c51d12fc4cb2450a655b  scripts/find-delta-targets.sh
 9d5e083cba7a448396678ca37dfebe94  scripts/findings.sh
+5538549a2a3831bbf8aaf05659a174b9  scripts/harness-set.sh
 5f2ce65aca62fad4b86c5b7bbd58108a  scripts/install-symcc.sh
 1ca2ce057eb7ad54c704630567e3bacf  scripts/integrity-check.sh
 42f3d84cf8333b4cc5f8736c2c937852  scripts/is-crash.sh
@@ -82,8 +83,8 @@ dffa84b25ecf0668bfc5fe97fb402824  scripts/status.sh
 04173d0c6b1c6039d0fa11b3e2f05eb0  scripts/update-current.sh
 6be6f3f6a21497bf3586fd5140f60fd4  scripts/validate-state.sh
 3aa481b6351bc17d581bfb2d6c45df65  scripts/write-harness-built.sh
-1541e957a029d1f870661c5c3f1696f1  scripts/yolo-state.sh
-82dee32585e4feea01ffc398f62089f8  skills/campaign/SKILL.md
+0206c6d3bb2383ee70a0682b22be3bda  scripts/yolo-state.sh
+cba39e66ef3649dd08e2ecf1e7948c97  skills/campaign/SKILL.md
 6718a7c80fbe4ae0abce9e5850582fe7  skills/concolic/SKILL.md
 ae8df8c4167849e40e6334ccdd59cf73  skills/coverage/SKILL.md
 96d22d5824c9df2a24c977329ea3d8e9  skills/delta/SKILL.md
@@ -99,9 +100,9 @@ de9661bc69bf412723e30790c11867a8  skills/review/SKILL.md
 d9744519758ef24767e9bd16537ff328  skills/run/SKILL.md
 2a1a4c50bcbb71e29a68a17320db1488  skills/seed/SKILL.md
 7eefdc11bae42015f747dfd0a6ed8bc8  skills/status/SKILL.md
-10382efffb02570cd96dc56e95c2e3d8  skills/stop/SKILL.md
-b781ccd764f04eb249efa30968963a4f  skills/tick/SKILL.md
+b01264a1bfc405bc70751a53dcfb6360  skills/stop/SKILL.md
+898f82f250d5399b6bf923fcff45a233  skills/tick/SKILL.md
 a60644abfae7712dc21c437c1f6d1635  skills/triage/SKILL.md
 063d157eeaaa1a8a49ba342ab7d02311  skills/validate/SKILL.md
-153f4357375eb9e21ab612c181472e88  skills/yolo/SKILL.md
+4107f18bd9acf0dbafcb128761badd3e  skills/yolo/SKILL.md
 242ae89e95acebaf99e020e8c1f7ced2  templates/guidance.md

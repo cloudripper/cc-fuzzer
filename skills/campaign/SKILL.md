@@ -10,7 +10,7 @@ Auto-detects campaign state via `${CLAUDE_PLUGIN_ROOT}/scripts/check-campaign-st
 
 | State | Action |
 |---|---|
-| `none` | COLD start: plan → build harness → seed → launch |
+| `none` | COLD start: plan → declare harness set → build harness → seed → launch (multi-harness layout from the start) |
 | `running` | Print status from `current.json`; do nothing else |
 | `stopped` | RESUME: relaunch existing harness, one tick |
 | `stale` | Refuse — target source changed; use `--reset` or accept the stale build |
@@ -21,10 +21,18 @@ Auto-detects campaign state via `${CLAUDE_PLUGIN_ROOT}/scripts/check-campaign-st
 - `--reset` — wipe campaign state (with confirmation) before COLD start
 - `--no-coverage` — skip the coverage-binary build (orchestrator otherwise refuses to advance without it)
 - `--budget=N` — total LLM spend cap, USD (default 20)
-- `--add-harness <name> --entry <fn>` — add a harness to an existing campaign
+- `--add-harness <name> --entry <fn>` — add a harness to an existing campaign. On a v0.19.2+ campaign (already multi-harness) this just appends: `harness-set.sh add` then `harness-writer --harness <name>`. A legacy singular campaign first needs the in-place singular→multi upgrade (see STATE_SCHEMA.md "Singular → multi upgrade").
 - `--mutator` — request a custom mutator build for highly-structured inputs
 - `--refresh-cve` — re-run CVE intelligence before the next plan revision
 
 Target: $ARGUMENTS
 
 State layout and JSON schemas: `${CLAUDE_PLUGIN_ROOT}/STATE_SCHEMA.md`.
+
+## After a COLD start: auto-start the YOLO loop
+
+A campaign doesn't drive itself — the fuzzer runs in the background, but LLM ticks only advance when something fires them. If YOLO is enabled (`yolo.enabled: true` in `fuzz/state/fuzz-config.json`, e.g. the user ran `/cc-fuzzer:yolo on` before this) when a COLD start completes, **immediately start the self-loop**: perform one tick now by following the `/cc-fuzzer:tick` flow (dispatch `fuzz-orchestrator` for one WARM tick, then chain via `ScheduleWakeup` per its `YOLO_NEXT:` line). Then tell the user:
+
+> "Campaign started and YOLO `<mode>` is self-driving — first tick ran now, next in ~`<interval>`. It continues unattended until a hard halt (tick / cost / no-progress / crash-storm cap) or `/cc-fuzzer:yolo off` / `/cc-fuzzer:stop`."
+
+If YOLO is **off**, say nothing about loops — the campaign runs in the background and the user advances it with `/cc-fuzzer:tick`, or starts the self-loop with `/cc-fuzzer:yolo on`.

@@ -28,7 +28,7 @@ claude
 
 `/cc-fuzzer:campaign` runs COLD setup once (analyze → harness → 3 binaries → seed corpus → launch fuzzer). `/loop 10m /cc-fuzzer:tick` fires WARM ticks every 10 minutes. `/cc-fuzzer:report` re-runs every recorded reproducer against the current harness binary and writes `fuzz/state/FINDINGS-REPORT.md`. To pick a stopped campaign back up without re-analyzing, `/cc-fuzzer:resume-campaign`.
 
-Prefer not to babysit the loop? `/cc-fuzzer:yolo on` opts into auto-ticking (off by default) — see [YOLO](#yolo-self-looping).
+Prefer not to babysit each decision? `/cc-fuzzer:yolo on` opts into a self-driving loop (off by default) — one command, then it runs ticks automatically until a halt cap or you stop it. See [YOLO](#yolo-self-looping).
 
 ## How it works
 
@@ -144,25 +144,32 @@ Hard   (checksums, multi-cond)    → SymCC + Z3    (expensive, last resort)
 
 ### Multi-fuzzer / multi-harness
 
-Single-fuzzer is the default (one `main` slot, engine auto-detected). To run several fuzzers against a shared corpus, declare slots in `fuzz/state/fuzz-config.json`:
+One libFuzzer slot is the default (`main`, bound to the campaign's single harness). To run several fuzzers against that harness's shared corpus, add slots in `fuzz/state/fuzz-config.json` — each slot binds to a declared harness:
 
 ```json
 {
   "schema": "fuzz-config/v3",
+  "harnesses": [
+    {"name": "parser", "entry_function": "parse_input"}
+  ],
   "fuzzer_slots": [
-    {"slot": "main",        "engine": "libfuzzer"},
-    {"slot": "afl-explore", "engine": "aflpp", "role": "secondary", "afl_power_schedule": "explore"}
+    {"slot": "main",        "harness": "parser", "engine": "libfuzzer"},
+    {"slot": "afl-explore", "harness": "parser", "engine": "aflpp", "role": "secondary", "afl_power_schedule": "explore"}
   ]
 }
 ```
 
-Each slot gets its own `fuzzer-<slot>.{pid,engine,log}`; the live manifest is `fuzzers.json`. The orchestrator treats all slots as one shared-corpus campaign (one recommendation, one triage pass, one coverage view). At the top of each tick, `check-slot-liveness.sh` silently relaunches any dead slot (anti-flap throttle: 3 restarts in 60s → marked deadlocked); `restart_fuzzer` only surfaces when *every* slot is dead. Schema v9 additionally supports multiple **harnesses** in one campaign, each with its own corpus/coverage under `fuzz/harnesses/<name>/`.
+Each slot gets its own `fuzzer-<slot>.{pid,engine,log}`; the live manifest is `fuzzers.json`. The orchestrator treats all slots as one shared-corpus campaign (one recommendation, one triage pass, one coverage view). At the top of each tick, `check-slot-liveness.sh` silently relaunches any dead slot (anti-flap throttle: 3 restarts in 60s → marked deadlocked); `restart_fuzzer` only surfaces when *every* slot is dead.
+
+**Multiple harnesses.** Since v0.19.2 every new campaign uses the schema-v9 multi-harness layout from COLD — each harness gets its own corpus/coverage/binaries under `fuzz/harnesses/<name>/`, declared in `fuzz-config.json:harnesses[]`. A single-harness campaign is just the one-entry degenerate case, so adding a second harness later (`/cc-fuzzer:campaign --add-harness <name> --entry <fn>`) only appends — the on-disk layout never has to migrate. Campaigns created before v0.19.2 keep the legacy flat singular layout (`fuzz/harness/`, `fuzz/corpus/`) and continue to run unchanged.
 
 > **AFL++ on `process_based` harnesses:** the launcher auto-bumps the per-input timeout to 5000 ms and passes `-t <ms>+` (skip-on-timeout) so a fork-exec'ing CLI target can clear AFL's dry-run. Override per-slot with `"timeout_ms": <ms>`.
 
 ### YOLO (self-looping)
 
-`/cc-fuzzer:yolo on [--mode guided|hybrid|self_loop] [--aggressiveness conservative|balanced|aggressive]` opts into auto-ticking (off by default; the orchestrator calls `ScheduleWakeup` at end-of-tick). All modes share hard halt caps (tick / cost / no-progress / crash-storm) and a deterministic per-tick **evaluation** block — cost posture (throttles Opus agents past a soft fraction of the cost cap), a per-agent **redundancy ledger** (suppresses an agent that loops without producing results), and a self-climbing signal.
+`/cc-fuzzer:yolo on [--mode guided|hybrid|self_loop] [--aggressiveness conservative|balanced|aggressive]` opts into a **self-driving loop** (off by default). All modes share hard halt caps (tick / cost / no-progress / crash-storm) and a deterministic per-tick **evaluation** block — cost posture (throttles Opus agents past a soft fraction of the cost cap), a per-agent **redundancy ledger** (suppresses an agent that loops without producing results), and a self-climbing signal.
+
+**Set-and-forget, one command.** `/cc-fuzzer:yolo on` runs a tick immediately and then chains: each tick, the orchestrator recommends the next delay (a `YOLO_NEXT:` line), and the main-thread `/cc-fuzzer:tick` skill calls `ScheduleWakeup` to fire the next one. The chain re-invokes the conversation while it's idle — no `/loop`, no cron, no babysitting — and runs until a hard halt or `/cc-fuzzer:yolo off` / `/cc-fuzzer:stop`. (The orchestrator runs as a subagent and can't self-schedule, so the main-thread skill owns the `ScheduleWakeup`; a hard halt simply doesn't reschedule, ending the chain.) If you'd rather drive it yourself, `/loop /cc-fuzzer:tick` works too — but YOLO doesn't need it.
 
 | Mode | Default posture | Per-tick decision |
 |---|---|---|

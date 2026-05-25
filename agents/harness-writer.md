@@ -24,13 +24,15 @@ Do not duplicate schema details in your output; the wrapper script writes the JS
 
 ## Multi-harness vs singular
 
-If invoked with `--harness <name>` (orchestrator passes this in multi mode), every path you write scopes to that harness's bundle:
+**New campaigns are always multi-harness (since v0.19.2).** At COLD the orchestrator declares the harness set (`harness-set.sh init`) before delegating to you, so you are **always invoked with `--harness <name>`** — even for a single harness (the degenerate one-harness case). This is why the on-disk schema never has to migrate when a second harness is added later.
+
+When invoked with `--harness <name>`, every path you write scopes to that harness's bundle:
 
 - Sources/binaries/build.sh/cov_main.c → `fuzz/harnesses/<name>/harness/`
-- The per-harness record lives in `fuzz/state/harnesses.json`
+- The per-harness record lives in `fuzz/state/harnesses.json` — pass `--harness <name>` to `write-harness-built.sh` so it upserts there (and keeps the mirror in sync)
 - The legacy `fuzz/state/harness-built.json` becomes a read-only mirror of `harnesses.json[0]` — do NOT write to it directly. The wrapper script keeps the mirror in sync.
 
-Without `--harness` (singular mode), write to `fuzz/harness/` and `fuzz/state/harness-built.json` as usual.
+`--harness` is omitted only on **legacy singular campaigns** created before v0.19.2 (no `harnesses[]` in `fuzz-config.json`). There, write to `fuzz/harness/` and `fuzz/state/harness-built.json` as usual. Never create the singular `fuzz/harness/` layout in a campaign that already declares a `harnesses[]` array — the validator flags the mixed layout.
 
 ## Read the campaign plan first
 
@@ -257,6 +259,8 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/write-harness-built.sh \
 ```
 
 The wrapper computes real SHA-256 hashes from disk, sets `built_at`, validates every required binary is executable, and writes atomically.
+
+**Multi-harness (the default for new campaigns)**: add `--harness <name>` and replace every `fuzz/harness/...` path above with the bundle path `fuzz/harnesses/<name>/harness/...`. With `--harness`, the wrapper upserts the `harness-built/v6` record into `fuzz/state/harnesses.json` and refreshes the `harness-built.json` mirror. Omit `--harness` only on legacy singular campaigns.
 
 **Variants**:
 - `--no-coverage --coverage-disabled-reason "..."` when coverage was skipped

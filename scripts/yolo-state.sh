@@ -5,10 +5,12 @@
 # fuzz/state/fuzz-config.json. Used by the /cc-fuzzer:yolo slash command and
 # by the orchestrator's end-of-tick check.
 #
-# YOLO is opt-in: when enabled, the orchestrator calls ScheduleWakeup at the
-# end of each WARM tick to advance the campaign automatically. Hard halts
-# protect against runaway: tick cap, cost cap, no-progress detector, and a
-# crash-storm guard.
+# YOLO is opt-in and self-driving. `/cc-fuzzer:yolo on` runs a tick and chains:
+# each WARM tick emits a YOLO_NEXT: directive that the main-thread
+# /cc-fuzzer:tick skill turns into a ScheduleWakeup for the next tick (the
+# orchestrator is a subagent and cannot reschedule the main conversation, so
+# the skill owns the call). Hard halts protect against runaway: tick cap, cost
+# cap, no-progress detector, crash-storm guard.
 #
 # Subcommands:
 #   yolo-state.sh enable    [--mode guided|hybrid|self_loop] [--aggressiveness conservative|balanced|aggressive]
@@ -48,7 +50,7 @@
 #   yolo-state.sh check-halt
 #       Inspect current.json:yolo_state and decide whether a halt is due.
 #       Exit 0 = continue (no halt). Exit 1 = halt due. Prints the reason
-#       to stdout regardless. Used by the orchestrator before ScheduleWakeup.
+#       to stdout regardless. Used by the orchestrator before emitting YOLO_NEXT.
 #
 # Defaults (when fields are absent):
 #   mode:                        hybrid
