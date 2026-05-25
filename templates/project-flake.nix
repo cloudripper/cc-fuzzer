@@ -27,6 +27,16 @@
         # needs `--` before any --flag:
         #   nix run .#claude                                  (plain)
         #   nix run .#claude -- --dangerously-skip-permissions
+        #
+        # Campaign-local Claude settings (optional, opt-in by presence):
+        #   * Drop a settings.json at ./.claude-work/settings.json and it's
+        #     layered on automatically (`claude --settings`). Your system
+        #     ~/.claude is untouched — plugins, MCP servers, and login all
+        #     carry over; this file only overlays campaign-specific settings.
+        #   * To auth with an API key instead of your login, export it first:
+        #       export ANTHROPIC_API_KEY=sk-…
+        #       nix run .#claude
+        #     (it's inherited into the sandbox.)
         claude = {
           type = "app";
           program = "${ccfuzzer.lib.${system}.mkClaudeApp deps}";

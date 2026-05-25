@@ -36,6 +36,8 @@ nix run .#claude -- --dangerously-skip-permissions "/cc-fuzzer:yolo on --mode se
 
 `nix run .#claude` launches Claude in the campaign shell: plain `nix run .#claude`, or `nix run .#claude -- <claude args>` (nix needs the `--` before any `--flag`). `nix develop` (or `nix run .#default`) opens the shell without Claude.
 
+**Campaign-local Claude settings (optional).** Drop a `settings.json` at `./.claude-work/settings.json` and `nix run .#claude` layers it on automatically (`claude --settings`). Your system `~/.claude` is left untouched — the cc-fuzzer plugin, MCP servers, and your login all carry over; the file only *overlays* campaign-specific settings. To authenticate the campaign instance with an API key instead of your login, export it first: `export ANTHROPIC_API_KEY=sk-… ; nix run .#claude` (it's inherited into the sandbox). There's deliberately no separate config dir — that would orphan the plugin itself.
+
 **Resuming a campaign — skip `#init`.** `#init` is a one-time bootstrap; re-running it re-resolves the plugin flake every time. To come back to an existing campaign, re-enter the shell directly — it uses the committed `flake.lock` + cached FHS env and is fast:
 
 ```bash

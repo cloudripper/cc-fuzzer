@@ -213,12 +213,32 @@
         # A `claude` runner for the project flake: forwards its args straight to
         # `claude` inside the composed FHS sandbox, so `nix run .#claude` (plain)
         # and `nix run .#claude -- <args>` both work (nix needs `--` before any
-        # `--flag`). cc-fuzzer-env's runScript is bash, so `-c 'claude "$@"' _ "$@"`
-        # runs `claude <args>` inside the sandbox.
+        # `--flag`). cc-fuzzer-env's runScript is bash, so `-c '<inner>' _ "$@"`
+        # runs the inner script inside the sandbox with the forwarded args.
+        #
+        # Campaign-local settings overlay (barebones, opt-in by presence):
+        #   * If ./.claude-work/settings.json exists in the launch dir, it's
+        #     layered on via `claude --settings <path>`. The system ~/.claude is
+        #     left untouched — so the cc-fuzzer plugin, MCP servers, and your
+        #     login all carry over; the file only *overlays* campaign settings.
+        #   * ANTHROPIC_API_KEY is inherited into the sandbox (buildFHSEnv does
+        #     not clear the env), so `export ANTHROPIC_API_KEY=… ; nix run .#claude`
+        #     authenticates the campaign instance with that key.
+        # Deliberately NO CLAUDE_CONFIG_DIR: a separate config dir is a clean
+        # room — it drops MCP servers and orphans the cc-fuzzer plugin itself
+        # (plugins live under ~/.claude/plugins) and forces a re-login.
         mkClaudeApp = extra:
-          let fhs = ps.mkEnv { inherit extra; projectShell = true; };
+          let
+            fhs = ps.mkEnv { inherit extra; projectShell = true; };
+            inner = ''
+              S="$PWD/.claude-work/settings.json"
+              if [ -f "$S" ]; then
+                exec claude --settings "$S" "$@"
+              fi
+              exec claude "$@"
+            '';
           in ps.pkgs.writeShellScript "ccfuzz-claude" ''
-            exec ${fhs}/bin/cc-fuzzer-env -c 'claude "$@"' ccfuzz-claude "$@"
+            exec ${fhs}/bin/cc-fuzzer-env -c ${ps.pkgs.lib.escapeShellArg inner} ccfuzz-claude "$@"
           '';
       });
 
