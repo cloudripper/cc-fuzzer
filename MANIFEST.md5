@@ -2,7 +2,7 @@
 # Generated at release time. Used by integrity-check.sh to detect drift.
 # Format: <md5>  <relative-path>
 #
-c4e547b0c0caa8a6109b3d80672b3e6e  .claude-plugin/plugin.json
+e6424abb285aa3cd5cf10429c50cdf16  .claude-plugin/plugin.json
 6439608285fc4bff51254911049f605e  STATE_SCHEMA.md
 777ff0f8894b1c01838d9db529cfe854  agents/campaign-planner.md
 1c10e5f08e8401b18c66d468834d492c  agents/code-reviewer-deep.md
@@ -69,7 +69,7 @@ b6c93200cb33c51d12fc4cb2450a655b  scripts/find-delta-targets.sh
 42f3d84cf8333b4cc5f8736c2c937852  scripts/is-crash.sh
 34dbbae5570a87e1a5d970ec53db7b86  scripts/kill-harness-processes.sh
 f8fdbf095b9aea6f43293ddb96ce62d7  scripts/launch-fuzzer-slot.sh
-7999f5dc0e2f274565ce65636d498b6e  scripts/migrate-state.sh
+748c90e13fd52e175d903085a8a1d365  scripts/migrate-state.sh
 ab000c2fb90a5b77b5fdd497495db52c  scripts/preflight.sh
 6ef098021f077d675076bb4e807df8cd  scripts/reset-campaign.sh
 eb401e3376a53b2577f7210e9a040b9c  scripts/reverify-after-rebuild.sh
@@ -83,7 +83,7 @@ dffa84b25ecf0668bfc5fe97fb402824  scripts/status.sh
 04173d0c6b1c6039d0fa11b3e2f05eb0  scripts/update-current.sh
 6be6f3f6a21497bf3586fd5140f60fd4  scripts/validate-state.sh
 3aa481b6351bc17d581bfb2d6c45df65  scripts/write-harness-built.sh
-0206c6d3bb2383ee70a0682b22be3bda  scripts/yolo-state.sh
+be92be6440faeb656bb50c4dd4760ba2  scripts/yolo-state.sh
 cba39e66ef3649dd08e2ecf1e7948c97  skills/campaign/SKILL.md
 6718a7c80fbe4ae0abce9e5850582fe7  skills/concolic/SKILL.md
 ae8df8c4167849e40e6334ccdd59cf73  skills/coverage/SKILL.md
@@ -104,5 +104,5 @@ b01264a1bfc405bc70751a53dcfb6360  skills/stop/SKILL.md
 898f82f250d5399b6bf923fcff45a233  skills/tick/SKILL.md
 a60644abfae7712dc21c437c1f6d1635  skills/triage/SKILL.md
 063d157eeaaa1a8a49ba342ab7d02311  skills/validate/SKILL.md
-4107f18bd9acf0dbafcb128761badd3e  skills/yolo/SKILL.md
+23dd00732019063fccdc2d376ba5ac11  skills/yolo/SKILL.md
 242ae89e95acebaf99e020e8c1f7ced2  templates/guidance.md

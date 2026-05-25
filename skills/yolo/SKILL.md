@@ -54,7 +54,9 @@ Sets `yolo.enabled: false` in `fuzz/state/fuzz-config.json`. A pending wakeup ca
 
 ## Invocation
 
-Translate the parsed action into a `${CLAUDE_PLUGIN_ROOT}/scripts/yolo-state.sh` call (convert human-readable intervals to seconds first), then run `${CLAUDE_PLUGIN_ROOT}/scripts/update-current.sh` so `current.json:yolo_state` reflects the change before the next tick reads it.
+Translate the parsed action into a `${CLAUDE_PLUGIN_ROOT}/scripts/yolo-state.sh` call (convert human-readable intervals to seconds first). **Then, only if a campaign exists** (`check-campaign-state.sh` is not `none`, i.e. `current.json` is present), run `${CLAUDE_PLUGIN_ROOT}/scripts/update-current.sh` so `current.json:yolo_state` reflects the change before the next tick reads it.
+
+`yolo on` works **before** a campaign exists: `yolo-state.sh enable` creates a minimal `fuzz-config.json` to hold the yolo block if there isn't one yet (it no longer errors with "Initialize the campaign first"). On that fresh-project path there is no `current.json`, so **skip `update-current.sh`** — the COLD start builds `current.json`, and `harness-set.sh init` preserves the yolo block while upgrading the config to multi-harness. The campaign then auto-starts the self-loop because `yolo.enabled` is set.
 
 ## Starting the self-loop (action `on`)
 

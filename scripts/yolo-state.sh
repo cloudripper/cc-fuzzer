@@ -95,6 +95,24 @@ _have_config() {
   }
 }
 
+# enable runs this instead of _have_config: YOLO is a posture you can set BEFORE
+# a campaign exists ("yolo on" then "campaign"). If there's no fuzz-config.json
+# yet, create a minimal singular one to hold the yolo block — the COLD start
+# (harness-set.sh init) preserves the yolo block while upgrading the config to
+# multi, and the campaign auto-starts the self-loop because yolo.enabled is set.
+_ensure_config() {
+  [ -f "$CFG_FILE" ] && return 0
+  mkdir -p "$(dirname "$CFG_FILE")"
+  cat > "$CFG_FILE" <<'EOF'
+{
+  "schema": "fuzz-config/v2",
+  "fuzz_forks": 2
+}
+EOF
+  echo "note: no campaign yet — created $CFG_FILE to hold the YOLO config." >&2
+  echo "      The next /cc-fuzzer:campaign (COLD) reads yolo.enabled and starts the self-loop automatically." >&2
+}
+
 # Atomic JSON edit: merge KEY=VALUE pairs into fuzz-config.yolo, writing
 # only if the result differs.
 _yolo_merge() {
@@ -132,7 +150,7 @@ except: print(0)
 # enable
 # ---------------------------------------------------------------------------
 _cmd_enable() {
-  _have_config
+  _ensure_config
   local mode="" aggressiveness="" interval="" max_ticks="" max_cost="" stop_no_prog="" crash_storm=""
   local redundancy="" soft_cost="" max_backoff="" cost_cap=""
   while [ $# -gt 0 ]; do

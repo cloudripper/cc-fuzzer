@@ -35,6 +35,33 @@ else
   CURRENT="v0"
 fi
 
+# A state dir with no schema-version but NO real campaign artifacts is a FRESH
+# project, not a v0 campaign to migrate. This happens whenever fuzz/ exists
+# before COLD setup — e.g. `nix run #init` scaffolds fuzz/nix-deps.nix, or the
+# SessionStart hook drops preflight.json/nix-env.json into fuzz/state/. Running
+# the v0->v1 chain on it would mkdir the SINGULAR fuzz/harness, fuzz/corpus,
+# fuzz/coverage dirs, which then collide with the multi-harness layout a v9 COLD
+# start declares (validator mutual-exclusion). Treat it as native v9 instead.
+if [ "$CURRENT" = "v0" ]; then
+  _fresh=true
+  for _f in harness-built.json harnesses.json findings.jsonl current.json fuzzers.json; do
+    [ -f "$STATE_DIR/$_f" ] && _fresh=false && break
+  done
+  ls "$STATE_DIR"/fuzzer-*.pid >/dev/null 2>&1 && _fresh=false
+  if [ "$_fresh" = true ]; then
+    echo "fresh project (no schema-version, no campaign artifacts) - initializing at $EXPECTED_SCHEMA_VERSION; no migration needed"
+    # Campaign-level dirs only. crashes/ is GLOBAL in both modes; snapshots is
+    # campaign-level. Do NOT create singular fuzz/harness, fuzz/corpus,
+    # fuzz/coverage here — a multi-harness COLD start owns those under
+    # fuzz/harnesses/<name>/.
+    mkdir -p "$STATE_DIR/snapshots" \
+             "$FUZZ_ROOT/crashes/new" "$FUZZ_ROOT/crashes/known" \
+             "$FUZZ_ROOT/crashes/flaky" "$FUZZ_ROOT/crashes/stale"
+    echo "$EXPECTED_SCHEMA_VERSION" > "$STATE_DIR/schema-version"
+    exit 0
+  fi
+fi
+
 if [ "$CURRENT" = "$EXPECTED_SCHEMA_VERSION" ]; then
   echo "state already at $EXPECTED_SCHEMA_VERSION - nothing to do"
   exit 0
