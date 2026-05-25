@@ -2,7 +2,7 @@
 # Generated at release time. Used by integrity-check.sh to detect drift.
 # Format: <md5>  <relative-path>
 #
-19aa027c2822b92aad4d16c1252aa677  .claude-plugin/plugin.json
+c4e547b0c0caa8a6109b3d80672b3e6e  .claude-plugin/plugin.json
 6439608285fc4bff51254911049f605e  STATE_SCHEMA.md
 777ff0f8894b1c01838d9db529cfe854  agents/campaign-planner.md
 1c10e5f08e8401b18c66d468834d492c  agents/code-reviewer-deep.md
@@ -14,8 +14,8 @@ df829822bc04010d1253443d9422ba9e  agents/fuzz-orchestrator.md
 5f28f25720c6399c8dfb4119db4fcf24  agents/harness-writer.md
 54c1fe1fa0d493691c343ffbe8105403  agents/mutator.md
 abf7a236d12d4e42a66cd6d181be1d76  agents/planner-consult.md
-137e81f8eb3563eb1bb7d2a5d81f3dd1  agents/poc-builder.md
-5e5fe2b11752be0329fc37ee3c6a08ec  agents/reporting-agent.md
+3cfeb964b2861bcc470881df7471bd30  agents/poc-builder.md
+9acbb1bd0f03caed14894ae63b665c7e  agents/reporting-agent.md
 63b092f672f8d75983b58b2aef79044a  agents/seed-generator.md
 6b4787d332f9fc179dfa1823ec79050d  dictionaries/INDEX.md
 070c1e76492ecaf0bf37c051628df96c  dictionaries/bidi-controls.dict

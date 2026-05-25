@@ -135,7 +135,9 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/is-crash.sh < harness_run.log
 
 The helper handles all sanitizer formats (ASan, UBSan, MSan, LSan), exit codes (134/139/137), and `runtime error:` lines. Do not re-implement this logic in the prompt.
 
-Composite classification per finding:
+**PoC realism dispute overrides everything.** Before the table below, check `finding.verification.exploit_tier_reason`. If it is `"realism_dispute"`, the poc-builder — the pipeline's truth gate — determined the bug does not hold against the real target in realistic context (a likely triager false positive). Classify it **`false_positive`** regardless of 3a/3b, and in the False-Positive Analysis section quote the poc-builder's `## Realism` verdict from `EXPLOIT.md` as the reason. A harness crash (3a) does NOT rescue a realism-disputed finding — that crash is exactly the artifact the dispute is about.
+
+Composite classification per finding (when not realism-disputed):
 
 | Classification | 3a (harness) | 3b (bundle) | Notes |
 |---|---|---|---|
@@ -143,6 +145,7 @@ Composite classification per finding:
 | `confirmed_harness_only` | crash | no crash / no bundle | Renders with prominent "weakly verified" warning. |
 | `category_mismatch` | crash | crash but different `category` | Confirmed-with-note. |
 | `false_positive` | no crash | no crash | Excluded from Findings; goes into False-Positive Analysis. |
+| `false_positive` (disputed) | any | n/a | `exploit_tier_reason == "realism_dispute"` — see above. |
 
 If `finding.poc_path` is null (legacy `finding/v1` from a pre-bundle campaign), treat 3a as the sole verification and mark the H3 with "Internal verification only — no maintainer-facing bundle. Re-triage to generate one: `/cc-fuzzer:triage`."
 
@@ -218,6 +221,7 @@ This is the editorial standard for every per-finding subsection that contains pr
 - **Concrete, falsifiable claims.** "Attacker controls 4 bytes at offset 0x12 in the corrupted heap chunk" beats "potential for arbitrary control."
 - **Realistic ceilings.** "DoS via crash; no observed primitive for RCE" is more useful than "may enable RCE."
 - **2-4 sentences per prose subsection** unless the subsection's nature demands more (e.g., Reproduction).
+- **Reproduction prefers CLI, then Python, then C.** When the bundle's exploit is shell/CLI-based (`exploit.sh` / `run.sh` driving real binaries), inline the actual copy-pasteable commands in the `Exploit & reproduction` subsection — a maintainer trusts and re-runs a CLI repro far more readily than a referenced C program. If the exploit is Python, show the `python exploit.py …` invocation; if C, show the build+run lines. Always lead with the simplest reproduction the bundle supports, and present it as concrete commands, not just a pointer to the bundle directory.
 
 ## Report structure
 
@@ -327,6 +331,7 @@ The exploit bundle is `<finding.poc_path>/`.
 **Reproducibility**: <1 — in-the-wild | 2 — downstream consumer | 3 — public-API program>
 **Chain**: <"none — single-finding exploit" | "chains findings <comma-separated chained_findings>">
 **Verification**: `verify.sh` exited 0 on a fresh end-to-end run (see `output.log`).
+**Realism**: <one line from EXPLOIT.md's `## Realism` — the real target/binary exercised and the protections left intact, so the impact reflects a real deployment rather than a harness artifact or a rigged setup>.
 
 Bundle contents:
 - `README.md` — exploit summary and verification steps
