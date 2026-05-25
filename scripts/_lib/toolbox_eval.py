@@ -359,16 +359,29 @@ def compute(state_dir, snaps_dir, cfg, doc, events, findings,
 
 
 def _references(fuzz_dir, enabled_at_ts, now):
-    """Surface operator steering so the model re-reads it and reasons beyond the
-    catalog. We report presence + recency, NOT contents — the orchestrator reads
-    the files itself when prompted."""
-    out = {"guidance_md": None, "docs": [], "changed_recently": False}
+    """Surface operator steering AND already-built intel so the model re-reads it
+    and reasons beyond the catalog. We report presence + recency, NOT contents —
+    the orchestrator reads the files itself when prompted. `cve_patterns_md` is
+    the CVE-review output (fuzz/state/cve-patterns.md): surfaced here so the model
+    reads the patterns it already paid for instead of re-running `cve_refresh`."""
+    out = {"guidance_md": None, "cve_patterns_md": None, "docs": [],
+           "changed_recently": False}
     g = os.path.join(fuzz_dir, "guidance.md")
     if os.path.exists(g):
         mt = _mtime(g)
         changed = mt >= enabled_at_ts
         out["guidance_md"] = {"path": "fuzz/guidance.md", "mtime": mt,
                               "changed_since_enable": changed}
+        out["changed_recently"] = out["changed_recently"] or changed
+    cve_md = os.path.join(fuzz_dir, "state", "cve-patterns.md")
+    if os.path.exists(cve_md):
+        mt = _mtime(cve_md)
+        changed = mt >= enabled_at_ts
+        out["cve_patterns_md"] = {
+            "path": "fuzz/state/cve-patterns.md", "mtime": mt,
+            "changed_since_enable": changed,
+            "note": "CVE-review output already built — read this instead of "
+                    "re-dispatching cve_refresh."}
         out["changed_recently"] = out["changed_recently"] or changed
     docs_dir = os.path.join(fuzz_dir, "docs")
     project_root = os.path.dirname(fuzz_dir)

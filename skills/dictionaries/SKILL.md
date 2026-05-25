@@ -14,6 +14,6 @@ Common usage:
 - `/cc-fuzzer:dictionaries show utf-edge-cases` — inspect contents
 - `/cc-fuzzer:dictionaries remove utf-edge-cases` — remove from active set
 
-After adding/removing, the fuzzer must be restarted (`/cc-fuzzer:stop` then `/cc-fuzzer:resume`) for the change to take effect.
+After adding/removing, the fuzzer must be restarted (`/cc-fuzzer:stop` then `/cc-fuzzer:resume-campaign`) for the change to take effect.
 
 Bundled dictionaries are described in `${CLAUDE_PLUGIN_ROOT}/dictionaries/INDEX.md`. Read that for guidance on which apply to your target.

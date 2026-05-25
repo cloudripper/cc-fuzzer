@@ -2,7 +2,7 @@
 # Generated at release time. Used by integrity-check.sh to detect drift.
 # Format: <md5>  <relative-path>
 #
-312c1f0c3c5ae63b912050ebd7fab119  .claude-plugin/plugin.json
+b173531eed9dc180bab1e407e763755c  .claude-plugin/plugin.json
 6d9070fb9f29821f7268b12fd7837b5c  STATE_SCHEMA.md
 f4135a2586a20fec38aac140022635ff  agents/campaign-planner.md
 1c10e5f08e8401b18c66d468834d492c  agents/code-reviewer-deep.md
@@ -10,7 +10,7 @@ bfef867f5ae8807860c6bc3873a967d7  agents/code-reviewer.md
 3a86b57bf2cc87f5748cd2ccff8fe26e  agents/concolic-executor.md
 06e4b37d0e315d97035c72cd17b363d0  agents/coverage-analyst.md
 424d70e2d8dde69eff32f1a9860994db  agents/crash-triager.md
-8c1e34a4229503ba17bfbf2cf7477a83  agents/fuzz-orchestrator.md
+ba677742d22828346020db9783e2b584  agents/fuzz-orchestrator.md
 cc92eb913026de18c7be2ef03042bce2  agents/harness-writer.md
 54c1fe1fa0d493691c343ffbe8105403  agents/mutator.md
 abf7a236d12d4e42a66cd6d181be1d76  agents/planner-consult.md
@@ -39,7 +39,7 @@ e63b3e642883875221a6c3bf1734f088  scripts/_lib/launch_slot.py
 c0c1563b29f85b5cdddf11020383786c  scripts/_lib/path-anchor.sh
 14658ee22469e166d1746a4e0ed07bc7  scripts/_lib/snapshot_helpers.py
 e5a53e7dd43a256b2836a39935ae058f  scripts/_lib/state_checks.py
-1e27fba201a8b0c194691f5747c6bb11  scripts/_lib/toolbox_eval.py
+4ecc06cd9e2d3f1dc858256180256662  scripts/_lib/toolbox_eval.py
 b6410cf1db0046a956ea73473f27f4c7  scripts/_lib/write_harness_built.py
 3faab6ba84c1241dda9466a77222ccc4  scripts/_lib/yolo_evaluate.py
 0854d8085d4bf17da1d74c3d5eea97da  scripts/blame-finding.sh
@@ -55,7 +55,7 @@ ce16a758653e543f03e36c51a07564ff  scripts/cross-ref-findings.sh
 5163c5eac87cd41b9470fd7d6b47b99c  scripts/cve-context-build.sh
 6cc42ad94c0d4c4fa38189aace915f9e  scripts/cve-lookup.py
 1777e2f2c84a60f7657fff85ff494e56  scripts/detect-crashes.sh
-e476621cf87969c1f80c999aa03477b1  scripts/dictionaries.sh
+a98c113ed1699420b35641515fe9f0a7  scripts/dictionaries.sh
 d37987431d781210c4c5442b8d132974  scripts/doctor.sh
 c0fd4660cc4073a2591f43d00ea102d8  scripts/enforce-readonly.sh
 8954d7dcac103fe3d6f0ed703ca67355  scripts/env-check.sh
@@ -87,14 +87,14 @@ dffa84b25ecf0668bfc5fe97fb402824  scripts/status.sh
 6718a7c80fbe4ae0abce9e5850582fe7  skills/concolic/SKILL.md
 ae8df8c4167849e40e6334ccdd59cf73  skills/coverage/SKILL.md
 96d22d5824c9df2a24c977329ea3d8e9  skills/delta/SKILL.md
-63b8c8275cf0e625f95625d32f8f1a8a  skills/dictionaries/SKILL.md
+c1ed7ac8d06104cef051c84a417a600a  skills/dictionaries/SKILL.md
 43010c0a7751730980f52acabb642cd0  skills/doctor/SKILL.md
 bc73e395bf12e963d0cf9bf59860a019  skills/harness/SKILL.md
 9d19d267b8ed8cbd124e098ae5e4d16f  skills/plan/SKILL.md
 ad7d0d80a8763638c040b045bf4f38ae  skills/poc/SKILL.md
 438c02c0795a64a2531b7c9dc3245499  skills/report/SKILL.md
 798d91c8a644bc860f83f79d498fe7de  skills/reset/SKILL.md
-19ed4223b74ef94dc8aa837f6fc4cf76  skills/resume/SKILL.md
+0e211d81a8df86cad4a2858989611258  skills/resume-campaign/SKILL.md
 de9661bc69bf412723e30790c11867a8  skills/review/SKILL.md
 d9744519758ef24767e9bd16537ff328  skills/run/SKILL.md
 2a1a4c50bcbb71e29a68a17320db1488  skills/seed/SKILL.md
@@ -103,5 +103,5 @@ d9744519758ef24767e9bd16537ff328  skills/run/SKILL.md
 b781ccd764f04eb249efa30968963a4f  skills/tick/SKILL.md
 a60644abfae7712dc21c437c1f6d1635  skills/triage/SKILL.md
 063d157eeaaa1a8a49ba342ab7d02311  skills/validate/SKILL.md
-62db91cd751c4b69f3002f93e9e67939  skills/yolo/SKILL.md
+153f4357375eb9e21ab612c181472e88  skills/yolo/SKILL.md
 242ae89e95acebaf99e020e8c1f7ced2  templates/guidance.md

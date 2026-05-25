@@ -1,5 +1,5 @@
 ---
-name: resume
+name: resume-campaign
 description: "Resume a stopped fuzzing campaign without re-analyzing the target. Relaunches the fuzzer with the existing harness and corpus, then runs one tick. — usage: [forks=N]"
 argument-hint: "[forks=N]"
 disable-model-invocation: true

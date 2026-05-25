@@ -26,7 +26,7 @@ claude
 /cc-fuzzer:stop
 ```
 
-`/cc-fuzzer:campaign` runs COLD setup once (analyze → harness → 3 binaries → seed corpus → launch fuzzer). `/loop 10m /cc-fuzzer:tick` fires WARM ticks every 10 minutes. `/cc-fuzzer:report` re-runs every recorded reproducer against the current harness binary and writes `fuzz/state/FINDINGS-REPORT.md`. To pick a stopped campaign back up without re-analyzing, `/cc-fuzzer:resume`.
+`/cc-fuzzer:campaign` runs COLD setup once (analyze → harness → 3 binaries → seed corpus → launch fuzzer). `/loop 10m /cc-fuzzer:tick` fires WARM ticks every 10 minutes. `/cc-fuzzer:report` re-runs every recorded reproducer against the current harness binary and writes `fuzz/state/FINDINGS-REPORT.md`. To pick a stopped campaign back up without re-analyzing, `/cc-fuzzer:resume-campaign`.
 
 Prefer not to babysit the loop? `/cc-fuzzer:yolo on` opts into auto-ticking (off by default) — see [YOLO](#yolo-self-looping).
 
@@ -105,7 +105,7 @@ Claude may auto-invoke the read-only utilities (`status`, `doctor`, `validate`, 
 
 That flag gates **slash commands** only — it stops the *ambient* assistant from firing an expensive command (`/cc-fuzzer:triage`, `/cc-fuzzer:poc`, …) you didn't ask for. It does **not** gate **subagents**: once a campaign is running, the orchestrator dispatches the underlying agents — including Opus ones like `crash-triager` and `planner-consult` — directly via the Task tool. Each gated skill is just a thin wrapper that dispatches the same agent for one-off manual use. Starting the loop (`/cc-fuzzer:campaign`, `/cc-fuzzer:tick`, or `/cc-fuzzer:yolo on`) is your authorization for that autonomous dispatch; under YOLO the cost/redundancy ledger — not the skill gate — bounds how much Opus it spends.
 
-- **Campaign loop** — `campaign` (headline; auto-detects COLD/RESUME/WARM), `tick`, `resume`, `run`, `stop`, `yolo`, `reset`
+- **Campaign loop** — `campaign` (headline; auto-detects COLD/RESUME/WARM), `tick`, `resume-campaign`, `run`, `stop`, `yolo`, `reset`
 - **Analysis & corpus** — `plan`, `harness`, `seed`, `coverage`, `concolic`, `review`, `delta`, `dictionaries`
 - **Findings** — `triage`, `poc`, `report`
 - **Read-only** — `status`, `doctor`, `validate`
