@@ -15,7 +15,7 @@ Install the plugin once, inside Claude Code:
 
 ### With nix (recommended): clone → bootstrap → set-and-forget
 
-```
+```bash
 # 1. Clone the target you want to fuzz
 git clone https://github.com/<owner>/<target> && cd <target>
 
@@ -38,7 +38,7 @@ nix run .#claude -- --dangerously-skip-permissions "/cc-fuzzer:yolo on --mode se
 
 **Resuming a campaign — skip `#init`.** `#init` is a one-time bootstrap; re-running it re-resolves the plugin flake every time. To come back to an existing campaign, re-enter the shell directly — it uses the committed `flake.lock` + cached FHS env and is fast:
 
-```
+```bash
 cd ~/projects/<target>
 nix run .#claude -- --dangerously-skip-permissions   # launch Claude in the campaign shell
 # plain:  nix run .#claude            interactive shell:  nix develop  (then run `claude`)
@@ -50,7 +50,7 @@ Only re-run `#init` to change build deps (`--force` re-scans) or bump the plugin
 
 You provide the toolchain — clang + compiler-rt, AFL++, `llvm-cov`/`llvm-profdata`, gdb (SymCC optional). The SessionStart hook reports what's missing. Then:
 
-```
+```bash
 git clone https://github.com/<owner>/<target> && cd <target>
 claude --dangerously-skip-permissions            # unattended; or plain `claude`
 /cc-fuzzer:yolo on --mode self_loop --no-cap      # autonomous: picks a target, fuzzes, self-drives
@@ -62,7 +62,7 @@ There's no composed dep shell off-nix, so if a harness build needs a system libr
 
 Prefer to approve each step over full autonomy? Skip YOLO and run the loop by hand:
 
-```
+```bash
 /cc-fuzzer:campaign src/parser.c parse_message   # COLD: plan → harness (3 binaries) → seed → launch
 /cc-fuzzer:tick                                   # one LLM decision; repeat, or wrap in: /loop 10m /cc-fuzzer:tick
 /cc-fuzzer:status      # progress — pure shell, no LLM call
