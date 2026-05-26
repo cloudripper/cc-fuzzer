@@ -36,7 +36,7 @@ HARNESSES_DIR="$FUZZ_ROOT/harnesses"        # multi only
 CRASHES_DIR="$FUZZ_ROOT/crashes"
 CORPUS_DIR="$FUZZ_ROOT/corpus"              # singular only
 
-EXPECTED_SCHEMA_VERSION="v9"
+EXPECTED_SCHEMA_VERSION="v10"
 
 ERRORS=()
 WARNINGS=()
@@ -45,7 +45,7 @@ err()  { ERRORS+=("$1"); }
 warn() { WARNINGS+=("$1"); }
 
 #------------------------------------------------------------------------------
-# Multi-harness mode detection (schema v9)
+# Multi-harness mode detection (schema v10)
 #
 # Multi mode is active iff fuzz-config.json contains a non-empty harnesses[]
 # array of objects with a `name` field. All schema versions and filesystem
@@ -144,9 +144,9 @@ if [ -d "$STATE_DIR" ]; then
   done
 fi
 
-# FINDINGS-REPORT.md is REWRITABLE; warn if absent (not an error)
-if [ -d "$STATE_DIR" ] && [ ! -f "$STATE_DIR/FINDINGS-REPORT.md" ]; then
-  warn "missing $STATE_DIR/FINDINGS-REPORT.md (run /cc-fuzzer:report or migrate-state.sh to create)"
+# FINDINGS-REPORT-<target>.md is REWRITABLE; warn if none exists (not an error)
+if [ -d "$STATE_DIR" ] && ! ls "$STATE_DIR"/FINDINGS-REPORT-*.md >/dev/null 2>&1; then
+  warn "no FINDINGS-REPORT-*.md in $STATE_DIR (run /cc-fuzzer:report to generate)"
 fi
 
 # Crash directory naming - must be f\d{3,} per spec
@@ -208,22 +208,24 @@ validate_json() {
   esac
 }
 
-# Field sets shared by singular v5 and multi v6 (v6 adds `name`)
+# Field sets shared by singular v5 and multi v6/v7 (v6 adds `name`, v7 adds nix backend fields)
 HARNESS_BUILT_REQUIRED_V5="harness_source,harness_binary,build_script,entry_function,target_source,target_source_hash,build_command_hash,built_at,coverage_tracking,cmplog_enabled,fuzzing_mode"
 HARNESS_BUILT_ALLOWED_V5="harness_source,harness_binary,coverage_binary,verify_binary,coverage_tracking,coverage_disabled_reason,cmplog_binary,cmplog_enabled,cmplog_disabled_reason,symcc_binary,mutator_source,build_script,dict_files,entry_function,input_encoding,sanitizers,fuzzing_mode,target_source,target_source_hash,build_command_hash,harness_attempts,built_at,build_command"
 HARNESS_BUILT_REQUIRED_V6="name,${HARNESS_BUILT_REQUIRED_V5}"
 HARNESS_BUILT_ALLOWED_V6="name,${HARNESS_BUILT_ALLOWED_V5}"
+HARNESS_BUILT_REQUIRED_V7="name,build_backend,${HARNESS_BUILT_REQUIRED_V5}"
+HARNESS_BUILT_ALLOWED_V7="build_backend,build_backend_decided_at,build_backend_decided_by,nix,${HARNESS_BUILT_ALLOWED_V6}"
 
 # 3a. harness-built.json
 # Singular mode: this is the canonical record (harness-built/v5).
-# Multi mode:    this is a read-only mirror of harnesses.json[0] (harness-built/v6).
+# Multi mode:    this is a read-only mirror of harnesses.json[0] (harness-built/v7).
 if [ -f "$STATE_DIR/harness-built.json" ]; then
   if [ "$MODE" = "singular" ]; then
     validate_json "$STATE_DIR/harness-built.json" "harness-built/v5" \
       "$HARNESS_BUILT_REQUIRED_V5" "$HARNESS_BUILT_ALLOWED_V5"
   else
-    validate_json "$STATE_DIR/harness-built.json" "harness-built/v6" \
-      "$HARNESS_BUILT_REQUIRED_V6" "$HARNESS_BUILT_ALLOWED_V6"
+    validate_json "$STATE_DIR/harness-built.json" "harness-built/v7" \
+      "$HARNESS_BUILT_REQUIRED_V7" "$HARNESS_BUILT_ALLOWED_V7"
   fi
 
   # Coverage/cmplog/fuzzing_mode cross-checks apply identically to both schemas.
@@ -285,8 +287,9 @@ if [ "$MODE" = "multi" ]; then
     HS_ERRS=$(HARNESSES_PATH="$STATE_DIR/harnesses.json" \
               MIRROR_PATH="$STATE_DIR/harness-built.json" \
               DECLARED="$(declared_env)" \
-              REQUIRED_V6="$HARNESS_BUILT_REQUIRED_V6" \
-              ALLOWED_V6="$HARNESS_BUILT_ALLOWED_V6" \
+              REQUIRED_V6="$HARNESS_BUILT_REQUIRED_V7" \
+              ALLOWED_V6="$HARNESS_BUILT_ALLOWED_V7" \
+              EXPECTED_HARNESS_SCHEMA="harness-built/v7" \
               python3 "$CHECKS" harnesses-mirror 2>&1)
     if [ -n "$HS_ERRS" ]; then
       while IFS= read -r line; do
@@ -581,6 +584,44 @@ if [ "$MODE" = "multi" ] && [ -d "$CRASHES_DIR/new" ]; then
       fi
     fi
   done
+fi
+
+#------------------------------------------------------------------------------
+# Nix environment issues (schema v10)
+# nix-environment-issues.json is written by nix-env-reconcile.sh at session
+# start. severity=error issues on nix-committed harnesses are hard errors here
+# so the orchestrator's preflight gate also catches them during validate.
+#------------------------------------------------------------------------------
+NIX_ENV_ISSUES="$STATE_DIR/nix-environment-issues.json"
+if [ -f "$NIX_ENV_ISSUES" ]; then
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    case "$line" in
+      ERR:*)  err  "${line#ERR: }" ;;
+      WARN:*) warn "${line#WARN: }" ;;
+    esac
+  done < <(NIX_ENV_ISSUES="$NIX_ENV_ISSUES" python3 - <<'PY'
+import json, os, sys
+
+path = os.environ["NIX_ENV_ISSUES"]
+try:
+    doc = json.load(open(path))
+except Exception:
+    sys.exit(0)
+issues = doc.get("issues") or []
+for iss in issues:
+    if not isinstance(iss, dict):
+        continue
+    sev = iss.get("severity", "warning")
+    code = iss.get("code", "?")
+    summary = iss.get("summary", "")
+    hint = (iss.get("remediation") or {}).get("human_message", "")
+    msg = f"nix-environment ({code}): {summary}"
+    if hint:
+        msg += f" — {hint}"
+    print(f"ERR: {msg}" if sev == "error" else f"WARN: {msg}")
+PY
+)
 fi
 
 #------------------------------------------------------------------------------

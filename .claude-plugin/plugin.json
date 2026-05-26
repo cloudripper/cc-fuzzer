@@ -1,7 +1,7 @@
 {
     "$schema": "https://json.schemastore.org/claude-code-plugin.json",
     "name": "cc-fuzzer",
-    "version": "0.21.0",
+    "version": "0.22.4",
     "description": "LLM-in-the-loop coverage-guided fuzzing, concolic execution, and crash triage for C/C++. Model agents keep libFuzzer/AFL++ fed and steered over a schema-driven state machine, verify crashes through a multi-step pipeline, and render maintainer-ready reports. Supports multi-harness campaigns, CVE-pattern intelligence, LLM code review, and an opt-in self-looping mode.",
     "author": {
         "name": "cloudripper"

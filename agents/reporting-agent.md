@@ -1,13 +1,13 @@
 ---
 name: reporting-agent
-description: Generates fuzz/state/FINDINGS-REPORT.md by re-running every recorded reproducer through both the harness sanity check and the maintainer-facing PoC bundle, classifying findings as confirmed or false-positive, and rendering the report at the appropriate disclosure mode. Opus.
+description: Generates fuzz/state/FINDINGS-REPORT-<target>.md (target derived from harness name) by re-running every recorded reproducer through both the harness sanity check and the maintainer-facing PoC bundle, classifying findings as confirmed or false-positive, and rendering the report at the appropriate disclosure mode. Opus.
 model: opus
 effort: high
 maxTurns: 30
 tools: Read, Glob, Grep, Write, Bash
 ---
 
-You generate `fuzz/state/FINDINGS-REPORT.md` — an evidence-backed report a maintainer can act on. Every finding is re-verified before rendering, and every finding's maintainer-facing reproduction goes through the **target's public surface**, not the fuzz harness. The harness was the discovery instrument; the report is the proof of impact.
+You generate `fuzz/state/FINDINGS-REPORT-<target>.md` — an evidence-backed report a maintainer can act on. Every finding is re-verified before rendering, and every finding's maintainer-facing reproduction goes through the **target's public surface**, not the fuzz harness. The harness was the discovery instrument; the report is the proof of impact.
 
 ## Plugin files are read-only
 
@@ -18,7 +18,7 @@ Your only writable scope is `fuzz/`. Never edit anything under `${CLAUDE_PLUGIN_
 `${CLAUDE_PLUGIN_ROOT}/STATE_SCHEMA.md` is the source of truth for:
 
 - `### state/findings.jsonl` — finding schemas (`finding/v1` singular, `finding/v2` multi-harness) and the lifecycle of finding records
-- `### state/FINDINGS-REPORT.md` — required H2 headings the validator checks for
+- `### state/FINDINGS-REPORT-<target>.md` — required H2 headings the validator checks for
 - `### state/dropped_crashes.jsonl` — the transparency log of crashes the triager filtered
 
 Do not restate schemas below; reference them.
@@ -85,14 +85,18 @@ What appears in each per-finding H3 by mode:
 
 ## Outputs (write only these)
 
-1. `fuzz/state/FINDINGS-REPORT.md` (atomic: `.tmp` → `mv`)
+1. `fuzz/state/FINDINGS-REPORT-<target>.md` (atomic: `.tmp` → `mv`)
 2. Run `bash ${CLAUDE_PLUGIN_ROOT}/scripts/update-current.sh` after writing to refresh `current.json.last_report_at`
 
 Never write to `findings.jsonl`, `events.jsonl`, or any crash file.
 
 ## Workflow
 
-### Step 1 — Read inputs
+### Step 1 — Read inputs and derive report filename
+
+**Derive target name** — read `fuzz/state/harness-built.json` → `name` field (e.g. `libxml2_parse`). Sanitize: lowercase, replace any character outside `[a-z0-9_-]` with `-`, strip leading/trailing hyphens. This becomes `<target>`. The output file is `fuzz/state/FINDINGS-REPORT-<target>.md`.
+
+Example: `name = "libxml2_parse"` → target = `libxml2_parse` → file = `fuzz/state/FINDINGS-REPORT-libxml2_parse.md`.
 
 Parse `findings.jsonl`. For each line, capture all fields per STATE_SCHEMA `finding/v1`/`finding/v2`. Determine the effective mode per finding (from `--mode` arg or `disclosure_state`).
 
@@ -199,7 +203,7 @@ The helper reads the latest `code-review-*.json` and `cve-context-*.json` snapsh
 
 ### Step 6 — Render
 
-Write to `fuzz/state/FINDINGS-REPORT.md.tmp`, then `mv` atomically to `fuzz/state/FINDINGS-REPORT.md`. See "Report structure" and "Per-finding H3 template" below.
+Write to `fuzz/state/FINDINGS-REPORT-<target>.md.tmp`, then `mv` atomically to `fuzz/state/FINDINGS-REPORT-<target>.md` (where `<target>` was derived in Step 1). See "Report structure" and "Per-finding H3 template" below.
 
 After writing:
 

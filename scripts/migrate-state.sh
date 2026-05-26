@@ -21,7 +21,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/_lib/path-anchor.sh"
 FUZZ_ROOT="${FUZZ_ROOT:-fuzz}"
 STATE_DIR="$FUZZ_ROOT/state"
-EXPECTED_SCHEMA_VERSION="v9"
+EXPECTED_SCHEMA_VERSION="v10"
 
 if [ ! -d "$STATE_DIR" ]; then
   echo "no state directory at $STATE_DIR - nothing to migrate"
@@ -76,7 +76,11 @@ echo ""
 # just duplicate the current state into a tarball with no recovery value. Any
 # multi-step chain (e.g. v6 -> v9) still gets a backup.
 BACKUP_FILE=""
-if [ "$CURRENT" = "v8" ] && [ "$EXPECTED_SCHEMA_VERSION" = "v9" ]; then
+if [ "$CURRENT" = "v9" ] && [ "$EXPECTED_SCHEMA_VERSION" = "v10" ] && [ ! -f "$STATE_DIR/harnesses.json" ]; then
+  echo "(skipping backup tarball - v9 -> v10 is a no-op for singular-mode campaigns)"
+elif [ "$CURRENT" = "v8" ] && [ "$EXPECTED_SCHEMA_VERSION" = "v10" ]; then
+  : # will get a backup (goes through v8->v9->v10)
+elif [ "$CURRENT" = "v8" ] && [ "$EXPECTED_SCHEMA_VERSION" = "v9" ]; then
   echo "(skipping backup tarball - v8 -> v9 transition is a no-op version bump)"
 else
   BACKUP_DIR="$STATE_DIR/migrations"
@@ -571,9 +575,21 @@ else:
 PY
   fi
 
-  # 2. Create FINDINGS-REPORT.md placeholder if absent
-  REPORT="$STATE_DIR/FINDINGS-REPORT.md"
-  if [ ! -f "$REPORT" ]; then
+  # 2. Create FINDINGS-REPORT-<target>.md placeholder if none exists
+  _TARGET=$(python3 -c "
+import json, re, sys
+try:
+    d = json.load(open('$STATE_DIR/harness-built.json'))
+    name = d.get('name', '')
+except Exception:
+    name = ''
+if not name:
+    sys.stdout.write('unknown')
+else:
+    sys.stdout.write(re.sub(r'-+', '-', re.sub(r'[^a-z0-9_-]', '-', name.lower())).strip('-'))
+" 2>/dev/null || echo "unknown")
+  REPORT="$STATE_DIR/FINDINGS-REPORT-${_TARGET}.md"
+  if ! ls "$STATE_DIR"/FINDINGS-REPORT-*.md >/dev/null 2>&1; then
     cat > "$REPORT" <<'EOF'
 # cc-fuzzer Findings Report
 
@@ -805,6 +821,76 @@ migrate_v8_to_v9() {
   echo "v8 -> v9 migration complete."
 }
 
+#------------------------------------------------------------------------------
+# v9 -> v10: nix build backend (additive).
+#
+# For multi-harness campaigns: stamps every harness entry with
+# build_backend="legacy" (if absent) and upgrades schema to harness-built/v7.
+# For singular campaigns: schema-version bump only.
+#------------------------------------------------------------------------------
+migrate_v9_to_v10() {
+  echo "Running v9 -> v10 migration..."
+
+  HS_FILE="$STATE_DIR/harnesses.json"
+  HB_FILE="$STATE_DIR/harness-built.json"
+
+  if [ -f "$HS_FILE" ]; then
+    HS_FILE="$HS_FILE" python3 - <<'PY'
+import json, os, sys, datetime
+
+hs_file = os.environ["HS_FILE"]
+ts = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+try:
+    doc = json.load(open(hs_file))
+except Exception as e:
+    print(f"  ERROR reading harnesses.json: {e}", file=sys.stderr)
+    sys.exit(1)
+changed = 0
+for h in doc.get("harnesses", []):
+    if not isinstance(h, dict):
+        continue
+    h["schema"] = "harness-built/v7"
+    if "build_backend" not in h:
+        h["build_backend"] = "legacy"
+        h["build_backend_decided_at"] = ts
+        h["build_backend_decided_by"] = "migrate-v9-to-v10"
+        changed += 1
+tmp = hs_file + ".tmp"
+with open(tmp, "w") as f:
+    json.dump(doc, f, indent=2)
+os.replace(tmp, hs_file)
+print(f"  updated {changed} harness(es) to build_backend=legacy, schema=harness-built/v7")
+PY
+  else
+    echo "  (no harnesses.json - singular-mode campaign, schema-version bump only)"
+  fi
+
+  # Upgrade harness-built.json mirror if it carries the v6 schema tag
+  if [ -f "$HB_FILE" ]; then
+    HB_FILE="$HB_FILE" python3 - <<'PY'
+import json, os
+hb = os.environ["HB_FILE"]
+try:
+    d = json.load(open(hb))
+    if d.get("schema") == "harness-built/v6":
+        d["schema"] = "harness-built/v7"
+        d.setdefault("build_backend", "legacy")
+        tmp = hb + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(d, f, indent=2)
+        os.replace(tmp, hb)
+        print("  updated harness-built.json schema to harness-built/v7")
+except Exception as e:
+    print(f"  WARNING: could not update harness-built.json: {e}")
+PY
+  fi
+
+  echo "v10" > "$STATE_DIR/schema-version"
+  echo "  wrote schema-version = v10"
+  echo ""
+  echo "v9 -> v10 migration complete."
+}
+
 case "$CURRENT" in
   v0)
     migrate_v0_to_v1; CURRENT="v1"
@@ -815,7 +901,8 @@ case "$CURRENT" in
     migrate_v5_to_v6; CURRENT="v6"
     migrate_v6_to_v7; CURRENT="v7"
     migrate_v7_to_v8; CURRENT="v8"
-    migrate_v8_to_v9
+    migrate_v8_to_v9; CURRENT="v9"
+    migrate_v9_to_v10
     ;;
   v1)
     migrate_v1_to_v2; CURRENT="v2"
@@ -825,7 +912,8 @@ case "$CURRENT" in
     migrate_v5_to_v6; CURRENT="v6"
     migrate_v6_to_v7; CURRENT="v7"
     migrate_v7_to_v8; CURRENT="v8"
-    migrate_v8_to_v9
+    migrate_v8_to_v9; CURRENT="v9"
+    migrate_v9_to_v10
     ;;
   v2)
     migrate_v2_to_v3; CURRENT="v3"
@@ -834,7 +922,8 @@ case "$CURRENT" in
     migrate_v5_to_v6; CURRENT="v6"
     migrate_v6_to_v7; CURRENT="v7"
     migrate_v7_to_v8; CURRENT="v8"
-    migrate_v8_to_v9
+    migrate_v8_to_v9; CURRENT="v9"
+    migrate_v9_to_v10
     ;;
   v3)
     migrate_v3_to_v4; CURRENT="v4"
@@ -842,39 +931,48 @@ case "$CURRENT" in
     migrate_v5_to_v6; CURRENT="v6"
     migrate_v6_to_v7; CURRENT="v7"
     migrate_v7_to_v8; CURRENT="v8"
-    migrate_v8_to_v9
+    migrate_v8_to_v9; CURRENT="v9"
+    migrate_v9_to_v10
     ;;
   v4)
     migrate_v4_to_v5; CURRENT="v5"
     migrate_v5_to_v6; CURRENT="v6"
     migrate_v6_to_v7; CURRENT="v7"
     migrate_v7_to_v8; CURRENT="v8"
-    migrate_v8_to_v9
+    migrate_v8_to_v9; CURRENT="v9"
+    migrate_v9_to_v10
     ;;
   v5)
     migrate_v5_to_v6; CURRENT="v6"
     migrate_v6_to_v7; CURRENT="v7"
     migrate_v7_to_v8; CURRENT="v8"
-    migrate_v8_to_v9
+    migrate_v8_to_v9; CURRENT="v9"
+    migrate_v9_to_v10
     ;;
   v6)
     migrate_v6_to_v7; CURRENT="v7"
     migrate_v7_to_v8; CURRENT="v8"
-    migrate_v8_to_v9
+    migrate_v8_to_v9; CURRENT="v9"
+    migrate_v9_to_v10
     ;;
   v7)
     migrate_v7_to_v8; CURRENT="v8"
-    migrate_v8_to_v9
+    migrate_v8_to_v9; CURRENT="v9"
+    migrate_v9_to_v10
     ;;
   v8)
-    migrate_v8_to_v9
+    migrate_v8_to_v9; CURRENT="v9"
+    migrate_v9_to_v10
     ;;
   v9)
-    echo "already at v9"
+    migrate_v9_to_v10
+    ;;
+  v10)
+    echo "already at v10"
     ;;
   *)
     echo "ERROR: unknown source version '$CURRENT'" >&2
-    echo "Supported migrations: v0 -> v1 -> v2 -> v3 -> v4 -> v5 -> v6 -> v7 -> v8 -> v9" >&2
+    echo "Supported migrations: v0 -> v1 -> v2 -> v3 -> v4 -> v5 -> v6 -> v7 -> v8 -> v9 -> v10" >&2
     [ -n "$BACKUP_FILE" ] && echo "Backup is at $BACKUP_FILE; restore manually if needed." >&2
     exit 1
     ;;

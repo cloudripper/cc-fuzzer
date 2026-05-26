@@ -2,7 +2,9 @@
 
 This document is the **single source of truth** for the cc-fuzzer plugin's filesystem layout, JSON schemas, and lifecycle rules. Every subagent, command, and script must conform to what's defined here. If a subagent's prompt and this document disagree, this document wins.
 
-Schema version: **v9** (cc-fuzzer plugin v0.17+)
+Schema version: **v10** (cc-fuzzer plugin v0.22+)
+
+v10 adds the **Nix build backend** — per-harness `build_backend` commitment, `nix-build/v1` audit log, `nix-fallback/v1` demotion log, `nix-environment/v1` live env-vs-commitment reconciliation, and `harness-built/v7` (adds `build_backend` + `nix` sub-object). The nix backend is the default when `$CC_FUZZER_FHS=1`; legacy `build.sh` is unchanged for non-Nix environments.
 
 v9 introduces **multi-harness mode** — a single campaign may target several entry functions in the same library, each with its own harness binary, corpus, and coverage state, while sharing a single findings DB, plan, and budget. Multi-harness mode is **opt-in**: it activates only when `state/fuzz-config.json` declares `harnesses[]`. Campaigns without that declaration continue to run in singular mode exactly as they did in v8 — no filesystem changes, no schema differences. See [Multi-Harness Mode](#multi-harness-mode-schema-v9) for the full contract.
 
@@ -18,13 +20,16 @@ fuzz/
 │   ├── harness-built.json          # rewritten only on rebuild
 │   ├── current.json                # replaced atomically every update
 │   ├── findings.jsonl              # APPEND ONLY for new findings; in-place edit allowed for dedup count
-│   ├── FINDINGS-REPORT.md          # REWRITABLE markdown; rewritten by /cc-fuzzer:report
+│   ├── FINDINGS-REPORT-<target>.md    # REWRITABLE markdown; rewritten by /cc-fuzzer:report
 │   ├── events.jsonl                # APPEND ONLY, never edited
 │   ├── budget.json                 # replaced atomically
 │   ├── cmplog-dict-<ts>.dict       # IMMUTABLE per timestamp; cmplog runtime observations
 │   ├── fuzz-config.json            # REWRITABLE; user-editable launch config (incl. fuzzer_slots)
 │   ├── fuzzers.json                # REWRITABLE; live per-slot manifest (pid, role, started_at)
 │   ├── findings-legacy.jsonl       # APPEND-ONLY; tombstoned legacy findings records
+│   ├── nix-build-log.jsonl         # APPEND-ONLY; per-variant nix build audit (nix-build/v1)
+│   ├── nix-fallback-log.jsonl      # APPEND-ONLY; backend demotion records (nix-fallback/v1)
+│   ├── nix-environment-issues.json # REWRITABLE; live env-vs-commitment reconciliation (nix-environment/v1)
 │   ├── snapshots/                  # all IMMUTABLE timestamped state lives here
 │   │   ├── coverage-<ts>.json      # IMMUTABLE once written
 │   │   ├── gaps-<ts>.json          # IMMUTABLE once written
@@ -37,13 +42,25 @@ fuzz/
 │
 ├── harness/                        # all build artifacts
 │   ├── <target>_fuzzer.cc          # harness source (or .c)
-│   ├── <target>_fuzzer             # main fuzzer binary (libFuzzer or AFL++)
-│   ├── <target>_fuzzer_cov         # coverage-instrumented binary
-│   ├── <target>_fuzzer_cmplog      # AFL++ cmplog binary (optional, AFL++ only)
-│   ├── <target>_fuzzer_symcc       # SymCC-instrumented binary (optional)
+│   ├── <target>_fuzzer             # main fuzzer binary — symlink to /nix/store/... when build_backend=nix
+│   ├── <target>_fuzzer_cov         # coverage-instrumented binary (symlink when nix)
+│   ├── <target>_fuzzer_cmplog      # AFL++ cmplog binary (optional, AFL++ only; symlink when nix)
+│   ├── <target>_fuzzer_symcc       # SymCC-instrumented binary (optional; symlink when nix)
 │   ├── mutator.c                   # custom mutator source (optional)
-│   ├── build.sh                    # canonical build command
+│   ├── build.sh                    # legacy build command (build_backend=legacy only)
+│   ├── build.sh.pre-nix            # archived legacy build.sh when promoted to nix
 │   └── dict.txt                    # libFuzzer dictionary (optional)
+│
+├── nix/                            # Nix derivation bundle (build_backend=nix only)
+│   ├── manifest.json               # build manifest (written by harness-writer; read by nix-builder)
+│   ├── common.nix                  # mkCcFuzzerBinary helper (generated once, editable)
+│   ├── fuzzer.nix                  # fuzzing variant derivation
+│   ├── coverage.nix                # coverage variant derivation
+│   ├── verify.nix                  # verify variant derivation
+│   ├── cmplog.nix                  # cmplog variant (optional)
+│   ├── symcc.nix                   # symcc variant (optional)
+│   └── mocks/
+│       └── <name>.nix              # per-mock static-library derivation
 │
 ├── corpus/                         # active corpus; fuzzer reads from here
 ├── corpus-quarantine/              # candidate inputs pending validation
@@ -93,12 +110,24 @@ All schemas use a `schema` field at the top level identifying the schema name an
 ### `state/schema-version` (plain text)
 
 ```
-v9
+v10
 ```
 
 A single line containing the framework schema version. The orchestrator reads this on session start and refuses to operate if it doesn't match the plugin's expected version. Migration is handled by `scripts/migrate-state.sh`.
 
-Migration chain: `v0` (pre-schema, flat layout) → `v1` (subdirectory layout, schema fields) → `v2` (mandatory coverage builds, instrumentation field) → `v3` (multiple dictionary files) → `v4` (coverage_disabled_reason required when tracking off, schema field on all events) → `v5` (findings carry verified_against_build; crashes/stale/ for rebuild-invalidated findings; fuzz-config.json for per-project settings) → `v6` (harness-built/v4 with cmplog_enabled / cmplog_binary / cmplog_disabled_reason; new gap.reason `direct_compare` for cmplog-handled branches; current.json.gaps gains `direct_compare` counter) → `v7` (harness-built/v5 adds `fuzzing_mode: in_process | process_based`; `state/FINDINGS-REPORT.md` filesystem entry; `current.json` optional `last_report_at` field) → `v8` (multi-fuzzer slots: `fuzz-config/v2` adds `fuzzer_slots[]`, new `fuzzers/v1` live manifest at `state/fuzzers.json`, per-slot `state/fuzzer-<slot>.{pid,engine,log}`, `current/v1` gains `fuzzers[]`; legacy malformed findings tombstoned to `findings-legacy.jsonl`) → `v9` (multi-harness mode opt-in: new `harness-set/v1` at `state/harnesses.json`, `harness-built/v6` adds `name`, `current/v2` adds `harnesses[]` + `active_harness`, `fuzz-config/v3` adds top-level `harnesses[]` + `fuzzer_slots[].harness`, `fuzzers/v2` slot entries gain `harness`, `finding/v2` gains `harnesses[]`, per-harness snapshot filename prefixes).
+Migration chain: `v0` → `v1` → `v2` → `v3` → `v4` → `v5` → `v6` → `v7` → `v8` → `v9` → `v10`.
+
+- **v0** pre-schema, flat layout
+- **v1** subdirectory layout, schema fields
+- **v2** mandatory coverage builds, instrumentation field
+- **v3** multiple dictionary files
+- **v4** coverage_disabled_reason required; schema field on all events
+- **v5** verified_against_build; crashes/stale/; fuzz-config.json
+- **v6** harness-built/v4: cmplog_enabled/binary/disabled_reason; direct_compare gap reason
+- **v7** harness-built/v5: fuzzing_mode; FINDINGS-REPORT-<target>.md; current.json last_report_at
+- **v8** multi-fuzzer slots: fuzz-config/v2 fuzzer_slots[]; fuzzers/v1; per-slot pid/engine/log; findings-legacy.jsonl
+- **v9** multi-harness opt-in: harness-set/v1 at harnesses.json; harness-built/v6 adds name; current/v2 adds harnesses[]+active_harness; fuzz-config/v3; fuzzers/v2; finding/v2; per-harness snapshot prefixes
+- **v10** Nix build backend: harness-built/v7 adds build_backend+nix sub-object; new nix-build-log.jsonl; nix-fallback-log.jsonl; nix-environment-issues.json; harness-set/v2; fuzz-config/v4 optional nix block. Migration is additive: existing harnesses get build_backend="legacy".
 
 **v0.18 release notes — additive within schema v9, no migration required.** v0.18 is backward-compatible: a v0.17 campaign on v9 state runs under v0.18 without rewriting state. Additions are:
 
@@ -303,7 +332,7 @@ The single file the orchestrator reads on warm ticks. Schema is already document
 
 **`recommendation.branch` allowed values**: `sleep | restart_fuzzer | triage | analyze_gaps | reanalyze_gaps | generate_seeds | concolic | mutator | stop`.
 
-**Optional fields**: `last_report_at` (integer unix timestamp, set by reporting-agent after writing `FINDINGS-REPORT.md`).
+**Optional fields**: `last_report_at` (integer unix timestamp, set by reporting-agent after writing `FINDINGS-REPORT-<target>.md`).
 
 **`yolo_state` block** (v0.18+) — computed by `update-current.sh` from `fuzz-config.json:yolo` + campaign signals (coverage roundups, events.jsonl token totals, findings.jsonl). Drives the end-of-tick decision: the orchestrator (a subagent) reads it and emits a `YOLO_NEXT:` directive; the main-thread `/cc-fuzzer:tick` skill turns that into a `ScheduleWakeup` for the next tick (the orchestrator never calls `ScheduleWakeup` itself — a subagent's wakeup can't re-fire the main conversation):
 ```json
@@ -1108,7 +1137,7 @@ Lifecycle: immutable once written. The latest file (newest mtime) is the canonic
 
 **Consumers** (read-only):
 - `coverage-analyst` — uses `targets` to boost ranking of recently-changed unreached functions; tags gaps with `reason: delta_target` when appropriate.
-- `reporting-agent` — uses `range` to mark each finding's blamed commit as in-range or not in the FINDINGS-REPORT.
+- `reporting-agent` — uses `range` to mark each finding's blamed commit as in-range or not in the FINDINGS-REPORT-<target>.md.
 
 ### `state/snapshots/concolic-<ts>.json` — IMMUTABLE
 
@@ -1142,7 +1171,7 @@ Lifecycle: written by `extract-cmplog-dict.sh`, immutable once written, never mo
 
 If no AFL++ cmplog directories exist (libFuzzer engine, AFL++ launched without `-c`, or AFL++ version too old), the file is still produced but contains only the header explaining why no entries are present. This is normal and expected for libFuzzer campaigns; the dict file's existence is not gated on cmplog actually running.
 
-### `state/FINDINGS-REPORT.md` — REWRITABLE
+### `state/FINDINGS-REPORT-<target>.md` — REWRITABLE
 
 Human-readable Markdown report produced by `/cc-fuzzer:report` (the reporting-agent). Replaced atomically (`.tmp`, `mv`). Single canonical version.
 
@@ -1230,7 +1259,7 @@ fuzz/
 │   ├── current.json                # current/v2: harnesses[] + active_harness
 │   ├── findings.jsonl              # GLOBAL; each finding gains harnesses[]
 │   ├── findings-legacy.jsonl       # unchanged
-│   ├── FINDINGS-REPORT.md          # unchanged (rewritten by reporting-agent; per-harness breakdowns)
+│   ├── FINDINGS-REPORT-<target>.md    # unchanged (rewritten by reporting-agent; per-harness breakdowns)
 │   ├── events.jsonl                # unchanged
 │   ├── budget.json                 # unchanged (campaign-level)
 │   ├── snapshots/
@@ -1670,6 +1699,109 @@ This is deterministic. Every crash has exactly one location at any moment.
 - **Append safety.** APPEND-ONLY files use `>>` from a single process. The orchestrator is the only writer of `events.jsonl`; `crash-triager` is the only writer of `findings.jsonl`.
 - **No subagent ever writes to another's files.** `crash-triager` doesn't touch `events.jsonl`; the orchestrator doesn't touch `findings.jsonl`.
 
+## Nix Build Backend (schema v10)
+
+### Build Backend Commitment
+
+Each harness record in `harnesses.json` carries `build_backend: "nix" | "legacy"`. Once written it can only change via `scripts/harness-set.sh fallback-backend` or `scripts/harness-set.sh promote-to-nix`. Agents and orchestrators must **never** modify this field as a side-effect of a normal rebuild.
+
+**Discriminator rule:** `harness-writer` sets `build_backend` on first build only. Decision: if `$CC_FUZZER_FHS=1` AND `fuzz/nix-deps.nix` exists AND all nix variants build successfully → `"nix"`. Otherwise → `"legacy"`. After first build, the committed value is honored on every rebuild.
+
+### `state/nix-build-log.jsonl` — APPEND-ONLY (nix build audit)
+
+```json
+{"schema":"nix-build/v1","id":"nb_0001","ts":"2026-05-26T16:00:00Z","tick_number":0,"harness":"parser","variant":"fuzzer","event":"attempt_ok","drv_hash":"abc...","store_path":"/nix/store/abc...-parser-fuzzer","out_link":"fuzz/harnesses/parser/harness/parser_fuzzer","nix_deps_hash":"7f8e...","flake_rev":"abc123...","duration_ms":14820,"cache_hit":true,"fallback_record_id":null}
+```
+
+`event` is one of: `attempt_start`, `attempt_ok`, `attempt_fail`, `terminal_fallback`, `reconstruct_ok`. Written by `scripts/nix-build.sh` only. Rotated to `nix-build-log-<ts>.jsonl.gz` on `/cc-fuzzer:reset`.
+
+**Required fields**: schema, id, ts, harness, variant, event. All others optional.
+
+### `state/nix-fallback-log.jsonl` — APPEND-ONLY (backend demotion audit)
+
+```json
+{"schema":"nix-fallback/v1","id":"nf_0001","ts":"2026-05-26T15:30:00Z","tick_number":0,"harness":"vendor","phase":"cold","reason":"external_blob_dependency","reason_class":"blocker","decided_by":"harness-writer","evidence":{"kind":"nix_build_error","summary":"vendor SDK download gated by EULA","log_path":"fuzz/state/nix-build-log.jsonl","log_record_id":"nb_0003"},"remediation_hint":{"audience":"plugin_user","category":"informational","human_message":"Legacy build.sh used; vendor SDK cannot be reproduced under Nix.","machine_hints":{}}}
+```
+
+**`reason` closed enum** (validator rejects any other value):
+- `unfree_license_blocked` — required package is unfree and policy refuses it
+- `no_nix_expr_for_target` — no working `.nix` expression exists for this target yet
+- `platform_unsupported` — target requires a platform Nix cannot provide
+- `external_blob_dependency` — build requires a non-reproducible vendor blob
+- `host_lockfile_required` — build depends on system-level host state
+- `manual_override` — user explicitly invoked `harness-set.sh fallback-backend`
+
+Any nix failure that doesn't map to one of the above is a **hard refuse** — campaign halts; no silent demotion.
+
+**Required fields**: schema, id, ts, harness, phase, reason, reason_class, decided_by, evidence, remediation_hint.
+
+### `state/nix-environment-issues.json` — REWRITABLE (env reconciliation)
+
+```json
+{"schema":"nix-environment/v1","checked_at":"2026-05-26T16:00:00Z","campaign_commitment":{"any_harness_nix":true,"nix_harnesses":["parser"],"legacy_harnesses":[]},"environment":{"cc_fuzzer_fhs":false,"nix_binary_on_path":true,"fuzz_nix_deps_present":true,"flake_rev_runtime":null},"issues":[{"id":"env001","severity":"error","code":"fhs_shell_absent","affected_harnesses":["parser"],"summary":"Campaign committed to build_backend=nix but $CC_FUZZER_FHS is unset.","audience":"plugin_user","remediation":{"category":"reenter_dev_shell","human_message":"Re-enter the cc-fuzzer Nix dev shell: exit Claude, run 'nix run $CLAUDE_PLUGIN_ROOT#claude'.","fix_locus":"user_shell"}}]}
+```
+
+Written by `scripts/nix-env-reconcile.sh` at every session start. Empty `issues[]` = compatible. Orchestrator refuses to tick on `severity:"error"` issues for nix-committed harnesses.
+
+**`code` closed enum**: `fhs_shell_absent`, `nix_binary_missing`, `nix_deps_missing`, `nix_deps_drift`, `flake_rev_drift`, `store_path_gc`, `manifest_drift`, `tool_missing`.
+
+### `harness-built/v7`
+
+Extends `harness-built/v6` with `build_backend` (required) and `nix` (required when nix, forbidden when legacy):
+
+```json
+{
+  "schema": "harness-built/v7",
+  "name": "parser",
+  "build_backend": "nix",
+  "build_backend_decided_at": "2026-05-26T14:00:00Z",
+  "build_backend_decided_by": "harness-writer",
+  "nix": {
+    "manifest_path": "fuzz/harnesses/parser/nix/manifest.json",
+    "manifest_hash": "8e9a1c2b3d4e5f60",
+    "variants": {
+      "fuzzer":  {"nix_file":"fuzz/harnesses/parser/nix/fuzzer.nix",   "store_path":"/nix/store/abc...", "out_link":"fuzz/harnesses/parser/harness/parser_fuzzer",       "drv_hash":"abc..."},
+      "cov":     {"nix_file":"fuzz/harnesses/parser/nix/coverage.nix", "store_path":"/nix/store/def...", "out_link":"fuzz/harnesses/parser/harness/parser_fuzzer_cov",   "drv_hash":"def..."},
+      "verify":  {"nix_file":"fuzz/harnesses/parser/nix/verify.nix",   "store_path":"/nix/store/ghi...", "out_link":"fuzz/harnesses/parser/harness/parser_fuzzer_verify","drv_hash":"ghi..."}
+    },
+    "flake_rev_used": "abc123def456",
+    "nix_deps_hash": "7f8e9d0a1b2c3d4e"
+  }
+}
+```
+
+When `build_backend=="legacy"`, `nix` must be absent. `harness_binary`/`coverage_binary`/`verify_binary` are regular files (build.sh) or symlinks to store paths (nix).
+
+### Nix Build Manifest (`fuzz/harnesses/<name>/nix/manifest.json`)
+
+Input to the build, not campaign state. Written by `harness-writer`, read by `nix-builder`. Shape:
+
+```json
+{
+  "schema": "nix-build-manifest/v1",
+  "generated_by": "harness-writer",
+  "harness": "parser",
+  "target_source": "/abs/path/src/parser.c",
+  "target_extra_sources": [],
+  "harness_source": "fuzz/harnesses/parser/harness/parser_fuzzer.cc",
+  "cov_main": "fuzz/harnesses/parser/harness/cov_main.c",
+  "out_prefix": "fuzz/harnesses/parser/harness",
+  "variants": {
+    "fuzzer":   {"enabled": true, "sanitizers": ["address","undefined","fuzzer"]},
+    "coverage": {"enabled": true},
+    "verify":   {"enabled": true},
+    "cmplog":   {"enabled": true},
+    "symcc":    {"enabled": false}
+  },
+  "extra_compile_flags": [],
+  "extra_link_flags": [],
+  "extra_pkgconfig_modules": [],
+  "mocks": []
+}
+```
+
+`generated_by: "user-edit"` signals nix-builder to treat the file as authoritative and not overwrite without `--force`.
+
 ## Validation
 
 `scripts/validate-state.sh` runs **strict** validation (your Q2 answer):
@@ -1711,7 +1843,7 @@ Every subagent prompt must be updated to reference this document. Specifically:
 - **concolic-executor** writes to `fuzz/corpus-quarantine/` first, validates, then promotes to `fuzz/corpus/`. Status JSON to `fuzz/state/snapshots/concolic-<ts>.json`.
 - **crash-triager** is the only writer of `findings.jsonl`. Moves crash files between `fuzz/crashes/new/`, `fuzz/crashes/known/<id>/`, and `fuzz/crashes/flaky/` per the lifecycle above.
 - **fuzz-orchestrator** is the only writer of `events.jsonl`. Reads `current.json` only on warm ticks.
-- **reporting-agent** is the only writer of `fuzz/state/FINDINGS-REPORT.md`. It must also invoke `${CLAUDE_PLUGIN_ROOT}/scripts/update-current.sh` after writing.
+- **reporting-agent** is the only writer of `fuzz/state/FINDINGS-REPORT-<target>.md`. It must also invoke `${CLAUDE_PLUGIN_ROOT}/scripts/update-current.sh` after writing.
 
 If a subagent needs to write somewhere this document doesn't permit, the document must be updated first, then the agent. Not the other way around.
 

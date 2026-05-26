@@ -68,7 +68,7 @@ Prefer to approve each step over full autonomy? Skip YOLO and run the loop by ha
 /cc-fuzzer:campaign src/parser.c parse_message   # COLD: plan → harness (3 binaries) → seed → launch
 /cc-fuzzer:tick                                   # one LLM decision; repeat, or wrap in: /loop 10m /cc-fuzzer:tick
 /cc-fuzzer:status      # progress — pure shell, no LLM call
-/cc-fuzzer:report      # re-verify reproducers → fuzz/state/FINDINGS-REPORT.md
+/cc-fuzzer:report      # re-verify reproducers → fuzz/state/FINDINGS-REPORT-<target>.md
 /cc-fuzzer:stop        # stop the fuzzer (also disables YOLO)
 ```
 
@@ -140,8 +140,9 @@ Every orchestrator invocation begins with `check-campaign-state.sh`:
 | `code-reviewer` | sonnet | Tier-2 static review: classifies dangerous-API candidates from the deterministic prescan. |
 | `code-reviewer-deep` | **opus** | Tier-3 cross-file taint analysis on flagged candidates; adds findings the Sonnet pass missed. |
 | `crash-triager` | **opus** | Runs the verification pipeline; only verified crashes become findings. |
-| `poc-builder` | **opus** | Builds a verifiable exploit (not just a reproducer) whose impact is checked by a `verify.sh`. |
-| `reporting-agent` | **opus** | Re-runs every reproducer and writes `FINDINGS-REPORT.md` (confirmed vs. false-positive, `git blame` provenance). |
+| `poc-builder` | **opus** | Characterizes security impact of confirmed findings for responsible disclosure; impact checked by a `verify.sh`. |
+| `reporting-agent` | **opus** | Re-runs every reproducer and writes `FINDINGS-REPORT-<target>.md` (confirmed vs. false-positive, `git blame` provenance). |
+| `nix-builder` | sonnet | Builds or rebuilds harness binaries via nix derivations (requires `CC_FUZZER_FHS=1`). Runs the repair loop, promotes to nix backend, falls back to legacy on hard failure. |
 
 ### Skills (`/cc-fuzzer:<name>`)
 
@@ -152,11 +153,12 @@ That flag gates **slash commands** only — it stops the *ambient* assistant fro
 - **Campaign loop** — `campaign` (headline; auto-detects COLD/RESUME/WARM), `tick`, `resume-campaign`, `run`, `stop`, `yolo`, `reset`
 - **Analysis & corpus** — `plan`, `harness`, `seed`, `coverage`, `concolic`, `review`, `delta`, `dictionaries`
 - **Findings** — `triage`, `poc`, `report`
+- **Nix build** — `nix-build` (rebuild harness binaries via nix derivations; `--harness`, `--variant`, `--force`, `--fallback`), `nix-cleanup` (remove GC roots after campaign; `--gc`, `--dry-run`)
 - **Read-only** — `status`, `doctor`, `validate`
 
 ### State
 
-All campaign state lives under `fuzz/state/`. The authoritative spec is **`STATE_SCHEMA.md`** at the plugin root (current schema **v9**). The orchestrator reads only `current.json` on warm ticks. Findings are written exclusively by `scripts/findings.sh` (which runs the verification pipeline); the report only by `reporting-agent`. Plugin scripts are read-only — your only writable scope is `fuzz/`.
+All campaign state lives under `fuzz/state/`. The authoritative spec is **`STATE_SCHEMA.md`** at the plugin root (current schema **v10**). The orchestrator reads only `current.json` on warm ticks. Findings are written exclusively by `scripts/findings.sh` (which runs the verification pipeline); the report only by `reporting-agent`. Plugin scripts are read-only — your only writable scope is `fuzz/`.
 
 ## Key mechanisms
 
@@ -169,6 +171,12 @@ Every COLD start builds three mandatory binaries:
 3. **Verify** — ASan + UBSan only, **no `-fsanitize=fuzzer`**; used to filter harness artifacts (a crash that reproduces in the fuzzer but not here is not a real target bug).
 
 Optionally a **cmplog** binary (`AFL_LLVM_CMPLOG=1`, no sanitizers) when AFL++ + `afl-clang-fast` are present. Cmplog is purely additive — without it the campaign falls back to source-only gap reasoning.
+
+### Nix build backend
+
+When running inside the cc-fuzzer FHS shell (`CC_FUZZER_FHS=1`), harnesses can be built **declaratively** via nix derivations instead of bare compiler invocations. `harness-writer` auto-selects nix when the environment is available, writing a `manifest.json` per harness and delegating compilation to `nix-build.sh`. Each variant (fuzzer, coverage, verify, cmplog, symcc) gets its own derivation; outputs land in the nix store and are symlinked into the bundle at `fuzz/harnesses/<name>/harness/`.
+
+Per-harness field `build_backend: "nix" | "legacy"` tracks which path was used. To force a rebuild: `/cc-fuzzer:nix-build [--harness <name>] [--variant <v>] [--force]`. To fall back to the legacy path: `harness-set.sh fallback-backend` (requires an explicit reason from a closed enum). `scripts/doctor.sh` checks 11 and 12 guard nix store GC and environment drift.
 
 ### Crash verification
 

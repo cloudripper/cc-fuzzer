@@ -57,75 +57,147 @@
         # without FHSEnv hits hardcoded path expectations and fragile cc-
         # wrapper interactions. FHSEnv eliminates that whole class of bugs.
         targetPkgs = pkgs: (with pkgs; [
-          # -- Compilers / sanitizer runtimes
+          # === Compilers / sanitizer runtimes ===
           # stdenv-provided clang carries a matching compiler-rt with
-          # libclang_rt.fuzzer.a. That's what `-fsanitize=fuzzer` links
-          # against. Don't replace this without also pinning a matching
+          # libclang_rt.fuzzer.a. That's what `-fsanitize=fuzzer` links against.
+          # Don't replace this without also pinning a matching
           # llvmPackages_NN.compiler-rt.
           clang
           llvmPackages.compiler-rt
           llvmPackages.libcxx
-
-          # -- LLVM userland tools (llvm-cov, llvm-profdata, llvm-symbolizer,
-          # opt, llc). cc-fuzzer specifically calls llvm-cov + llvm-profdata
-          # in snapshot-coverage.sh.
+          # LLVM userland (llvm-cov, llvm-profdata, llvm-symbolizer, opt, llc)
           llvmPackages.llvm
+          llvmPackages.clang-tools  # clangd, clang-tidy, clang-format
 
-          # -- Fuzzer engines
+          # === Languages (targets commonly pull these in) ===
+          gcc
+          python3
+          perl
+          rustc
+          cargo
+          go
+          nodejs
+
+          # === Fuzzer engines ===
           aflplusplus
+          honggfuzz
+          radamsa
 
-          # -- Concolic execution
+          # === Concolic / SMT ===
           symcc
           z3
 
-          # -- Triage / debug
+          # === Coverage / triage / debug ===
           gdb
-          binutils       # gives addr2line, strings, nm, objdump, readelf
+          lldb
+          rr
+          valgrind
+          binutils       # addr2line, strings, nm, objdump, readelf
+          elfutils       # eu-* variants, often better
           strace
+          ltrace
+          lcov
+          gcovr
+          casr           # automated crash triage with structured output
 
-          # -- Build essentials targets typically need
+          # === Build systems ===
           gnumake
           cmake
           ninja
+          meson
           pkg-config
-          gcc            # some autotools projects sniff for cc=gcc; cheap to ship
           autoconf
           automake
           libtool
+          gperf
+          bear           # compile_commands.json from arbitrary builds
+
+          # === Code indexing (for agentic code understanding) ===
+          universal-ctags
+          cscope
+
+          # === Core userland ===
           coreutils
           findutils
           gnused
           gawk
           gnugrep
+          diffutils
+          patch
+          patchutils
+          which
+          file
+          moreutils      # sponge, ts, chronic, ifne
+          parallel       # GNU parallel
+          time           # GNU /usr/bin/time -v
+          dos2unix
+
+          # === Process / system introspection ===
+          procps         # ps, top, pkill, pgrep, vmstat, free, watch, sysctl
+          psmisc         # pstree, fuser, killall, peekfd
+          util-linux     # lscpu, lsblk, taskset, nsenter, flock, setsid
+          lsof
+          iproute2       # ip, ss
+          htop
+          iotop
+          ncdu
+          numactl
+          linuxPackages.perf
+          bpftrace
+          bcc
+
+          # === Networking ===
+          curl
+          wget
+          rsync
+          openssh
+          tcpdump
+          socat
+          netcat-gnu
+
+          # === Archive / compression ===
           gnutar
           gzip
           bzip2
           xz
-          vim
-          patch
-          which
-          file
-          glib
-          git
-          jq
+          zstd
+          lz4
+          unzip
+          p7zip
+          cpio
 
-          # -- Common library headers/bits many targets need. Anything
-          # target-SPECIFIC (e.g. dbus, expat, systemd) does NOT belong here —
-          # it composes in per-campaign via the project flake's `nix-deps.nix`
-          # (see `lib.mkDevShell` + `apps.init`). Keep this base generic.
+          # === Common library headers (keep generic; target-specific goes in nix-deps.nix) ===
+          glib
           glib.dev
           zlib.dev
+          openssl
           openssl.dev
 
-          # -- State-script runtime
-          python3
-          jq
+          # === Hex / data inspection ===
+          hexyl
 
-          # -- Dev conveniences (per user request)
-          ripgrep        # rg
-          fd             # fd
-          bat            # nicer cat for plugin debugging
+          # === Data formats ===
+          jq
+          yq
+          dasel
+
+          # === Editors / sessions ===
+          vim
+          tmux
+          entr
+
+          # === Nix-native dep resolution (lets agents self-resolve missing tools) ===
+          nix-index
+
+          # === VCS ===
+          git
+
+          # === Dev conveniences ===
+          ripgrep
+          fd
+          bat
           tree
+          nixfmt
         ] ++ [ llm-agents.packages.${system}.claude-code ]) ++ (extra pkgs);
 
         # ------------------------------------------------------------------

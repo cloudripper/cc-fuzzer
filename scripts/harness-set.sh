@@ -28,6 +28,21 @@
 #       singular campaign (those need the documented singular->multi upgrade).
 #       After this, build the harness with `harness-writer --harness <name>`.
 #
+#   harness-set.sh fallback-backend <name> --reason <enum> --evidence <text>
+#       Demote a nix-committed harness to legacy build_backend. Writes a
+#       nix-fallback/v1 record to state/nix-fallback-log.jsonl. Archives the
+#       nix/ bundle to nix-archived-<ts>/. The ONLY authorized path to flip
+#       build_backend from "nix" to "legacy".
+#       <reason> must be one of: unfree_license_blocked, no_nix_expr_for_target,
+#       platform_unsupported, external_blob_dependency, host_lockfile_required,
+#       manual_override
+#
+#   harness-set.sh promote-to-nix <name>
+#       Promote a legacy harness to nix build_backend. Requires CC_FUZZER_FHS=1
+#       and a successful trial build of every enabled variant via nix-build.sh.
+#       Archives the existing build.sh to build.sh.pre-nix. The ONLY authorized
+#       path to flip build_backend from "legacy" to "nix".
+#
 # Naming:
 #   <name>  defaults to the sanitised entry function. Must match
 #           ^[a-z0-9][a-z0-9_-]{0,31}$ (harness id; underscores allowed).
@@ -57,22 +72,26 @@ ENTRY=""
 NAME=""
 ENGINE="libfuzzer"
 SLOT=""
+FALLBACK_REASON=""
+FALLBACK_EVIDENCE=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --entry)   ENTRY="${2:-}";  shift 2 ;;
-    --name)    NAME="${2:-}";   shift 2 ;;
-    --engine)  ENGINE="${2:-}"; shift 2 ;;
-    --slot)    SLOT="${2:-}";   shift 2 ;;
-    -h|--help) ACTION="help"; break ;;
+    --entry)    ENTRY="${2:-}";             shift 2 ;;
+    --name)     NAME="${2:-}";              shift 2 ;;
+    --engine)   ENGINE="${2:-}";            shift 2 ;;
+    --slot)     SLOT="${2:-}";              shift 2 ;;
+    --reason)   FALLBACK_REASON="${2:-}";   shift 2 ;;
+    --evidence) FALLBACK_EVIDENCE="${2:-}"; shift 2 ;;
+    -h|--help)  ACTION="help"; break ;;
     *) usage_err "unknown flag '$1'" ;;
   esac
 done
 
 case "$ACTION" in
-  init|add) ;;
+  init|add|fallback-backend|promote-to-nix) ;;
   help|*)
-    sed -n '2,40p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '2,55p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
     exit 0
     ;;
 esac
@@ -214,7 +233,7 @@ case "$RESULT" in
       # misdetected as v0 — migrate_v0_to_v1 would recreate the singular
       # fuzz/harness/ + fuzz/corpus/ dirs and violate multi-mode's
       # mutual-exclusion rule. Declaring harnesses[] IS adopting schema v9.
-      echo "v9" > "$STATE_DIR/schema-version"
+      echo "v10" > "$STATE_DIR/schema-version"
     fi
     echo "wrote $CFG_FILE ($ACTION: $RESULT)" >&2
     echo "$RESULT"
@@ -225,3 +244,229 @@ case "$RESULT" in
     exit 2
     ;;
 esac
+
+#==============================================================================
+# fallback-backend: demote a nix-committed harness to legacy
+#==============================================================================
+if [ "$ACTION" = "fallback-backend" ]; then
+  TARGET_NAME="$NAME"
+  [ -n "$TARGET_NAME" ] || { TARGET_NAME="${ENTRY:-}"; }
+  [ -n "$TARGET_NAME" ] || usage_err "fallback-backend requires a harness name as second arg: harness-set.sh fallback-backend <name>"
+  [ -n "$FALLBACK_REASON" ] || usage_err "--reason is required for fallback-backend"
+  [ -n "$FALLBACK_EVIDENCE" ] || FALLBACK_EVIDENCE="(no evidence provided)"
+
+  VALID_REASONS="unfree_license_blocked no_nix_expr_for_target platform_unsupported external_blob_dependency host_lockfile_required manual_override"
+  VALID=false
+  for r in $VALID_REASONS; do
+    [ "$r" = "$FALLBACK_REASON" ] && VALID=true && break
+  done
+  [ "$VALID" = true ] || usage_err "invalid --reason '$FALLBACK_REASON'. Must be one of: $VALID_REASONS"
+
+  HS_FILE="$STATE_DIR/harnesses.json"
+  [ -f "$HS_FILE" ] || usage_err "harnesses.json not found; not a multi-harness campaign"
+
+  TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  TS_COMPACT=$(date -u +%s)
+  FALLBACK_LOG="$STATE_DIR/nix-fallback-log.jsonl"
+  HARNESS_DIR_PATH="${FUZZ_ROOT:-fuzz}/harnesses/$TARGET_NAME"
+  NIX_DIR_PATH="$HARNESS_DIR_PATH/nix"
+  NIX_ARCHIVE="$HARNESS_DIR_PATH/nix-archived-$TS_COMPACT"
+
+  FB_OUT=$(python3 - <<PY
+import json, os, sys, datetime
+
+hs_path   = os.environ["HS_FILE"]
+name      = os.environ["TARGET_NAME"]
+reason    = os.environ["FALLBACK_REASON"]
+evidence  = os.environ["FALLBACK_EVIDENCE"]
+log_path  = os.environ["FALLBACK_LOG"]
+ts        = os.environ["TS"]
+
+doc = json.load(open(hs_path))
+harnesses = doc.get("harnesses", [])
+target = next((h for h in harnesses if isinstance(h, dict) and h.get("name") == name), None)
+if target is None:
+    print(f"ERR: harness '{name}' not found in harnesses.json"); sys.exit(1)
+
+prior_backend = target.get("build_backend", "(unset)")
+if prior_backend == "legacy":
+    print(f"ALREADY_LEGACY harness '{name}' is already build_backend=legacy")
+    sys.exit(0)
+
+n = 0
+try:
+    with open(log_path) as f:
+        n = sum(1 for l in f if l.strip())
+except Exception:
+    pass
+
+rec = {
+    "schema": "nix-fallback/v1",
+    "id": f"nf_{n+1:04d}",
+    "ts": ts,
+    "harness": name,
+    "phase": "user_command",
+    "reason": reason,
+    "reason_class": "policy" if reason == "manual_override" else "blocker",
+    "decided_by": "user_manual",
+    "evidence": {"kind": "user_note", "summary": evidence},
+    "remediation_hint": {
+        "audience": "plugin_user",
+        "category": "informational",
+        "human_message": f"Harness '{name}' manually demoted to legacy build_backend. Reason: {reason}.",
+        "machine_hints": {}
+    }
+}
+with open(log_path, "a") as f:
+    f.write(json.dumps(rec, separators=(",",":")) + "\n")
+
+target["build_backend"] = "legacy"
+target["build_backend_decided_at"] = ts
+target["build_backend_decided_by"] = "harness-set-fallback"
+target.pop("nix", None)
+
+tmp = hs_path + ".tmp"
+with open(tmp, "w") as f:
+    json.dump(doc, f, indent=2)
+os.replace(tmp, hs_path)
+
+print(f"FALLBACK_OK name={name} from={prior_backend} reason={reason}")
+PY
+)
+
+  case "$FB_OUT" in
+    ERR:*) echo "ERROR: ${FB_OUT#ERR: }" >&2; exit 2 ;;
+    ALREADY_LEGACY*) echo "harness-set: $FB_OUT" >&2; exit 0 ;;
+    FALLBACK_OK*)
+      # Archive the nix bundle so it's preserved for forensics
+      if [ -d "$NIX_DIR_PATH" ]; then
+        mv "$NIX_DIR_PATH" "$NIX_ARCHIVE" 2>/dev/null && \
+          echo "archived nix bundle to $NIX_ARCHIVE" >&2 || true
+      fi
+      echo "$FB_OUT" >&2
+      echo "$FB_OUT"
+      exit 0 ;;
+    *) echo "ERROR: unexpected output: $FB_OUT" >&2; exit 2 ;;
+  esac
+fi  # end fallback-backend
+
+#==============================================================================
+# promote-to-nix: upgrade a legacy harness to nix build_backend
+#==============================================================================
+if [ "$ACTION" = "promote-to-nix" ]; then
+  TARGET_NAME="$NAME"
+  [ -n "$TARGET_NAME" ] || { TARGET_NAME="${ENTRY:-}"; }
+  [ -n "$TARGET_NAME" ] || usage_err "promote-to-nix requires a harness name as second arg"
+
+  [ "${CC_FUZZER_FHS:-}" = "1" ] || usage_err "promote-to-nix requires CC_FUZZER_FHS=1 (run inside 'nix run .#claude')"
+
+  HS_FILE="$STATE_DIR/harnesses.json"
+  [ -f "$HS_FILE" ] || usage_err "harnesses.json not found; not a multi-harness campaign"
+
+  HARNESS_DIR_PATH="${FUZZ_ROOT:-fuzz}/harnesses/$TARGET_NAME"
+  MANIFEST_PATH="$HARNESS_DIR_PATH/nix/manifest.json"
+  [ -f "$MANIFEST_PATH" ] || usage_err "manifest.json not found at $MANIFEST_PATH — run /cc-fuzzer:harness first to generate nix files"
+
+  TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+  # Trial build
+  echo "promote-to-nix: running trial nix build for harness '$TARGET_NAME'..." >&2
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if ! bash "$SCRIPT_DIR/nix-build.sh" "$TARGET_NAME" --no-log; then
+    echo "ERROR: nix build failed; fix the nix derivations before promoting" >&2
+    exit 1
+  fi
+
+  # Build succeeded — update harnesses.json
+  PROMOTE_OUT=$(TARGET_NAME="$TARGET_NAME" HS_FILE="$HS_FILE" TS="$TS" \
+    MANIFEST_PATH="$MANIFEST_PATH" FUZZ_ROOT="${FUZZ_ROOT:-fuzz}" \
+    python3 - <<'PY'
+import json, os, sys, hashlib, datetime
+
+hs_path = os.environ["HS_FILE"]
+name = os.environ["TARGET_NAME"]
+ts = os.environ["TS"]
+manifest_path = os.environ["MANIFEST_PATH"]
+fuzz_root = os.environ["FUZZ_ROOT"]
+
+doc = json.load(open(hs_path))
+harnesses = doc.get("harnesses", [])
+target = next((h for h in harnesses if isinstance(h, dict) and h.get("name") == name), None)
+if target is None:
+    print(f"ERR: harness '{name}' not found in harnesses.json"); sys.exit(1)
+
+prior_backend = target.get("build_backend", "legacy")
+if prior_backend == "nix":
+    print(f"ALREADY_NIX harness '{name}' is already build_backend=nix")
+    sys.exit(0)
+
+manifest_hash = hashlib.sha256(open(manifest_path, "rb").read()).hexdigest()[:16]
+nix_deps_path = os.path.join(fuzz_root, "nix-deps.nix")
+nix_deps_hash = hashlib.sha256(open(nix_deps_path, "rb").read()).hexdigest()[:16] if os.path.isfile(nix_deps_path) else ""
+flake_rev = os.environ.get("CC_FUZZER_FLAKE_REV", "unknown")
+
+# Collect store paths from the result symlinks
+nix_dir = os.path.join(fuzz_root, "harnesses", name, "nix")
+harness_bin_dir = os.path.join(fuzz_root, "harnesses", name, "harness")
+manifest = json.load(open(manifest_path))
+variants_built = {}
+for variant, info in manifest.get("variants", {}).items():
+    if not (isinstance(info, dict) and info.get("enabled", True)):
+        continue
+    suffix = {"fuzzer":"","coverage":"_cov","verify":"_verify","cmplog":"_cmplog","symcc":"_symcc"}.get(variant, f"_{variant}")
+    out_link = os.path.join(harness_bin_dir, f"{manifest['harness']}_fuzzer{suffix}")
+    nix_file = os.path.join(nix_dir, f"{variant}.nix")
+    store_path = ""
+    drv_hash = ""
+    if os.path.islink(out_link):
+        real = os.path.realpath(out_link)
+        # store path is the /nix/store/<hash>-<name> part
+        parts = real.split("/")
+        try:
+            ni = parts.index("nix")
+            store_path = "/" + "/".join(parts[ni:ni+3])
+            drv_hash = parts[ni+2][:8] if len(parts) > ni+2 else ""
+        except ValueError:
+            store_path = os.path.dirname(os.path.dirname(real))
+    variants_built[variant] = {
+        "nix_file": os.path.relpath(nix_file) if os.path.isabs(nix_file) else nix_file,
+        "store_path": store_path,
+        "out_link": os.path.relpath(out_link) if os.path.isabs(out_link) else out_link,
+        "drv_hash": drv_hash,
+    }
+
+target["build_backend"] = "nix"
+target["build_backend_decided_at"] = ts
+target["build_backend_decided_by"] = "harness-set-promote"
+target["nix"] = {
+    "manifest_path": os.path.relpath(manifest_path) if os.path.isabs(manifest_path) else manifest_path,
+    "manifest_hash": manifest_hash,
+    "variants": variants_built,
+    "flake_rev_used": flake_rev,
+    "nix_deps_hash": nix_deps_hash,
+}
+
+# Archive old build.sh
+build_sh = os.path.join(harness_bin_dir, "build.sh")
+if os.path.isfile(build_sh):
+    os.rename(build_sh, build_sh + ".pre-nix")
+
+tmp = hs_path + ".tmp"
+with open(tmp, "w") as f:
+    json.dump(doc, f, indent=2)
+os.replace(tmp, hs_path)
+
+print(f"PROMOTE_OK name={name} from={prior_backend}")
+PY
+)
+
+  case "$PROMOTE_OUT" in
+    ERR:*) echo "ERROR: ${PROMOTE_OUT#ERR: }" >&2; exit 2 ;;
+    ALREADY_NIX*) echo "harness-set: $PROMOTE_OUT" >&2; exit 0 ;;
+    PROMOTE_OK*)
+      echo "$PROMOTE_OUT" >&2
+      echo "$PROMOTE_OUT"
+      exit 0 ;;
+    *) echo "ERROR: unexpected output: $PROMOTE_OUT" >&2; exit 2 ;;
+  esac
+fi  # end promote-to-nix

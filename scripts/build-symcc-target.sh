@@ -18,6 +18,34 @@ if [ ! -f "$HARNESS_INFO" ]; then
   exit 1
 fi
 
+# If inside the cc-fuzzer nix FHS shell and the harness was built with the nix
+# backend, delegate the symcc variant build to nix-build.sh — it already knows
+# how to drive sym++ inside the derivation sandbox.
+if [ "${CC_FUZZER_FHS:-}" = "1" ]; then
+  _NIX_BACKEND=$(python3 -c "
+import json
+try:
+    d = json.load(open('$HARNESS_INFO'))
+    print(d.get('build_backend', 'legacy'))
+except Exception:
+    print('legacy')
+" 2>/dev/null || echo legacy)
+  if [ "$_NIX_BACKEND" = "nix" ]; then
+    _NIX_HARNESS=$(python3 -c "
+import json
+try:
+    d = json.load(open('$HARNESS_INFO'))
+    print(d.get('name', ''))
+except Exception:
+    print('')
+" 2>/dev/null || echo "")
+    if [ -n "$_NIX_HARNESS" ]; then
+      echo "[build-symcc-target] nix backend detected — delegating to nix-build.sh --variant symcc" >&2
+      exec bash "$SCRIPT_DIR/nix-build.sh" "$_NIX_HARNESS" --variant symcc
+    fi
+  fi
+fi
+
 # Resolve symcc and sym++ via nix-env.json (captured at session start) with
 # PATH fallback. nix_require prints a fix-it diagnostic and exits 2 on miss.
 SYMCC_BIN_TOOL=$(nix_require symcc)

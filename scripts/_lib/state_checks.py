@@ -22,7 +22,7 @@ Subcommands:
   validate-json          FILE SCHEMA REQ ALLOW LEN-> OK | "WARN: ..." | error line
   field        <file> <dotted.path> [default]     -> single field value
   hash-check   <file>                             -> "<key>=<val>" for bad hashes
-  harnesses-mirror       HARNESSES_PATH MIRROR_PATH DECLARED REQUIRED_V6 ALLOWED_V6
+  harnesses-mirror       HARNESSES_PATH MIRROR_PATH DECLARED REQUIRED_V6 ALLOWED_V6 [EXPECTED_HARNESS_SCHEMA]
   slots                  MODE DECLARED CFG
   fuzzers-manifest       MODE DECLARED MANIFEST_PATH
   findings               MODE DECLARED FINDINGS
@@ -160,6 +160,7 @@ def cmd_harnesses_mirror():
     required = set(os.environ["REQUIRED_V6"].split(",")) | {"schema"}
     allowed = set(os.environ["ALLOWED_V6"].split(",")) | {"schema"}
     declared = [n for n in os.environ["DECLARED"].splitlines() if n.strip()]
+    expected_schema = os.environ.get("EXPECTED_HARNESS_SCHEMA", "harness-built/v7")
 
     try:
         doc = json.load(open(os.environ["HARNESSES_PATH"]))
@@ -177,8 +178,8 @@ def cmd_harnesses_mirror():
         if not isinstance(h, dict):
             print(f"harnesses.json: harnesses[{i}] is not an object")
             continue
-        if h.get("schema") != "harness-built/v6":
-            print(f"harnesses.json: harnesses[{i}].schema is '{h.get('schema')}' (expected harness-built/v6)")
+        if h.get("schema") != expected_schema:
+            print(f"harnesses.json: harnesses[{i}].schema is '{h.get('schema')}' (expected {expected_schema})")
         name = h.get("name", "")
         if not SLUG.match(name or ""):
             print(f"harnesses.json: harnesses[{i}].name '{name}' invalid (regex ^[a-z0-9][a-z0-9_-]{{0,31}}$)")

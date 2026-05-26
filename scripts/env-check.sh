@@ -71,6 +71,9 @@ fi
 if [ -d "fuzz" ] && [ -x "$SCRIPT_DIR/capture-nix-env.sh" ]; then
   bash "$SCRIPT_DIR/capture-nix-env.sh" >/dev/null 2>&1 || true
 fi
+if [ -d "fuzz" ] && [ -x "$SCRIPT_DIR/nix-env-reconcile.sh" ]; then
+  bash "$SCRIPT_DIR/nix-env-reconcile.sh" >/dev/null 2>&1 || true
+fi
 
 #------------------------------------------------------------------------------
 # 4. Preflight (only if fuzz/ exists in cwd)

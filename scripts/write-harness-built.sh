@@ -65,6 +65,7 @@ DICT_FILES=()
 ATTEMPTS=1
 BUILD_COMMAND=""
 HARNESS_NAME=""   # multi-mode only: identifies which harness record to update
+BUILD_BACKEND="legacy"  # nix | legacy
 
 usage_err() {
   echo "ERROR: $*" >&2
@@ -95,6 +96,7 @@ while [ $# -gt 0 ]; do
     --attempts)                   ATTEMPTS="${2:-1}"; shift 2 ;;
     --build-command)              BUILD_COMMAND="${2:-}"; shift 2 ;;
     --harness)                    HARNESS_NAME="${2:-}"; shift 2 ;;
+    --build-backend)              BUILD_BACKEND="${2:-legacy}"; shift 2 ;;
     -h|--help|"")
       sed -n '2,/^$/p' "$0" | sed 's/^# \?//'
       exit 0
@@ -224,7 +226,7 @@ export VERIFY_BIN_JSON
 export CMPLOG_ENABLED CMPLOG_BIN_JSON CMPLOG_REASON_JSON
 export SYMCC_BINARY SANITIZERS_PY INPUT_ENCODING DICT_FILES_PY
 export TARGET_HASH BUILD_HASH BUILT_AT ATTEMPTS BUILD_COMMAND
-export HARNESS_NAME IS_MULTI_WRITE STATE_DIR
+export HARNESS_NAME IS_MULTI_WRITE STATE_DIR BUILD_BACKEND
 
 python3 "$SCRIPT_DIR/_lib/write_harness_built.py" "$TMP"
 

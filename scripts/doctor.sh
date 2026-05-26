@@ -224,7 +224,7 @@ echo ""
 #------------------------------------------------------------------------------
 # Check 9: Nix tool inventory (v0.18)
 #------------------------------------------------------------------------------
-echo "[10/10] Checking Nix tool inventory..."
+echo "[10/12] Checking Nix tool inventory..."
 NIX_ENV_FILE="$PROJECT_ROOT/fuzz/state/nix-env.json"
 if [ -f "$NIX_ENV_FILE" ]; then
   NIX_ENV_AGE=$(python3 -c "
@@ -262,6 +262,154 @@ except Exception as e:
 else
   warn "no nix-env.json (will be captured on next session start)"
   echo "       Fix: bash $PLUGIN_ROOT/scripts/capture-nix-env.sh"
+fi
+echo ""
+
+#------------------------------------------------------------------------------
+# Check 11: Nix build backend consistency (v0.22)
+# Verifies that every nix-committed harness has its store paths intact and that
+# the declared variant symlinks actually point into /nix/store.
+#------------------------------------------------------------------------------
+echo "[11/12] Checking nix build backend consistency..."
+HS_FILE="$PROJECT_ROOT/fuzz/state/harnesses.json"
+if [ -f "$HS_FILE" ]; then
+  python3 - <<'PY'
+import json, os, sys
+
+hs_file = os.environ.get("HS_FILE", "")
+issues = []
+warnings = []
+try:
+    doc = json.load(open(hs_file))
+except Exception as e:
+    print(f"  WARN: cannot read harnesses.json: {e}")
+    sys.exit(0)
+for h in doc.get("harnesses", []):
+    if not isinstance(h, dict):
+        continue
+    name = h.get("name", "?")
+    backend = h.get("build_backend", "legacy")
+    if backend != "nix":
+        continue
+    nix_sub = h.get("nix") or {}
+    for variant, vinfo in (nix_sub.get("variants") or {}).items():
+        if not isinstance(vinfo, dict):
+            continue
+        store_path = vinfo.get("store_path", "")
+        out_link = vinfo.get("out_link", "")
+        if store_path and not os.path.exists(store_path):
+            issues.append(f"harness '{name}' variant '{variant}': store path gone (GC'd): {store_path}")
+            issues.append(f"  Fix: /cc-fuzzer:nix-build --harness {name} --variant {variant} --force")
+        elif out_link and not os.path.exists(out_link):
+            warnings.append(f"harness '{name}' variant '{variant}': symlink missing: {out_link}")
+            warnings.append(f"  Fix: /cc-fuzzer:nix-build --harness {name}")
+    manifest_path = nix_sub.get("manifest_path", "")
+    if manifest_path and not os.path.isfile(manifest_path):
+        issues.append(f"harness '{name}': manifest.json missing at {manifest_path}")
+        issues.append(f"  Fix: /cc-fuzzer:harness --harness {name} to regenerate")
+for line in warnings:
+    print(f"  WARN: {line}")
+for line in issues:
+    print(f"  ISSUE: {line}")
+PY
+  _NIX_CHECK=$(HS_FILE="$HS_FILE" python3 - <<'PY'
+import json, os, sys
+hs_file = os.environ.get("HS_FILE","")
+ok = True
+try:
+    doc = json.load(open(hs_file))
+except Exception:
+    sys.exit(0)
+for h in doc.get("harnesses",[]):
+    if isinstance(h,dict) and h.get("build_backend")=="nix":
+        ok=False; break
+if ok:
+    print("no_nix_harnesses")
+PY
+)
+  if [ "$_NIX_CHECK" = "no_nix_harnesses" ]; then
+    ok "no nix-committed harnesses in this campaign"
+  else
+    HS_FILE="$HS_FILE" python3 - <<'PY'
+import json, os, sys
+
+hs_file = os.environ.get("HS_FILE","")
+issues=0; warnings=0
+try:
+    doc = json.load(open(hs_file))
+except Exception as e:
+    print(f"  WARN: cannot read harnesses.json: {e}"); sys.exit(0)
+for h in doc.get("harnesses",[]):
+    if not isinstance(h,dict): continue
+    name=h.get("name","?"); backend=h.get("build_backend","legacy")
+    if backend!="nix": continue
+    nix_sub=h.get("nix") or {}
+    for variant,vinfo in (nix_sub.get("variants") or {}).items():
+        if not isinstance(vinfo,dict): continue
+        sp=vinfo.get("store_path",""); ol=vinfo.get("out_link","")
+        if sp and not os.path.exists(sp):
+            print(f"  ISSUE: harness '{name}' variant '{variant}' store path GC'd: {sp}")
+            print(f"         Fix: /cc-fuzzer:nix-build --harness {name} --variant {variant} --force")
+            issues+=1
+        elif ol and not os.path.exists(ol):
+            print(f"  WARN:  harness '{name}' variant '{variant}' symlink missing: {ol}")
+            print(f"         Fix: /cc-fuzzer:nix-build --harness {name}")
+            warnings+=1
+if issues==0 and warnings==0:
+    print("  ok: all nix store paths intact")
+    print("  tip: run /cc-fuzzer:nix-cleanup after campaign to free store space")
+PY
+  fi
+fi
+echo ""
+
+#------------------------------------------------------------------------------
+# Check 12: Nix environment issues (v0.22)
+# Surfaces severity=error issues from nix-environment-issues.json.
+#------------------------------------------------------------------------------
+echo "[12/12] Checking nix environment issues..."
+NIX_ISSUES_FILE="$PROJECT_ROOT/fuzz/state/nix-environment-issues.json"
+if [ -f "$NIX_ISSUES_FILE" ]; then
+  python3 - <<'PY'
+import json, os, sys
+
+path = os.environ.get("NIX_ISSUES_FILE","")
+try:
+    doc = json.load(open(path))
+except Exception:
+    sys.exit(0)
+issues = doc.get("issues") or []
+err_count = sum(1 for i in issues if isinstance(i,dict) and i.get("severity")=="error")
+warn_count = sum(1 for i in issues if isinstance(i,dict) and i.get("severity")=="warning")
+if not issues:
+    print("  ok: no nix environment issues")
+    sys.exit(0)
+for iss in issues:
+    if not isinstance(iss,dict): continue
+    sev = iss.get("severity","warning")
+    code = iss.get("code","?")
+    summary = iss.get("summary","")
+    hint = (iss.get("remediation") or {}).get("human_message","")
+    tag = "ISSUE" if sev=="error" else "WARN"
+    print(f"  {tag}: ({code}) {summary}")
+    if hint:
+        print(f"         Fix: {hint}")
+PY
+  NIX_ISSUES_FILE="$NIX_ISSUES_FILE" python3 -c "
+import json,sys,os
+doc=json.load(open(os.environ['NIX_ISSUES_FILE']))
+errs=[i for i in doc.get('issues',[]) if isinstance(i,dict) and i.get('severity')=='error']
+warns=[i for i in doc.get('issues',[]) if isinstance(i,dict) and i.get('severity')=='warning']
+sys.exit(1 if errs else (2 if warns else 0))
+" 2>/dev/null
+  _EC=$?
+  if [ "$_EC" -eq 1 ]; then
+    ISSUES=$((ISSUES + 1))
+  elif [ "$_EC" -eq 2 ]; then
+    WARNINGS=$((WARNINGS + 1))
+  fi
+else
+  ok "no nix-environment-issues.json (no nix-committed harnesses or reconcile not yet run)"
 fi
 echo ""
 

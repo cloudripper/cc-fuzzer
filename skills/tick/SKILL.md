@@ -7,6 +7,32 @@ disable-model-invocation: true
 
 Dispatches the **fuzz-orchestrator** subagent to perform exactly one WARM-tick iteration (its WARM-mode procedure owns the steps). Then, if YOLO is active, chain the next tick (below). One invocation = one tick — the chaining, not a loop inside this skill, is what advances the campaign.
 
+## Dispatch prompt — keep it minimal
+
+When you invoke fuzz-orchestrator, pass a SHORT prompt. The orchestrator reads `fuzz/state/current.json` itself; repeating state in the prompt wastes its context window and causes stalls.
+
+**Correct:**
+```
+Advance one WARM tick. Campaign root: <abs-path>.
+```
+
+**Never do this:**
+```
+Advance one WARM tick. Campaign root: <abs-path>.
+Current state: {... pasted JSON ...}
+Next steps: 1. Run update-current.sh 2. Read current.json 3. ...
+Env vars: CC_FUZZER_PROJECT_ROOT=... FUZZ_STATE_DIR=...
+```
+
+No JSON blobs, no step lists, no env-var dumps. One sentence + root path is enough. The orchestrator is the WARM-tick expert; trust it.
+
+## Stall recovery
+
+If the orchestrator subagent stalls or returns without completing a tick step:
+1. **Diagnose**: read the last few lines of its output. Is it stuck waiting for input? Did it hit a policy filter? Did a tool call fail?
+2. **Redirect** (preferred): use `SendMessage` with a short correction (e.g. "Skip the triage step — pass only the directory path, not crash contents").
+3. **Restart** (if redirect fails): re-dispatch with a fresh minimal prompt. Never absorb the work into the main context or try to complete the tick yourself.
+
 Useful manually for inspecting each LLM decision before the next fires, running where you can't leave a long session open, or debugging the orchestrator's decision logic.
 
 ## YOLO self-loop — chain the next tick

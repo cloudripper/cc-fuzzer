@@ -46,7 +46,14 @@ fi
 # refreshes it in place whenever the plugin flake is evaluated (`nix develop
 # <plugin>`, `nix run <plugin>#init`). Locking it read-only makes nix fail with
 # "cannot write modified lock file … Permission denied". Keep it writable.
-find "$PLUGIN_ROOT" -type f ! -name flake.lock -exec chmod a-w {} \; 2>/dev/null
+#
+# Prune .git/: it is VCS state, not plugin source. Locking it a-w breaks any
+# in-flight git operation (commit, ref update, reflog write) with EACCES on
+# .git/COMMIT_EDITMSG, .git/logs/HEAD, .git/refs/heads/*. Agents never
+# legitimately write under .git; the lock there only ever broke commits during
+# plugin development. The source-edit protection is unaffected — every tracked
+# plugin file outside .git is still locked.
+find "$PLUGIN_ROOT" -name .git -prune -o -type f ! -name flake.lock -exec chmod a-w {} \; 2>/dev/null
 [ -f "$PLUGIN_ROOT/flake.lock" ] && chmod u+w "$PLUGIN_ROOT/flake.lock" 2>/dev/null || true
 
 # Verify - check that the chmod actually changed mode bits

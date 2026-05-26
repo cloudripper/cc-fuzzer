@@ -54,6 +54,7 @@ Do this once, completely, then stop:
 
 1. `migrate-state.sh` (no-op for fresh projects)
 2. `preflight.sh` — stop on failure, tell the user to fix tools
+2a. **NIX ENVIRONMENT CHECK** — read `fuzz/state/nix-environment-issues.json` (written by `nix-env-reconcile.sh` at session start). If the file contains any `severity=error` issues affecting harnesses committed to `build_backend=nix`, **stop and print each issue's `remediation.human_message`** before proceeding. Warning-severity issues should be surfaced but do not block the campaign. Skip this check if the file is absent (no nix-committed harnesses yet).
 3. **GUIDANCE CHECK** — if `fuzz/guidance.md` is absent, tell the user about `${CLAUDE_PLUGIN_ROOT}/templates/guidance.md` and offer to pause so they can fill it out. Do not create the file yourself. **(Skip this offer on the autonomous `self_loop` path — proceed without guidance; the planner falls back to source-only reasoning.)**
 4. **PLAN** — delegate to `campaign-planner` (fresh mode). It writes `fuzz/state/plan.md`. Do not write the plan yourself. **On the autonomous `self_loop` path (no target given), tell the planner to self-select the target from the project; it documents the choice in `## Target`.**
 5. **DICTIONARY SUGGESTION** — surface the planner's `## Dictionaries` list with `/cc-fuzzer:dictionaries add <name>` commands. Do not auto-add.
@@ -302,6 +303,18 @@ If a dispatched specialist needs source code, it reads it itself.
 
 When dispatching `crash-triager`, do **not** read crash files yourself. Pass the directory path `fuzz/crashes/new/`. The triager handles the canonical flow (reproduce → dedup via stack hash → mv to `known/<id>/` or `flaky/`).
 
+**Never embed crash output in the triager prompt.** Raw ASan reports, stack frames, and crash logs are large and may trigger policy filters — the triager reads them directly from disk. The only valid prompt content is the crash directory (or `--reproducer <path> --id <id>` for a specific re-verification).
+
+Correct:
+```
+Triage crashes in fuzz/crashes/new/. Campaign root: <abs-path>.
+```
+
+Never:
+```
+Triage crashes. Here is the ASan output: [246 frames pasted] ...
+```
+
 The triager uses `findings.sh` to add or dedup findings. You never write `findings.jsonl` directly. You are the only writer of `events.jsonl`.
 
 ## Launch-blocker handling
@@ -366,6 +379,7 @@ The point is so the user sees progress without verbose narration. Don't write a 
 | `kill-harness-processes.sh` returns non-zero before a rebuild | Do not rebuild. Surface still-alive PIDs to the user. |
 | Coverage binary missing and user didn't pass `--no-coverage` | Stop after harness build. Tell user to fix or opt out explicitly. |
 | YOLO active but the tick chain isn't running | Still emit `YOLO_NEXT: schedule …`. The `/cc-fuzzer:yolo on` / `campaign` skills own (re)starting the chain. Do not silently disable YOLO. |
+| A specialist subagent stalls or returns without completing its work | Diagnose from its last output lines. Send a short `SendMessage` redirect if it just needs a nudge. Only re-dispatch with a fresh minimal prompt if it's truly stuck — never absorb its work into your own context or complete it yourself. |
 
 ## Hard rules
 

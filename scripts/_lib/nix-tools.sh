@@ -81,3 +81,50 @@ nix_require() {
   echo "       Fix: nix develop \$CLAUDE_PLUGIN_ROOT before launching claude" >&2
   exit 2
 }
+
+# nix_check_store_path <path>
+# Returns 0 if the path exists in /nix/store and is accessible, 1 otherwise.
+nix_check_store_path() {
+  local p="${1:-}"
+  [ -z "$p" ] && return 1
+  # Must be under /nix/store and exist
+  case "$p" in /nix/store/*) ;; *) return 1 ;; esac
+  [ -e "$p" ] && return 0
+  return 1
+}
+
+# nix_hash_file <path>
+# Prints the first 16 hex chars of the SHA-256 of a file. Returns 1 if absent.
+nix_hash_file() {
+  local p="${1:-}"
+  [ -f "$p" ] || return 1
+  python3 -c "
+import hashlib, sys
+try:
+    h = hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest()[:16]
+    print(h)
+except Exception:
+    sys.exit(1)
+" "$p"
+}
+
+# nix_get_flake_rev
+# Prints the current project-flake git rev, or "dirty" if untracked changes,
+# or "" if not in a git repo / no flake.nix. Resolution order:
+#   1. CC_FUZZER_FLAKE_REV env var (set by buildFHSEnv profile)
+#   2. git rev-parse HEAD on the directory containing flake.nix
+nix_get_flake_rev() {
+  if [ -n "${CC_FUZZER_FLAKE_REV:-}" ]; then
+    echo "$CC_FUZZER_FLAKE_REV"
+    return 0
+  fi
+  if git -C "${CC_FUZZER_PROJECT_ROOT:-$PWD}" rev-parse HEAD >/dev/null 2>&1; then
+    local rev dirty
+    rev=$(git -C "${CC_FUZZER_PROJECT_ROOT:-$PWD}" rev-parse HEAD 2>/dev/null)
+    dirty=$(git -C "${CC_FUZZER_PROJECT_ROOT:-$PWD}" status --porcelain 2>/dev/null | head -1)
+    if [ -n "$dirty" ]; then echo "dirty"; else echo "$rev"; fi
+    return 0
+  fi
+  echo ""
+  return 1
+}

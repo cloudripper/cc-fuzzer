@@ -7,9 +7,9 @@ then exports the resolved values and calls this with one positional argument:
 the temp path to write the (singular file | multi-mode mirror) into.
 
 Singular: write the harness-built/v5 doc straight to argv[1].
-Multi:    upsert the harness-built/v6 doc (adds `name`) into harnesses.json by
-          name, atomically, then mirror harnesses[0] into argv[1] so v8-era
-          readers of harness-built.json keep working.
+Multi:    upsert the harness-built/v7 doc (adds `name`, `build_backend`) into
+          harnesses.json by name, atomically, then mirror harnesses[0] into
+          argv[1] so legacy readers of harness-built.json keep working.
 """
 import json
 import os
@@ -30,8 +30,9 @@ def build_doc():
     sanitizers = [s for s in os.environ["SANITIZERS_PY"].split(",") if s]
     is_multi = os.environ.get("IS_MULTI_WRITE", "0") == "1"
 
+    build_backend = os.environ.get("BUILD_BACKEND", "legacy") or "legacy"
     doc = {
-        "schema": "harness-built/v6" if is_multi else "harness-built/v5",
+        "schema": "harness-built/v7" if is_multi else "harness-built/v5",
         "harness_source": os.environ["HARNESS_SOURCE"],
         "harness_binary": os.environ["HARNESS_BINARY"],
         "coverage_binary": opt(os.environ.get("COVERAGE_BIN_JSON", "")),
@@ -55,6 +56,10 @@ def build_doc():
 
     if is_multi:
         doc["name"] = os.environ["HARNESS_NAME"]
+        doc["build_backend"] = build_backend
+        import datetime as _dt
+        doc["build_backend_decided_at"] = _dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        doc["build_backend_decided_by"] = "write-harness-built"
 
     # Conditional fields per spec: reason fields must appear when their tracking
     # field is false, must NOT appear when tracking is true.
