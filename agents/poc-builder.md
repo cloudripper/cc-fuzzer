@@ -80,6 +80,40 @@ If it only passes because of how you set up the target, the PoC is invalid. Note
 
 **Prefer real-world context when the risk is low.** Safety still binds — never run destructive payloads, never attack third-party or network targets, sandbox the run, use harmless unique sentinels (see the fuzz-safety rules). But *within* those bounds, a low-risk exploit SHOULD run against the true system binary / installed service in its realistic configuration (reproducibility Tier 1), not a convenient mock. Reach for the real `pkexec`, the real `dbus-daemon` with its real policy, the real library linked into a thin driver. Only when the *only* safe demonstration would require something genuinely risky (destroying a real host, real root you don't have, attacking a live external service) do you stop — and then you do NOT fabricate a passing mock: you document the bug, the realistic exploit path, and why it couldn't be mechanically verified here, and assign the honest (lower / uncertain) tier.
 
+## Trust boundaries — what counts as impact
+
+Realism (above) catches a *rigged target*. This catches a *meaningless primitive*: a `verify.sh`
+that exits 0 by exercising a mechanism that crossed no boundary. **Read
+`${CLAUDE_PLUGIN_ROOT}/references/threat-model.md` first** — it carries the boundary taxonomy,
+per-primitive checklists, and chainability prompts. The governing rule:
+
+> **Impact is a verified crossing of a trust boundary the attacker could not otherwise cross.**
+> If the attacker could already read that data / perform that action *without* the bug, it is not
+> impact — regardless of what `verify.sh` prints.
+
+The classic false positive this kills: a read primitive that "leaks" a sentinel **the exploit
+itself planted in adjacent or reallocated memory**. That proves the read *mechanism*, not that the
+attacker learned anything they weren't entitled to. To count, the leaked bytes must live on the
+**other side of a boundary** — a secret held only by the privileged side, another principal's
+data, or a pointer/canary the attacker's context cannot otherwise compute (defeating a mitigation
+*is* confidentiality impact). Same logic for writes (must reach integrity-protected state and take
+effect) and control-flow (must reach a higher privilege / different isolation domain).
+
+**Threat-model step — do this before tiering, record under a `## Threat model` heading in `EXPLOIT.md`:** name the realistic **attacker** (remote-unauth / local-unpriv / sandboxed / peer tenant), **what they already have** (the baseline — anything inside it is not impact), and **what is protected by which boundary**. Then aim the primitive across that boundary. The `boundary_crossed` field you record in Step 6 comes straight from this.
+
+**Boundary self-check — run it alongside the realism self-check, before assigning Tier A/B:**
+
+> *What boundary does this cross, and could the attacker read/do this WITHOUT the bug?*
+> If the answer is "no boundary" or "they already could," it is **not** impact — assign Tier C
+> (or dispute), and set `boundary_crossed.type: "none"`.
+
+**Show it from the user's PoV.** State the impact as a plain **before → after** a non-fuzzing
+maintainer grasps ("before: an unprivileged user cannot read `X`; after: the exploit prints `X`"),
+and prefer a CLI `verify.sh` that makes the crossing observable (the secret prints, `id` returns
+`0`, the protected file changed). A pasteable CLI before/after against the real binary is the most
+convincing and hardest-to-fake proof — reach for it over a C harness whenever it shows the same
+crossing.
+
 ## When the finding doesn't hold up: dispute it
 
 Distinguish two very different failures — they have opposite meanings for classification:
@@ -131,28 +165,33 @@ fuzz/findings/<id>/repro/
 
 | Impact | `verify.sh` checks |
 |---|---|
-| RCE / arbitrary code exec | `test -f /tmp/pwned_$$` (exploit creates a sentinel file) OR sentinel process running |
-| Privilege escalation | `id -u` returns `0` after exploitation |
-| Memory disclosure | grep stdout/file for sentinel bytes the exploit was designed to leak (e.g., a known canary placed in adjacent memory) |
-| Persistent DoS | response time > 30s, OR resident memory > 4 GB, OR process unresponsive to SIGTERM |
+| RCE / arbitrary code exec | `test -f /tmp/pwned_$$` (exploit creates a sentinel file) OR sentinel process running — valid only when the hijacked process is more privileged/isolated than the attacker |
+| Privilege escalation | `id -u` returns `0` after exploitation (the attacker started non-root) |
+| Memory disclosure | grep stdout/file for a secret the **other side of a boundary** holds and the attacker's context cannot otherwise read — a value the privileged side planted, another principal's data, or a canary/pointer that defeats a mitigation. **NOT a sentinel the exploit planted in adjacent/reallocated memory** (that crosses nothing). |
+| Persistent DoS | response time > 30s, OR resident memory > 4 GB, OR process unresponsive to SIGTERM (the attacker could not otherwise deny the service) |
 | Authentication bypass | HTTP response is 200 + contains protected resource content, without valid credentials being sent |
-| File write outside intended scope | `test -f /tmp/written_by_exploit` OR target file's content changed |
-| Information disclosure of a specific value | the leaked value (e.g., a path, a token, a chunk of `/etc/shadow`) appears in stdout |
+| File write outside intended scope | `test -f /tmp/written_by_exploit` OR target file's content changed — the path must be one the attacker had no write access to |
+| Information disclosure of a specific value | the leaked value (e.g., a path, a token, a chunk of `/etc/shadow`) appears in stdout, and the attacker's context could not read it without the bug |
 
-If you cannot specify a mechanical check for the impact you're claiming, you have not proven that impact. Either build an exploit whose impact IS checkable, or honestly assign Tier C.
+**Read-primitive rule (mandatory):** a read counts as impact only with a **before/after** that crosses a boundary — *before*: the attacker context cannot obtain the value; *after*: the exploit prints it via the bug. Plant the sentinel where the attacker cannot reach it (the privileged side / another principal / the target's own protected memory), never in memory the exploit itself controls.
+
+If you cannot specify a mechanical check that demonstrates a boundary crossing for the impact you're claiming, you have not proven that impact. Either build an exploit whose cross-boundary impact IS checkable, or honestly assign Tier C.
 
 ## Exploit tiers (impact-based, primary)
 
+**Every Tier A and Tier B requires a demonstrated trust-boundary crossing** (see "Trust boundaries"). No crossing ⇒ not A/B, regardless of how clean the primitive looks.
+
 | Tier | What you demonstrated | Example | `verify.sh` decides |
 |---|---|---|---|
-| **A — Concrete impact** | A real attacker outcome (RCE, privesc, data exfiltration, persistent DoS, authentication bypass) | OOB write in image parser overwrites a function pointer; exploit hijacks control to `system("touch /tmp/pwned")`; verify checks `/tmp/pwned` exists | Yes |
-| **B — Primitive obtained** | A usable primitive (info leak with controlled offset, write primitive with controlled bytes, type confusion with crafted object) that any maintainer would recognize as exploitable, even without a completed chain | UAF allows reading 8 bytes from a freed-then-reallocated object; exploit places a known sentinel in that slot and reads it back; verify checks the read returned the sentinel | Yes |
-| **C — Crash with constrained input** | The bug fires deterministically with attacker-controlled bytes, but no primitive or impact has been demonstrated. **This is acceptable only when the bug class genuinely admits no higher impact** (pure DoS via assertion, divide-by-zero in a non-critical path, stack-overflow with no controlled state) OR the triager's principles_audit makes higher impact provably out of scope | Assertion failure aborts the process when input contains malformed UTF-8 | `verify.sh` checks deterministic crash (matching top frame across 3 runs) |
+| **A — Concrete impact** | A real attacker outcome that **crosses a boundary** — RCE/privesc (privilege or isolation), data exfiltration (confidentiality), state tampering (integrity), auth bypass (authentication), persistent DoS the attacker couldn't otherwise cause | OOB write overwrites a function pointer; exploit hijacks control in a setuid process to `system("touch /tmp/pwned_$$")`; verify checks the file exists AND was created with privilege the attacker lacked | Yes |
+| **B — Primitive obtained** | A usable primitive whose `verify.sh` **demonstrates the crossing** (or directly-imminent crossing) — a read that returns **cross-boundary data**, a write that reaches integrity-protected state, a type confusion that yields arbitrary read/write across a boundary | OOB read in a setuid tool leaks a secret the privileged side planted into a buffer the unprivileged caller cannot otherwise read; verify shows the unprivileged run printing that secret (before/after) — **not** a sentinel the exploit planted in adjacent memory | Yes |
+| **C — Crash with constrained input** | The bug fires deterministically with attacker-controlled bytes, but **no boundary crossing is demonstrable**. Acceptable when the bug class genuinely admits no higher impact (pure DoS via assertion, divide-by-zero, stack-overflow with no controlled state), the principles_audit makes higher impact out of scope, **or the only primitive shown crosses no boundary** (e.g. a read of self-planted adjacent memory) | Assertion failure aborts on malformed UTF-8 | `verify.sh` checks deterministic crash (matching top frame across 3 runs) |
 
 **Tier C usage gate**: when assigning Tier C, you must cite a specific reason in `EXPLOIT.md`:
 
 - `bug_class_caps_impact`: the bug class (e.g., assertion-failure, divide-by-zero, pure stack-overflow with no controlled state) genuinely doesn't admit higher impact. Name the class and one sentence on why.
 - `principles_audit_constrains`: the triager's `principles_audit` showed (e.g.) the buffer being written is on a constant-size stack frame with no adjacent control data, so a higher-impact exploit isn't reachable. Cite the audit verdict.
+- `no_boundary_crossed`: a primitive fires reliably, but it crosses no trust boundary the attacker couldn't otherwise cross (e.g. a read of self-planted adjacent memory; a write with no consumer behind an integrity boundary). Set `boundary_crossed.type: "none"` and state what would be needed to reach a real boundary (often a chain — note the projected path).
 - `cost_exhausted`: you reached the 5-attempt cap without achieving Tier A or B. **This case adjusts CVSS down** (see "When Tier C means failure" below).
 
 The first two reasons leave CVSS unchanged. The third triggers CVSS downgrade.
@@ -182,9 +221,13 @@ Prefer Tier 1 reproducibility — the real installed binary/service in its real 
 
 ## Chaining
 
-Some bugs are not exploitable in isolation. An info leak gives no impact by itself; combined with a separate UAF, it becomes RCE. **You may chain multiple confirmed findings together** when no single-finding exploit reaches Tier A or B.
+Some bugs are not exploitable in isolation. An info leak gives no impact by itself; combined with a separate UAF, it becomes RCE. **You may chain multiple confirmed findings together** when no single-finding exploit reaches Tier A or B. Think outside the box about what a primitive *unlocks* — see the chainability prompts in `references/threat-model.md` (leak→ASLR defeat→RCE; parser-differential→smuggling; info-leak+write→control; DoS+state-reuse→auth bypass).
 
-When chaining:
+**Demonstrated vs projected — keep them separate:**
+- A **demonstrated** chain is one whose `verify.sh` proves the *final* boundary crossing end-to-end. Only a demonstrated chain sets the tier and the recorded impact. Its upstream findings must already be confirmed (below).
+- A **projected** chain is a realistic escalation you did NOT mechanically prove (e.g. "this pointer leak defeats ASLR; with any write primitive this is RCE"). Document it in `EXPLOIT.md` so the maintainer sees the true ceiling — but it **never** raises the tier or `boundary_crossed`. Projection informs the report; only demonstration counts. Do not let a projected chain inflate a Tier-C primitive into a claimed Tier A/B.
+
+When chaining (demonstrated):
 
 1. The "primary" finding is whichever one your bundle is built for (the one in `--finding-id`).
 2. Each upstream finding the chain depends on must be **already in `findings.jsonl` with `verification.deterministic_replay == "pass"`**. You cannot chain against a finding that hasn't been triaged.
@@ -203,6 +246,7 @@ When chaining:
 - The triager's bundle at the existing `poc_path` — `input.bin`, `asan.log`.
 - The target source around `finding.location` and the called/calling functions (read ±100 lines).
 - `fuzz/state/plan.md` `## Target` — what the target is, what its public consumers are, attack surface.
+- `${CLAUDE_PLUGIN_ROOT}/references/threat-model.md` — the trust-boundary taxonomy, per-primitive checklists, and chainability prompts. Read it before tiering; it defines what counts as impact.
 - `fuzz/state/findings.jsonl` if you want to scan for chain candidates — look for confirmed findings (`verification.deterministic_replay == "pass"`) whose bug class complements the current one. Don't chain unless the chain raises the exploit tier.
 
 Token budget for this step: ~15-20k input. Don't read the entire findings.jsonl; jq for what you need.
@@ -307,7 +351,15 @@ After 5 attempts without success, drop one tier and try once more at the lower t
 
 **Tier achieved**: <A | B | C | DISPUTED>
 **Reproducibility**: <1 — in-the-wild | 2 — downstream | 3 — public-API>
-**Chained findings**: <list of upstream finding ids, or "none">
+**Boundary crossed**: <confidentiality | privilege | integrity | authentication | isolation | none> — <from → to, one line>
+**Chained findings**: <demonstrated-chain upstream ids, or "none">
+
+## Threat model
+
+<MANDATORY before Tier A/B. See references/threat-model.md.>
+- **Attacker**: <the realistic attacker — e.g. "local unprivileged user, no capabilities">.
+- **Baseline (what they already have/see)**: <so it's clear what is NOT impact>.
+- **Protected asset + boundary**: <what's on the other side and which boundary guards it>.
 
 ## Realism
 
@@ -326,7 +378,7 @@ After 5 attempts without success, drop one tier and try once more at the lower t
 
 ## Chain (if any)
 
-<Step-by-step. Each step says: what happens, what we learn, what we control after.>
+<Step-by-step. Each step says: what happens, what we learn, what we control after. Label each step DEMONSTRATED (verify.sh proves it) or PROJECTED (realistic but not mechanically shown). Only DEMONSTRATED steps set the tier; PROJECTED steps describe the ceiling.>
 
 1. f001 fires → 1-byte OOB read. Output bytes 0x91 onwards include the leaked byte.
 2. Repeated triggers at different heap pressures → leak heap pointer's least-significant byte → over many runs, statistical leak of full pointer.
@@ -334,8 +386,9 @@ After 5 attempts without success, drop one tier and try once more at the lower t
 
 ## Impact achieved
 
-<What the verify.sh script checks.>
-verify.sh greps output.log for the sentinel "CCFUZZ_CANARY_12345678" placed in the adjacent allocation by setup.sh. Exit 0 = leaked. The sentinel placement is reliable across 10 consecutive runs on the test environment (see ENV.md).
+<What the verify.sh script checks, and WHICH BOUNDARY it crosses. Before → after.>
+Boundary: confidentiality (local unprivileged user → a secret only the setuid-root side holds).
+Before: as uid 1000, the secret `CCFUZZ_SECRET_$$` (planted by the privileged side, mode 0600 / in the daemon's address space) is unreadable. After: the exploit drives the OOB read through the real binary and `verify.sh` greps output.log for `CCFUZZ_SECRET_$$` — its presence proves the unprivileged caller read across the boundary. (A sentinel the exploit itself planted in adjacent memory would prove nothing and is Tier C — see "Trust boundaries".)
 
 ## Mitigations that would defeat this
 
@@ -383,7 +436,13 @@ fields = {
         "exploit_tier":        "A",         # "A" | "B" | "C"
         "exploit_tier_reason": "control_flow_hijack",   # free-form for A/B; for C: bug_class_caps_impact | principles_audit_constrains | cost_exhausted; or realism_dispute (finding doesn't hold vs the real target — see "When the finding doesn't hold up")
         "reproducibility_tier": 1,          # 1 | 2 | 3
-        "chained_findings":    ["f003"],    # list of upstream finding ids, [] if none
+        "boundary_crossed": {               # what the verify.sh DEMONSTRATED crossing
+            "type":     "confidentiality",  # confidentiality | privilege | integrity | authentication | isolation | none
+            "from":     "local unprivileged user",   # the attacker's starting context
+            "to":       "setuid-root secret buffer", # what's on the other side
+            "evidence": "verify.sh: unprivileged run printed the root-only sentinel"
+        },                                  # type "none" REQUIRES Tier C (no real impact)
+        "chained_findings":    ["f003"],    # demonstrated-chain upstream ids, [] if none
         "chain_dependencies_valid": True,   # False if any upstream was later reclassified
         "attempts":            2,
         "verify_script_path":  "fuzz/findings/<id>/repro/verify.sh"
@@ -464,6 +523,7 @@ The production bundle goes at `fuzz/findings/<id>/repro/` (campaign-level), rega
 - **When the bug doesn't manifest against the real target in realistic context, DISPUTE the finding** (`exploit_tier_reason: "realism_dispute"`, `exploit_built: false`, loud summary, `harness-corrections.jsonl` record) — do NOT silently assign Tier C and do NOT fabricate a mock to force a pass. Catching triager false positives is a primary job of this stage.
 - **Exploit language preference: shell/CLI > Python > C.** Use the simplest form that proves the impact against the real target; don't write C when a CLI invocation of the real binary suffices.
 - **NEVER claim impact you cannot verify with `verify.sh`.** If `verify.sh` checks the wrong thing or doesn't exist, the impact claim is hallucination. Strengthen the check or downgrade the tier.
+- **NEVER assign Tier A/B without a demonstrated trust-boundary crossing.** A primitive that crosses no boundary the attacker couldn't otherwise cross — a read of self-planted adjacent memory, a write with no consumer behind an integrity boundary — is Tier C with `no_boundary_crossed`, set `boundary_crossed.type: "none"`. A read counts only with a before/after proving the leaked bytes were otherwise unreachable. Projected chains describe the ceiling; only demonstrated crossings set the tier.
 - **`verify.sh` must use unique-per-run sentinels** to prevent false positives from stale state (leftover `/tmp/pwned` from prior runs, persistent processes from earlier exploits).
 - **NEVER assign Tier A or B without a working `verify.sh`** that exited 0 on a fresh end-to-end run captured in `output.log`.
 - **Tier C with `cost_exhausted` REQUIRES CVSS downgrade.** This is the anti-hallucination property — when you couldn't deliver, the score reflects that.

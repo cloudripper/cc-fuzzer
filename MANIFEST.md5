@@ -3,7 +3,7 @@
 # Format: <md5>  <relative-path>
 #
 ba9bc467590581343947ab6ed1a06c11  .claude-plugin/plugin.json
-106c086c90a1f909be2c4ec3d3987396  STATE_SCHEMA.md
+c3ba20b9836a731735f3d63039a36c29  STATE_SCHEMA.md
 0b1de2330d13af29b7f32e795df4eee8  agents/campaign-planner.md
 1c10e5f08e8401b18c66d468834d492c  agents/code-reviewer-deep.md
 0951b4752b235882ba2e422fb2b748f9  agents/code-reviewer.md
@@ -15,8 +15,8 @@ acd8f9d3b9887b9eeb91fe0366d7b39e  agents/harness-writer.md
 54c1fe1fa0d493691c343ffbe8105403  agents/mutator.md
 14118f35c4f22d8a4e4d36cc759dd602  agents/nix-builder.md
 abf7a236d12d4e42a66cd6d181be1d76  agents/planner-consult.md
-eaea0e2557575f25a9c1f07b41287eef  agents/poc-builder.md
-7fede878d527d68d0802a35827ddc84b  agents/reporting-agent.md
+3a74536c89c6e4d535bc1b0dff393137  agents/poc-builder.md
+b462bf8b5e4292bc5e4bdcce31e42595  agents/reporting-agent.md
 63b092f672f8d75983b58b2aef79044a  agents/seed-generator.md
 6b4787d332f9fc179dfa1823ec79050d  dictionaries/INDEX.md
 070c1e76492ecaf0bf37c051628df96c  dictionaries/bidi-controls.dict
@@ -90,6 +90,7 @@ b7494731f0d9cffa7f7662549756ec4e  scripts/validate-state.sh
 1f35366fb4fd03bebd80cff4dbfce560  scripts/write-harness-built.sh
 be92be6440faeb656bb50c4dd4760ba2  scripts/yolo-state.sh
 b6ba5f4173c229037a2d4d1331c802a1  scripts/oracle-smoke-test.sh
+f7398068a97e6a4ee7edb221e3555f52  references/threat-model.md
 695259ae94cc327ec0ba77c8465b4460  skills/campaign/SKILL.md
 75b89d0d8054fb0c949c834a9586e2bc  skills/concolic/SKILL.md
 86764fb883df1136082324f922631a3a  skills/coverage/SKILL.md
@@ -100,7 +101,7 @@ c1ed7ac8d06104cef051c84a417a600a  skills/dictionaries/SKILL.md
 c014b0ae2abd1e423f51baa5b21dbe7a  skills/nix-build/SKILL.md
 210d48c416833814842b495b60bb6bb7  skills/nix-cleanup/SKILL.md
 2c0527d6b6699d371b6dd972b54c63e9  skills/plan/SKILL.md
-b6c6746e78759b73f0c10677b76ad8d1  skills/poc/SKILL.md
+cdcbc9dec0eb852634133180860905e6  skills/poc/SKILL.md
 e290baf96ab206f60000850d6b4a9891  skills/report/SKILL.md
 798d91c8a644bc860f83f79d498fe7de  skills/reset/SKILL.md
 1005feb93d5928e0c3a85f9f4cb44bff  skills/resume-campaign/SKILL.md

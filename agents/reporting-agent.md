@@ -332,8 +332,9 @@ When `exploit_built: true`:
 The exploit bundle is `<finding.poc_path>/`.
 
 **Exploit tier**: <A | B | C> — <one-line summary from EXPLOIT.md>
+**Boundary crossed**: <from `finding.verification.boundary_crossed`: `<type>` — `<from>` → `<to>` (`<evidence>`)>. <Render for Tier A/B — it is the concrete trust-boundary impact the maintainer cares about. If `boundary_crossed` is absent or `type == "none"`, omit the line; such a finding should not be Tier A/B (note the inconsistency if it is).>
 **Reproducibility**: <1 — in-the-wild | 2 — downstream consumer | 3 — public-API program>
-**Chain**: <"none — single-finding exploit" | "chains findings <comma-separated chained_findings>">
+**Chain**: <"none — single-finding exploit" | "chains findings <comma-separated chained_findings>" (demonstrated only; projected escalations appear under Chainability)>
 **Verification**: `verify.sh` exited 0 on a fresh end-to-end run (see `output.log`).
 **Realism**: <one line from EXPLOIT.md's `## Realism` — the real target/binary exercised and the protections left intact, so the impact reflects a real deployment rather than a harness artifact or a rigged setup>.
 
@@ -480,10 +481,11 @@ The leaked byte is positional (always offset +1 from the attribute value); an at
 
 The exploit bundle is `fuzz/findings/f001/repro/`.
 
-**Exploit tier**: B — primitive obtained (1-byte info-leak with positional offset; sentinel placed in adjacent allocation is reliably leaked across 10/10 runs)
+**Exploit tier**: B — primitive obtained (OOB read returns bytes from an adjacent in-document buffer the caller never supplied; leaks the content of a sibling entity the requesting context was not entitled to read)
+**Boundary crossed**: confidentiality — document-author context → another entity's expanded value (`verify.sh`: the unentitled run printed the planted secret `CCFUZZ_SECRET_47293`)
 **Reproducibility**: 1 — in-the-wild (uses `xmllint` from `libxml2-utils`, shipped on Debian, Ubuntu, RHEL, Fedora, Arch)
 **Chain**: none — single-finding exploit
-**Verification**: `verify.sh` exited 0 on a fresh end-to-end run (sentinel `CCFUZZ_CANARY_47293_1779200000` placed by `setup.sh` was found in `output.log`).
+**Verification**: `verify.sh` exited 0 on a fresh end-to-end run (the secret only the privileged side held appeared in `output.log` from the unentitled run).
 
 Bundle contents: `README.md`, `EXPLOIT.md`, `REACHABILITY.md`, `ENV.md`, `exploit.c`, `setup.sh`, `build.sh`, `run.sh`, `verify.sh`, `input.bin`, `output.log`, `asan.log`.
 
@@ -492,7 +494,7 @@ To verify:
     cd fuzz/findings/f001/repro
     ./build.sh                          # apt-get install libxml2-utils (no-op if installed)
     ./run.sh                            # setup → exploit → verify
-    echo "Final exit: $?"               # 0 = sentinel leaked, primitive confirmed
+    echo "Final exit: $?"               # 0 = cross-boundary secret leaked, primitive confirmed
 
 #### Sanitizer output
 
