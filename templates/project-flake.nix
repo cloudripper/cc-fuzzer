@@ -48,5 +48,31 @@
           program = "${ccfuzzer.lib.${system}.mkFhsEnv deps}/bin/cc-fuzzer-env";
         };
       };
+
+      # ── Monolithic / whole-library targets (optional) ───────────────────
+      # The per-harness `/cc-fuzzer:nix-build` flow compiles a handful of
+      # source files (`clang src/*`). A whole INSTRUMENTED library (e.g.
+      # systemd's libsystemd-shared.so) must be built by the project's OWN
+      # build system. Declare that build HERE, pinned to cc-fuzzer's toolchain
+      # so the instrumented .so links the same libclang_rt.profile the dev
+      # shell's llvm-cov / llvm-profdata read — otherwise the .so's
+      # __llvm_profile_runtime forces a mismatched profraw version and coverage
+      # silently reports zero lines. Then point a `build_mode:"monolithic"`
+      # harness manifest at `.#fuzzers`. Full recipe + worked example:
+      #   <cc-fuzzer-src>/references/nix-monolithic.md
+      #
+      # packages.${system}.fuzzers =
+      #   let
+      #     stdenv = ccfuzzer.lib.${system}.clangStdenv;   # cc-fuzzer's pinned LLVM
+      #     pkgs   = ccfuzzer.lib.${system}.pkgs;          # same nixpkgs instance
+      #   in stdenv.mkDerivation {
+      #     name = "my-fuzzers-cov";
+      #     src = ./.;
+      #     nativeBuildInputs = [ pkgs.meson pkgs.ninja pkgs.pkg-config ];
+      #     buildInputs = (import ./fuzz/nix-deps.nix) pkgs;
+      #     # Build instrumented for coverage + sanitizers; install harness
+      #     # binaries to $out/bin and the instrumented shared lib to $out/lib.
+      #     # ... your project's configure/build/install phases ...
+      #   };
     };
 }

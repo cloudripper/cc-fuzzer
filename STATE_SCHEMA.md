@@ -278,6 +278,7 @@ Lifecycle: IMMUTABLE once written. Never modified, never deleted (except by `/cc
 - `input_encoding`: one of `passthrough | fdp | length_prefixed_records | custom`
 - `sanitizers`: subset of `address | undefined | memory | thread | fuzzer | leak | integer | implicit-conversion` (the last two = the opt-in UBSan integer suite — see "UBSan integer/implicit-conversion suite")
 - `coverage_tracking`: boolean. When true, `coverage_binary` is required and must be a separate `-fprofile-instr-generate -fcoverage-mapping` build (no `-fsanitize=fuzzer`).
+- `coverage_dso`: optional array of absolute paths to instrumented shared objects (`.so`) whose coverage mapping `llvm-cov` must also read — the coverage data for a monolithic build (or any harness linking a Nix-built instrumented lib) lives in the DSO, not the harness binary. `snapshot-coverage.sh` passes each as `-object`. Set by monolithic `nix-build.sh` or `write-harness-built.sh --coverage-dso <path>`. Absent/empty for self-contained harnesses.
 - `cmplog_enabled`: boolean. When true, `cmplog_binary` must point at a separate `AFL_LLVM_CMPLOG=1 afl-clang-fast` build with no sanitizers. cmplog is AFL++-only; libFuzzer campaigns always have `cmplog_enabled: false`.
 - `fuzzing_mode`: one of `in_process | process_based`. `in_process` (default) means the harness defines `LLVMFuzzerTestOneInput` and calls the target library directly (standard libFuzzer mode, or AFL++ persistent mode with `__AFL_LOOP`). `process_based` means the target is a CLI binary that the harness invokes per-input via `fork`/`exec`, writing the input to a temp file passed as `argv[1]` (libFuzzer fork-mode shim), or via AFL++ `@@` placeholder. When `process_based` and the engine is AFL++, `harness_binary` may be the target binary itself. v5 (introduced by schema-version v7 / plugin v0.15) adds this field. Migration backfills `fuzzing_mode: "in_process"` on existing campaigns.
 - `verify_binary`: path to the ASan-only standalone binary (`-fsanitize=address,undefined`, no `-fsanitize=fuzzer`, uses `cov_main.c` shim). Built by harness-writer in COLD mode. Used by crash-triager for Stage 2 cross-verification to filter harness artifacts. `null` means the build was not attempted or failed (see `fuzz/state/verify-build-failed.log`).
@@ -1904,6 +1905,21 @@ Extends `harness-built/v6` with `build_backend` (required) and `nix` (required w
 
 When `build_backend=="legacy"`, `nix` must be absent. `harness_binary`/`coverage_binary`/`verify_binary` are regular files (build.sh) or symlinks to store paths (nix).
 
+**Monolithic form (`nix.mode == "monolithic"`).** For a whole-library target built by the project's own derivation (see "Nix Build Manifest" below + `references/nix-monolithic.md`), the `nix` sub-object uses a flat shape instead of per-variant `variants{}`:
+
+```json
+"nix": {
+  "mode": "monolithic",
+  "derivation": {"flake_attr": ".#fuzzers"},
+  "store_path": "/nix/store/...-fuzzers-cov",
+  "manifest_path": "fuzz/harnesses/<name>/nix/manifest.json",
+  "manifest_hash": "294c4c8feb6d9237",
+  "built_at": "2026-05-27T21:16:49Z"
+}
+```
+
+In monolithic mode `nix-build.sh` writes the record itself (binary paths + `coverage_dso` + this sub-object); the per-harness `promote-to-nix` / `write-harness-built.sh` steps are not used. `coverage_dso` (below) carries the instrumented `.so` paths llvm-cov needs.
+
 ### Nix Build Manifest (`fuzz/harnesses/<name>/nix/manifest.json`)
 
 Input to the build, not campaign state. Written by `harness-writer`, read by `nix-builder`. Shape:
@@ -1933,6 +1949,28 @@ Input to the build, not campaign state. Written by `harness-writer`, read by `ni
 ```
 
 `generated_by: "user-edit"` signals nix-builder to treat the file as authoritative and not overwrite without `--force`.
+
+**`build_mode`** (optional, default `"per_harness"`) selects how the harness is built:
+
+- `"per_harness"` — the shape above: `nix-build.sh` generates per-variant `.nix` files and compiles `target_source` + harness with the FHS clang.
+- `"monolithic"` — a whole **instrumented library** built by the project's OWN derivation (e.g. systemd's `libsystemd-shared.so`). `target_source`/`harness_source`/`cov_main` are NOT required; instead declare:
+
+```json
+{
+  "schema": "nix-build-manifest/v1",
+  "harness": "sdbus-bus-match",
+  "build_mode": "monolithic",
+  "derivation": { "flake_attr": ".#fuzzers" },
+  "outputs": { "fuzzer": "bin/fuzz-sd-bus-match", "coverage": "bin/fuzz-sd-bus-match", "verify": "bin/fuzz-sd-bus-match" },
+  "coverage_dso": [ "lib/libsystemd-shared-260.so" ]
+}
+```
+
+- `derivation` — `{"flake_attr": "<attr>"}` (built via `nix build`) OR `{"file": "<path>", "attr": "<attr>"}` (built via `nix-build <file> -A <attr>`).
+- `outputs` — variant → out-subpath within the build result; each is symlinked into the bundle as `<harness>_fuzzer[_cov|_verify]`. Omit a variant to skip it.
+- `coverage_dso` — out-subpaths of instrumented `.so`s; resolved to absolute store paths and recorded on the harness record so `snapshot-coverage.sh` passes them to `llvm-cov` as `-object`.
+
+Monolithic builds require the harness to be **already registered** in `harnesses.json` (the build updates that record), do **not** require `CC_FUZZER_FHS=1`, and must build with cc-fuzzer's pinned toolchain (`ccfuzzer.lib.${system}.clangStdenv`) or coverage breaks — see `references/nix-monolithic.md`.
 
 ## Validation
 

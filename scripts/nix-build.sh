@@ -60,6 +60,11 @@ BUILD_LOG="$STATE_DIR/nix-build-log.jsonl"
 
 mkdir -p "$HARNESS_BIN_DIR"
 
+# build_mode: "per_harness" (default — the clang src/* flow below) or
+# "monolithic" (a whole-library target built by the project's OWN derivation;
+# see build_monolithic + references/nix-monolithic.md).
+BUILD_MODE=$(python3 -c "import json;print(json.load(open('$MANIFEST')).get('build_mode','per_harness'))" 2>/dev/null || echo per_harness)
+
 # Resolve the nixpkgs path for <nixpkgs> in standalone nix-build calls.
 # We want the same nixpkgs that the plugin flake is pinned to, not whatever
 # the user has in channels (often nothing inside the FHS sandbox).
@@ -387,8 +392,166 @@ build_variant() {
 }
 
 # ---------------------------------------------------------------------------
+# Monolithic build mode
+#
+# For whole-library targets (e.g. systemd's libsystemd-shared.so) that can't be
+# expressed as `clang src/*`. The project's OWN derivation builds the
+# instrumented library + harness binaries with cc-fuzzer's pinned toolchain
+# (see flake.nix lib exports + references/nix-monolithic.md). The manifest
+# declares the derivation, the variant->output-subpath mapping, and any
+# instrumented .so to register for coverage:
+#
+#   { "harness": "<name>", "build_mode": "monolithic",
+#     "derivation": { "flake_attr": ".#fuzz-cov" }        // OR {"file":"x.nix","attr":"cov"}
+#     "outputs": { "fuzzer": "bin/fuzz-x", "coverage": "bin/fuzz-x", "verify": "bin/fuzz-x" },
+#     "coverage_dso": [ "lib/libsystemd-shared-260.so" ] }
+#
+# We build the derivation ONCE, symlink each declared output into the bundle
+# under the conventional name, and UPDATE the (pre-existing) harnesses.json
+# record — so the harness must already be registered.
+# ---------------------------------------------------------------------------
+variant_suffix() {
+  case "$1" in
+    fuzzer)   echo "" ;;
+    coverage) echo "_cov" ;;
+    verify)   echo "_verify" ;;
+    cmplog)   echo "_cmplog" ;;
+    symcc)    echo "_symcc" ;;
+    *)        echo "_$1" ;;
+  esac
+}
+
+build_monolithic() {
+  local harness_name
+  harness_name=$(python3 -c "import json;print(json.load(open('$MANIFEST'))['harness'])" 2>/dev/null)
+  [ -n "$harness_name" ] || { echo "ERROR: manifest missing 'harness'" >&2; return 1; }
+
+  local flake_attr drv_file drv_attr
+  flake_attr=$(python3 -c "import json;print((json.load(open('$MANIFEST')).get('derivation') or {}).get('flake_attr',''))" 2>/dev/null)
+  drv_file=$(python3 -c "import json;print((json.load(open('$MANIFEST')).get('derivation') or {}).get('file',''))" 2>/dev/null)
+  drv_attr=$(python3 -c "import json;print((json.load(open('$MANIFEST')).get('derivation') or {}).get('attr',''))" 2>/dev/null)
+
+  echo "  [nix] building monolithic derivation..."
+  local t0=$SECONDS OUT="" build_out="" rc=0
+  if [ -n "$flake_attr" ]; then
+    build_out=$(nix build "$flake_attr" --no-link --print-out-paths \
+                  --extra-experimental-features 'nix-command flakes' 2>&1) || rc=$?
+  elif [ -n "$drv_file" ]; then
+    local nb=("$drv_file"); [ -n "$drv_attr" ] && nb+=("-A" "$drv_attr"); nb+=("--no-out-link")
+    [ -n "$NIX_PATH_ARG" ] && nb=("-I" "$NIX_PATH_ARG" "${nb[@]}")
+    build_out=$(nix-build "${nb[@]}" 2>&1) || rc=$?
+  else
+    echo "ERROR: monolithic manifest needs derivation.flake_attr or derivation.file(+attr)" >&2
+    return 1
+  fi
+  if [ "$rc" -ne 0 ]; then
+    log_event "$HARNESS" "monolithic" "attempt_fail" "" "" "" "$(( (SECONDS - t0) * 1000 ))"
+    echo "  FAIL: monolithic build failed (fix your project derivation)" >&2
+    echo "$build_out" >&2
+    return 1
+  fi
+  OUT=$(echo "$build_out" | tail -1)
+  [ -d "$OUT" ] || { echo "ERROR: build produced no store path (got: '$OUT')" >&2; return 1; }
+  echo "    built: $OUT"
+
+  local mono_variants
+  mono_variants=$(python3 -c "import json;print(' '.join((json.load(open('$MANIFEST')).get('outputs') or {}).keys()))" 2>/dev/null)
+  [ -n "$ONLY_VARIANT" ] && mono_variants="$ONLY_VARIANT"
+
+  local fuzzer_link="" coverage_link="" verify_link="" any=0 failed=0
+  for v in $mono_variants; do
+    local sub; sub=$(python3 -c "import json;print((json.load(open('$MANIFEST')).get('outputs') or {}).get('$v',''))" 2>/dev/null)
+    [ -n "$sub" ] || { echo "  SKIP $v: no outputs.$v in manifest"; continue; }
+    local store_bin="$OUT/$sub"
+    if [ ! -x "$store_bin" ]; then
+      echo "  FAIL $v: '$store_bin' not found/executable in build output" >&2; failed=$((failed + 1)); continue
+    fi
+    local link="$HARNESS_BIN_DIR/${harness_name}_fuzzer$(variant_suffix "$v")"
+    ln -sfn "$store_bin" "$link"; any=1
+    case "$v" in
+      fuzzer)   fuzzer_link="$link" ;;
+      coverage) coverage_link="$link" ;;
+      verify)   verify_link="$link" ;;
+    esac
+    log_event "$HARNESS" "$v" "attempt_ok" "$OUT" "$link" "$(basename "$OUT" | cut -c1-8)" "$(( (SECONDS - t0) * 1000 ))" "false"
+    echo "    OK: $link -> $store_bin"
+  done
+  [ "$any" -eq 1 ] || { echo "ERROR: no variant outputs wired (check manifest 'outputs')" >&2; return 1; }
+  [ "$failed" -eq 0 ] || { echo "ERROR: $failed declared output(s) missing from build" >&2; return 1; }
+
+  # Resolve coverage_dso subpaths to absolute store paths (skip missing).
+  local dso_args=()
+  while IFS= read -r dso; do
+    [ -n "$dso" ] || continue
+    if [ -e "$OUT/$dso" ]; then dso_args+=("$OUT/$dso")
+    else echo "  WARN: coverage_dso '$dso' not present in build output — skipping" >&2; fi
+  done < <(python3 -c "import json;[print(x) for x in (json.load(open('$MANIFEST')).get('coverage_dso') or [])]" 2>/dev/null)
+
+  # Update the pre-existing harnesses.json record in place.
+  HARNESS="$HARNESS" OUT="$OUT" MANIFEST="$MANIFEST" STATE_DIR="$STATE_DIR" \
+  FUZZER_LINK="$fuzzer_link" COVERAGE_LINK="$coverage_link" VERIFY_LINK="$verify_link" \
+  FLAKE_ATTR="$flake_attr" DRV_FILE="$drv_file" DRV_ATTR="$drv_attr" \
+  DSO_LIST="$(printf '%s\n' ${dso_args[@]+"${dso_args[@]}"})" \
+  python3 - <<'PY'
+import json, os, hashlib, datetime, sys
+state = os.environ["STATE_DIR"]; name = os.environ["HARNESS"]
+hs_path = os.path.join(state, "harnesses.json")
+try:
+    hset = json.load(open(hs_path))
+except Exception:
+    print("ERROR: harnesses.json not found/readable — monolithic mode UPDATES an "
+          "existing record; register the harness bundle first", file=sys.stderr); sys.exit(1)
+hs = hset.get("harnesses") or []
+rec = next((h for h in hs if isinstance(h, dict) and h.get("name") == name), None)
+if rec is None:
+    print(f"ERROR: no harness named '{name}' in harnesses.json — register the bundle first",
+          file=sys.stderr); sys.exit(1)
+fz = os.environ.get("FUZZER_LINK", ""); cv = os.environ.get("COVERAGE_LINK", ""); vf = os.environ.get("VERIFY_LINK", "")
+if fz: rec["harness_binary"] = fz
+rec["verify_binary"] = vf or rec.get("verify_binary")
+if cv:
+    rec["coverage_binary"] = cv; rec["coverage_tracking"] = True
+    rec.pop("coverage_disabled_reason", None)
+else:
+    rec["coverage_binary"] = None; rec["coverage_tracking"] = False
+    rec["coverage_disabled_reason"] = "monolithic build declares no coverage output"
+rec["coverage_dso"] = [x for x in os.environ.get("DSO_LIST", "").splitlines() if x.strip()]
+rec["build_backend"] = "nix"
+man = os.environ["MANIFEST"]
+deriv = ({"flake_attr": os.environ["FLAKE_ATTR"]} if os.environ.get("FLAKE_ATTR")
+         else {"file": os.environ.get("DRV_FILE", ""), "attr": os.environ.get("DRV_ATTR", "")})
+now = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+rec["nix"] = {"mode": "monolithic", "derivation": deriv, "store_path": os.environ["OUT"],
+              "manifest_path": os.path.relpath(man), "manifest_hash": hashlib.sha256(open(man, "rb").read()).hexdigest()[:16],
+              "built_at": now}
+rec["built_at"] = now
+tmp = hs_path + ".tmp"
+json.dump(hset, open(tmp, "w"), indent=2); open(tmp, "a").write("\n"); os.replace(tmp, hs_path)
+if hs:  # keep the singular mirror in sync (always harnesses[0], per convention)
+    hb = os.path.join(state, "harness-built.json")
+    try:
+        json.dump(hs[0], open(hb + ".tmp", "w"), indent=2); open(hb + ".tmp", "a").write("\n"); os.replace(hb + ".tmp", hb)
+    except Exception:
+        pass
+print("RECORD_OK")
+PY
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
+# Monolithic targets delegate to the project's own derivation — skip the
+# per-harness .nix generation entirely.
+if [ "$BUILD_MODE" = "monolithic" ]; then
+  echo "nix-build: monolithic mode for harness '$HARNESS'"
+  if build_monolithic; then
+    echo "nix-build: monolithic OK for harness '$HARNESS'"
+    exit 0
+  fi
+  echo "nix-build: monolithic build failed for harness '$HARNESS'" >&2
+  exit 1
+fi
 
 # Generate .nix files
 echo "nix-build: generating .nix files for harness '$HARNESS'..."

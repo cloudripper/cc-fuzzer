@@ -24,6 +24,19 @@
         let
           pkgs = import nixpkgs { inherit system; };
 
+          # --------------------------------------------------------------------
+          # SINGLE SOURCE OF TRUTH for the LLVM toolchain (see coupling note
+          # below). The dev-shell tool list AND the `lib.${system}` exports
+          # (consumed by a project's own monolithic derivation — see
+          # references/nix-monolithic.md) both reference these, so a target
+          # library built via `lib.clangStdenv` links the SAME
+          # libclang_rt.profile that this shell's llvm-cov / llvm-profdata read.
+          # To pin a major, set `llvmPackages` to pkgs.llvmPackages_NN here and
+          # every consumer (shell clang, exports) updates in lockstep.
+          # --------------------------------------------------------------------
+          llvmPackages = pkgs.llvmPackages;
+          clangStdenv = llvmPackages.stdenv;
+
       # ----------------------------------------------------------------------
       # Toolchain coupling note
       # ----------------------------------------------------------------------
@@ -32,8 +45,8 @@
       # was built against the same LLVM family. We let the dev-shell carry one
       # consistent stdenv-provided clang. If you discover an ABI mismatch
       # (rare; usually surfaces as "undefined reference to __sancov_*" or
-      # "PassPlugin failed to load"), pin a specific llvmPackages_NN below
-      # and rebuild.
+      # "PassPlugin failed to load"), pin the `llvmPackages` binding above to a
+      # specific llvmPackages_NN and rebuild.
       #
       # Why no flake.lock is shipped:
       #   See README "Reproducibility tradeoffs". Users own the lock by running
@@ -58,11 +71,11 @@
         # wrapper interactions. FHSEnv eliminates that whole class of bugs.
         targetPkgs = pkgs: (with pkgs; [
           # === Compilers / sanitizer runtimes ===
-          # stdenv-provided clang carries a matching compiler-rt with
-          # libclang_rt.fuzzer.a. That's what `-fsanitize=fuzzer` links against.
-          # Don't replace this without also pinning a matching
-          # llvmPackages_NN.compiler-rt.
-          clang
+          # clang from the single `llvmPackages` binding above; its matching
+          # compiler-rt carries libclang_rt.fuzzer.a (what `-fsanitize=fuzzer`
+          # links against) and libclang_rt.profile (the coverage runtime that
+          # must match llvm-cov/llvm-profdata). All three come from one binding.
+          llvmPackages.clang
           llvmPackages.compiler-rt
           llvmPackages.libcxx
           # LLVM userland (llvm-cov, llvm-profdata, llvm-symbolizer, opt, llc)
@@ -261,7 +274,7 @@
         export CCFUZZER_INIT_CAP="''${CCFUZZER_INIT_CAP:-10}"
         exec ${pkgs.bash}/bin/bash ${self}/scripts/campaign-init.sh "$@"
       '';
-        in { inherit pkgs mkEnv initApp; };
+        in { inherit pkgs mkEnv initApp llvmPackages clangStdenv; };
     in {
       # `.env` makes a buildFHSEnv consumable by `nix develop`. One per system.
       devShells = forAllSystems (system: {
@@ -273,6 +286,21 @@
       # target's build deps; the result composes them onto the base toolchain
       # in one FHS env. Marked as a project shell so env-check can detect it.
       lib = forAllSystems (system: let ps = perSystem system; in {
+        # ------------------------------------------------------------------
+        # Toolchain-pin contract for project monolithic derivations.
+        # ------------------------------------------------------------------
+        # A whole-library target (e.g. systemd's libsystemd-shared.so) must be
+        # built by the project's OWN derivation, not the per-harness `clang
+        # src/*` flow. Build it with THESE so its instrumented .so links the
+        # same libclang_rt.profile that the dev-shell's llvm-cov / llvm-profdata
+        # read — otherwise the .so's __llvm_profile_runtime forces a mismatched
+        # profraw version and coverage silently breaks. Usage in a project
+        # flake (see templates/project-flake.nix + references/nix-monolithic.md):
+        #   ccfuzzer.lib.${system}.clangStdenv.mkDerivation { ... }
+        # `pkgs` is the same nixpkgs instance the plugin pins; `llvmPackages`
+        # is the exact LLVM family; `clangStdenv` is its clang stdenv.
+        inherit (ps) pkgs llvmPackages clangStdenv;
+
         # `.env` form, for `nix develop`.
         mkDevShell = extra: (ps.mkEnv { inherit extra; projectShell = true; }).env;
         # The raw FHS wrapper derivation. Its `/bin/cc-fuzzer-env` runs the FHS

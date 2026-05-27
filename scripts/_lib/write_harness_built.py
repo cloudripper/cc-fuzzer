@@ -61,6 +61,14 @@ def build_doc():
         doc["build_backend_decided_at"] = _dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
         doc["build_backend_decided_by"] = "write-harness-built"
 
+    # Instrumented shared objects whose coverage mapping llvm-cov must also read
+    # (a monolithic / Nix-DSO-linked harness has its coverage data in the .so,
+    # not the harness binary). Additive-optional: only present when non-empty.
+    dso_raw = os.environ.get("COVERAGE_DSO_PY", "")
+    coverage_dso = [line for line in dso_raw.splitlines() if line] if dso_raw else []
+    if coverage_dso:
+        doc["coverage_dso"] = coverage_dso
+
     # Conditional fields per spec: reason fields must appear when their tracking
     # field is false, must NOT appear when tracking is true.
     if not doc["coverage_tracking"]:

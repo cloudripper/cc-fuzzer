@@ -373,6 +373,15 @@ except Exception:
 
 ### Nix build path (CC_FUZZER_FHS=1 + build_backend=nix)
 
+> **Whole-library targets:** the per-harness nix path below compiles a handful
+> of source files (`clang src/*`). If the target is a whole **instrumented
+> library** that only the project's own build system can produce (e.g. systemd's
+> `libsystemd-shared.so`), use **monolithic mode** instead: write a
+> `build_mode: "monolithic"` manifest that points at the project's own
+> derivation (built with cc-fuzzer's pinned toolchain — `ccfuzzer.lib.${system}.clangStdenv`
+> — or coverage breaks). Full recipe + the toolchain-pin contract:
+> `${CLAUDE_PLUGIN_ROOT}/references/nix-monolithic.md`.
+
 This path applies when:
 1. `$CC_FUZZER_FHS=1` (inside the cc-fuzzer nix FHS shell), AND
 2. The harness's `build_backend` is `nix` (explicitly promoted), OR this is a COLD start and the user is in FHS (auto-nix for new campaigns)

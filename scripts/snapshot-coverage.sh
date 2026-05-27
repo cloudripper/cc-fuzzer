@@ -99,6 +99,22 @@ COVERAGE_TRACKING_ENABLED=true
 COVERAGE_BUILD_PRESENT=false
 [ -n "$COVERAGE_BINARY" ] && [ -x "$COVERAGE_BINARY" ] && COVERAGE_BUILD_PRESENT=true
 
+# Instrumented shared objects to feed llvm-cov as extra -object args. A
+# monolithic build links an instrumented .so whose coverage mapping lives in
+# the DSO, not the harness binary; the build records absolute paths in
+# coverage_dso[]. Without these, llvm-cov sees only the harness binary's lines.
+COVERAGE_DSO_JSON=$(harness_field "$HARNESS" coverage_dso)
+COVERAGE_DSO_LIST=()
+if [ -n "$COVERAGE_DSO_JSON" ] && [ "$COVERAGE_DSO_JSON" != "None" ]; then
+  while IFS= read -r _d; do
+    [ -n "$_d" ] && COVERAGE_DSO_LIST+=("$_d")
+  done < <(printf '%s' "$COVERAGE_DSO_JSON" | python3 -c "import json,sys
+try:
+    v = json.load(sys.stdin)
+    [print(x) for x in v] if isinstance(v, list) else None
+except Exception: pass" 2>/dev/null)
+fi
+
 #------------------------------------------------------------------------------
 # 3. Engine detection + fuzzer stats
 #------------------------------------------------------------------------------
@@ -323,16 +339,25 @@ if [ "$COVERAGE_TRACKING_ENABLED" = "true" ] && [ "$COVERAGE_BUILD_PRESENT" = "t
 
     if [ -f "$PROFRAW" ]; then
       if "$LLVM_PROFDATA_BIN" merge -sparse "$PROFRAW" -o "$PROFDATA" 2>/dev/null; then
-        # Include any shared libraries the coverage binary dynamically links to
-        # that live under workspace-local build dirs (_build_cov, _build_fuzz, etc.)
-        # so llvm-cov sees the library's coverage mapping, not just the harness'.
+        # Feed llvm-cov every instrumented shared object whose coverage mapping
+        # it must see (else only the harness binary's lines are counted):
+        #   (a) explicitly recorded coverage_dso[] (monolithic builds) — reliable;
+        #   (b) auto-detected libs the cov binary links from workspace build dirs
+        #       (_build_cov/_fuzz/_symcc) OR /nix/store (Nix-built instrumented
+        #       libs live there — this is the fix for "zero lines for Nix-linked
+        #       harnesses"). llvm-cov ignores objects without a __llvm_covmap, so
+        #       over-including system libs is safe (only a little slower); we
+        #       dedupe and existence-filter to keep the arg list tight.
         EXTRA_OBJ_ARGS=()
         while IFS= read -r so_path; do
-          [ -n "$so_path" ] && [ -f "$so_path" ] && EXTRA_OBJ_ARGS+=(-object "$so_path")
-        done < <(ldd "$COVERAGE_BINARY" 2>/dev/null \
-                   | awk '/=>/ {print $3}' \
-                   | grep -E '/_build(_cov|_fuzz|_symcc)?/' \
-                   || true)
+          EXTRA_OBJ_ARGS+=(-object "$so_path")
+        done < <(
+          {
+            for _dso in ${COVERAGE_DSO_LIST[@]+"${COVERAGE_DSO_LIST[@]}"}; do printf '%s\n' "$_dso"; done
+            ldd "$COVERAGE_BINARY" 2>/dev/null | awk '/=>/ {print $3}' \
+              | grep -E '/_build(_cov|_fuzz|_symcc)?/|/nix/store/'
+          } 2>/dev/null | while IFS= read -r p; do [ -f "$p" ] && printf '%s\n' "$p"; done | sort -u
+        )
         SUMMARY_JSON=$("$LLVM_COV_BIN" export "$COVERAGE_BINARY" \
                           "${EXTRA_OBJ_ARGS[@]}" \
                           -instr-profile="$PROFDATA" \

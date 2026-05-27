@@ -210,7 +210,7 @@ validate_json() {
 
 # Field sets shared by singular v5 and multi v6/v7 (v6 adds `name`, v7 adds nix backend fields)
 HARNESS_BUILT_REQUIRED_V5="harness_source,harness_binary,build_script,entry_function,target_source,target_source_hash,build_command_hash,built_at,coverage_tracking,cmplog_enabled,fuzzing_mode"
-HARNESS_BUILT_ALLOWED_V5="harness_source,harness_binary,coverage_binary,verify_binary,coverage_tracking,coverage_disabled_reason,cmplog_binary,cmplog_enabled,cmplog_disabled_reason,symcc_binary,mutator_source,build_script,dict_files,entry_function,input_encoding,sanitizers,fuzzing_mode,target_source,target_source_hash,build_command_hash,harness_attempts,built_at,build_command,oracle"
+HARNESS_BUILT_ALLOWED_V5="harness_source,harness_binary,coverage_binary,coverage_dso,verify_binary,coverage_tracking,coverage_disabled_reason,cmplog_binary,cmplog_enabled,cmplog_disabled_reason,symcc_binary,mutator_source,build_script,dict_files,entry_function,input_encoding,sanitizers,fuzzing_mode,target_source,target_source_hash,build_command_hash,harness_attempts,built_at,build_command,oracle"
 HARNESS_BUILT_REQUIRED_V6="name,${HARNESS_BUILT_REQUIRED_V5}"
 HARNESS_BUILT_ALLOWED_V6="name,${HARNESS_BUILT_ALLOWED_V5}"
 HARNESS_BUILT_REQUIRED_V7="name,build_backend,${HARNESS_BUILT_REQUIRED_V5}"

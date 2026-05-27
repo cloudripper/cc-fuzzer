@@ -13,10 +13,23 @@ You build harness binaries using `nix-build.sh` — the nix derivation runner fo
 
 Your only writable scope is `fuzz/`. Never edit anything under `${CLAUDE_PLUGIN_ROOT}/`. If you discover a nix build problem that cannot be solved by editing campaign files (`fuzz/nix-deps.nix`, `fuzz/harnesses/<name>/nix/manifest.json`), document it in `fuzz/state/plugin-issues.md`.
 
+## Two build modes
+
+`nix-build.sh` reads `manifest.json:build_mode`:
+
+- **`per_harness`** (default) — the flow documented below: generate per-variant
+  `.nix` files and compile `target_source` + harness with the FHS clang. Right
+  for leaf targets (a parser, a codec, one TU + deps).
+- **`monolithic`** — a whole **instrumented library** (e.g. systemd's
+  `libsystemd-shared.so`) built by the project's OWN derivation. See
+  "Monolithic mode" below; it has relaxed preconditions and self-records, so the
+  Step 2/3/4 flow does NOT apply. Full recipe:
+  `${CLAUDE_PLUGIN_ROOT}/references/nix-monolithic.md`.
+
 ## Preconditions
 
 Before running, verify:
-1. `$CC_FUZZER_FHS` is `1` — if not, exit with: "nix-builder requires CC_FUZZER_FHS=1. Re-enter the dev shell: `nix run ${CLAUDE_PLUGIN_ROOT}#claude`"
+1. `$CC_FUZZER_FHS` is `1` — if not, exit with: "nix-builder requires CC_FUZZER_FHS=1. Re-enter the dev shell: `nix run ${CLAUDE_PLUGIN_ROOT}#claude`". **Exception:** a `build_mode: monolithic` manifest does NOT require FHS — its build delegates to `nix build`, which only needs `nix` on PATH (runtime + coverage still want the FHS shell).
 2. `fuzz/harnesses/<name>/nix/manifest.json` exists — if not, tell the caller to run `harness-writer` first
 3. `fuzz/nix-deps.nix` exists — if not, create a minimal one: `pkgs: with pkgs; []`
 
@@ -111,6 +124,39 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/write-harness-built.sh \
 ```
 
 Read `entry_function` and `fuzzing_mode` from `fuzz/state/harnesses.json` (the existing record for `<name>`), falling back to `fuzz/state/plan.md`.
+
+## Monolithic mode (whole-library targets)
+
+When `manifest.json` has `build_mode: "monolithic"`, the per-harness flow above
+does not apply. The manifest declares the project's own derivation, a
+variant→output-subpath mapping, and instrumented `.so`s for coverage:
+
+```jsonc
+{ "harness": "<name>", "build_mode": "monolithic",
+  "derivation": { "flake_attr": ".#fuzzers" },          // or { "file": "x.nix", "attr": "cov" }
+  "outputs": { "fuzzer": "bin/fuzz-x", "coverage": "bin/fuzz-x", "verify": "bin/fuzz-x" },
+  "coverage_dso": [ "lib/libsystemd-shared-260.so" ] }
+```
+
+Just run:
+
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/nix-build.sh <name>
+```
+
+`nix-build.sh` builds the derivation once, symlinks each declared output into the
+bundle, resolves `coverage_dso`, and **updates the existing `harnesses.json`
+record itself** (`build_backend: nix`, binary paths, `coverage_dso`,
+`nix.mode: monolithic`). So:
+
+- **Do NOT** run `promote-to-nix` or `write-harness-built.sh` afterward (Steps 3
+  and 4 are for per-harness mode; monolithic self-records).
+- The harness must already be **registered** in `harnesses.json` — monolithic
+  mode *updates* a record, it doesn't create one.
+- On failure, the fix is in the **operator's project derivation** (not
+  `manifest.json` flags). Surface the `nix build` error and point at
+  `references/nix-monolithic.md` — especially the toolchain-pin contract
+  (build with `ccfuzzer.lib.${system}.clangStdenv` or coverage breaks).
 
 ## Manifest editing
 

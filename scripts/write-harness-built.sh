@@ -53,6 +53,7 @@ FUZZING_MODE=""
 COVERAGE_BINARY=""
 NO_COVERAGE=0
 COVERAGE_REASON=""
+COVERAGE_DSO=()   # instrumented .so paths to feed llvm-cov as extra -object args
 VERIFY_BINARY=""
 NO_VERIFY=0
 CMPLOG_BINARY=""
@@ -85,6 +86,7 @@ while [ $# -gt 0 ]; do
     --coverage-binary)            COVERAGE_BINARY="${2:-}"; shift 2 ;;
     --no-coverage)                NO_COVERAGE=1; shift ;;
     --coverage-disabled-reason)   COVERAGE_REASON="${2:-}"; shift 2 ;;
+    --coverage-dso)               COVERAGE_DSO+=("${2:-}"); shift 2 ;;
     --verify-binary)              VERIFY_BINARY="${2:-}"; shift 2 ;;
     --no-verify)                  NO_VERIFY=1; shift ;;
     --cmplog-binary)              CMPLOG_BINARY="${2:-}"; shift 2 ;;
@@ -211,6 +213,10 @@ DICT_FILES_PY=""
 if [ "${#DICT_FILES[@]}" -gt 0 ]; then
   DICT_FILES_PY=$(printf '%s\n' "${DICT_FILES[@]}")
 fi
+COVERAGE_DSO_PY=""
+if [ "${#COVERAGE_DSO[@]}" -gt 0 ]; then
+  COVERAGE_DSO_PY=$(printf '%s\n' "${COVERAGE_DSO[@]}")
+fi
 SANITIZERS_PY="$SANITIZERS"
 
 # Multi-mode dispatch: when invoked with --harness and the campaign is in
@@ -223,7 +229,7 @@ if [ -n "$HARNESS_NAME" ] && is_multi; then
 fi
 
 export TARGET_SOURCE BUILD_SCRIPT HARNESS_SOURCE HARNESS_BINARY ENTRY_FUNCTION FUZZING_MODE
-export COVERAGE_TRACKING COVERAGE_BIN_JSON COVERAGE_REASON_JSON
+export COVERAGE_TRACKING COVERAGE_BIN_JSON COVERAGE_REASON_JSON COVERAGE_DSO_PY
 export VERIFY_BIN_JSON
 export CMPLOG_ENABLED CMPLOG_BIN_JSON CMPLOG_REASON_JSON
 export SYMCC_BINARY SANITIZERS_PY INPUT_ENCODING DICT_FILES_PY
