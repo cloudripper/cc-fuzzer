@@ -55,18 +55,23 @@ _write_harnesses_txt() {
 
 # Did a harness run ($1=exit code, $2=combined stdout+stderr) crash? Any of:
 #   - killed by a deadly signal directly: rc >= 128 (= 128 + signal)
-#   - a sanitizer printed a report: "SUMMARY: <Sanitizer>"
+#   - a sanitizer printed a report: "SUMMARY: <Sanitizer>" or a UBSan
+#     "runtime error:" line (the integer/implicit-conversion suite)
 #   - libFuzzer caught the fault itself. libFuzzer installs its own signal
 #     handlers, so a SIGABRT/SIGSEGV (assert, abort(), or any non-sanitizer
 #     fault) is reported as "ERROR: libFuzzer: deadly signal" (also out-of-memory
 #     / timeout) and the process exits **1, not 128+N**, with no sanitizer
 #     SUMMARY. The rc>=128 + sanitizer gate alone misses this and routes a real
 #     crash to crashes/flaky/.
+#   - an ORACLE harness trapped on a logic violation. A __builtin_trap() raises
+#     SIGILL (rc>=128) AND prints the CCFUZZ_ORACLE_VIOLATION marker, but it has
+#     NO sanitizer SUMMARY — so the marker is matched explicitly here. Without
+#     it, every logic (oracle-driven) finding fails Stage-1/2 verification.
 _crashed() {
   local rc="$1" out="$2"
   [ "$rc" -ge 128 ] 2>/dev/null && return 0
   printf '%s\n' "$out" | grep -qE \
-    'SUMMARY: (AddressSanitizer|UndefinedBehaviorSanitizer|LeakSanitizer|ThreadSanitizer|MemorySanitizer|libFuzzer:)|ERROR: libFuzzer:'
+    'SUMMARY: (AddressSanitizer|UndefinedBehaviorSanitizer|LeakSanitizer|ThreadSanitizer|MemorySanitizer|libFuzzer:)|ERROR: libFuzzer:|CCFUZZ_ORACLE_VIOLATION|runtime error:'
 }
 
 cmd="${1:-help}"
@@ -201,8 +206,10 @@ EOF
       for i in $(seq 1 $ATTEMPTS); do
         OUT=$(ASAN_OPTIONS=symbolize=1:abort_on_error=1:halt_on_error=1:print_stacktrace=1:detect_leaks=1 \
               UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1:abort_on_error=1 \
-              timeout 30 "$HARNESS_BIN" "$REPRODUCER" 2>&1 || true)
-        RC=$?
+              timeout 30 "$HARNESS_BIN" "$REPRODUCER" 2>&1)
+        RC=$?   # NO `|| true`: it would make $? capture true's 0 and hide a
+                # SIGILL/SIGABRT (the only signal a trap-based oracle gives). The
+                # script has no `set -e`, so a non-zero rc here is safe.
         echo "=== stage1 attempt $i rc=$RC ===" >> "$VERIFY_LOG"
         echo "$OUT" >> "$VERIFY_LOG"
         if _crashed "$RC" "$OUT"; then
@@ -241,8 +248,8 @@ EOF
         for i in $(seq 1 $ATTEMPTS); do
           OUT2=$(ASAN_OPTIONS=symbolize=1:abort_on_error=1:halt_on_error=1:print_stacktrace=1:detect_leaks=1 \
                  UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1:abort_on_error=1 \
-                 timeout 30 "$VERIFY_BIN" "$REPRODUCER" 2>&1 || true)
-          RC2=$?
+                 timeout 30 "$VERIFY_BIN" "$REPRODUCER" 2>&1)
+          RC2=$?   # NO `|| true` — see Stage-1 note above (preserve the real rc).
           echo "=== stage2 attempt $i rc=$RC2 ===" >> "$VERIFY_LOG"
           echo "$OUT2" >> "$VERIFY_LOG"
           if _crashed "$RC2" "$OUT2"; then
@@ -443,8 +450,8 @@ EOF
       for i in 1 2 3; do
         OUT=$(ASAN_OPTIONS=symbolize=1:abort_on_error=1:halt_on_error=1:print_stacktrace=1:detect_leaks=1 \
               UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1:abort_on_error=1 \
-              timeout 30 "$HARNESS_BIN" "$REPRO" 2>&1 || true)
-        RC=$?
+              timeout 30 "$HARNESS_BIN" "$REPRO" 2>&1)
+        RC=$?   # NO `|| true` — preserve the real rc (trap-based oracle = SIGILL).
         if _crashed "$RC" "$OUT"; then
           CRASHED=$((CRASHED + 1))
         fi
@@ -457,8 +464,8 @@ EOF
           for i in 1 2 3; do
             OUT2=$(ASAN_OPTIONS=symbolize=1:abort_on_error=1:halt_on_error=1:print_stacktrace=1 \
                    UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1:abort_on_error=1 \
-                   timeout 30 "$VERIFY_BIN" "$REPRO" 2>&1 || true)
-            RC2=$?
+                   timeout 30 "$VERIFY_BIN" "$REPRO" 2>&1)
+            RC2=$?   # NO `|| true` — preserve the real rc.
             if _crashed "$RC2" "$OUT2"; then
               S2_CRASHED=$((S2_CRASHED + 1))
             fi
