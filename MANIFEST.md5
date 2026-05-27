@@ -2,7 +2,7 @@
 # Generated at release time. Used by integrity-check.sh to detect drift.
 # Format: <md5>  <relative-path>
 #
-e4f4edddf0456168b1e88260defe1909  .claude-plugin/plugin.json
+bdce04a9ab60a64e0d3a90d6bb498ec9  .claude-plugin/plugin.json
 1b5ff6024a8840dcefa1d5e48fcf81ed  STATE_SCHEMA.md
 e091c82f4f3a9fe49c8d32e42e26b0f8  agents/campaign-planner.md
 1c10e5f08e8401b18c66d468834d492c  agents/code-reviewer-deep.md
@@ -10,7 +10,7 @@ bfef867f5ae8807860c6bc3873a967d7  agents/code-reviewer.md
 3a86b57bf2cc87f5748cd2ccff8fe26e  agents/concolic-executor.md
 06e4b37d0e315d97035c72cd17b363d0  agents/coverage-analyst.md
 424d70e2d8dde69eff32f1a9860994db  agents/crash-triager.md
-11beba48fd8e72ed969e688469068314  agents/fuzz-orchestrator.md
+418b43c300d01b3465598e97278bc3de  agents/fuzz-orchestrator.md
 d16a161b1d3580514d3b1692d2c0550f  agents/harness-writer.md
 54c1fe1fa0d493691c343ffbe8105403  agents/mutator.md
 14118f35c4f22d8a4e4d36cc759dd602  agents/nix-builder.md
@@ -71,7 +71,7 @@ b6c93200cb33c51d12fc4cb2450a655b  scripts/find-delta-targets.sh
 1ca2ce057eb7ad54c704630567e3bacf  scripts/integrity-check.sh
 42f3d84cf8333b4cc5f8736c2c937852  scripts/is-crash.sh
 34dbbae5570a87e1a5d970ec53db7b86  scripts/kill-harness-processes.sh
-f8fdbf095b9aea6f43293ddb96ce62d7  scripts/launch-fuzzer-slot.sh
+5d222275d26c2cd39629848d8dced907  scripts/launch-fuzzer-slot.sh
 fd4362c78d60837af7323c83962725a6  scripts/migrate-state.sh
 8505ddc2923aa5f6322bf2a3118c51b1  scripts/nix-build.sh
 9239c3a9b86560418d1dd81576e7eda1  scripts/nix-env-reconcile.sh
@@ -79,7 +79,7 @@ ab000c2fb90a5b77b5fdd497495db52c  scripts/preflight.sh
 6ef098021f077d675076bb4e807df8cd  scripts/reset-campaign.sh
 eb401e3376a53b2577f7210e9a040b9c  scripts/reverify-after-rebuild.sh
 dcf88a99a20cf9e3c714c4432d9723d0  scripts/run-concolic.sh
-99aa5f816ce3d07d7d8f15e311d1b02e  scripts/run-fuzzer.sh
+b9d7950c772915d8d69acb2b9e8ab739  scripts/run-fuzzer.sh
 ee60e9c124946b8db49d4808ea25d8a4  scripts/snapshot-coverage.sh
 dffa84b25ecf0668bfc5fe97fb402824  scripts/status.sh
 45b91abbb1895bbf70e7e53ae28dfc55  scripts/stop-fuzzer.sh
@@ -96,7 +96,7 @@ ae8df8c4167849e40e6334ccdd59cf73  skills/coverage/SKILL.md
 c1ed7ac8d06104cef051c84a417a600a  skills/dictionaries/SKILL.md
 43010c0a7751730980f52acabb642cd0  skills/doctor/SKILL.md
 bc73e395bf12e963d0cf9bf59860a019  skills/harness/SKILL.md
-4d4589d042fe309e75af695fe04cc9d1  skills/nix-build/SKILL.md
+c014b0ae2abd1e423f51baa5b21dbe7a  skills/nix-build/SKILL.md
 1eae67f4d935cf2f1b5ed7bdd6b29404  skills/nix-cleanup/SKILL.md
 9d19d267b8ed8cbd124e098ae5e4d16f  skills/plan/SKILL.md
 01821844c6dfe7171900713017b46e7a  skills/poc/SKILL.md
