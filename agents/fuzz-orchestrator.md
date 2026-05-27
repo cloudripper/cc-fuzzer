@@ -61,10 +61,13 @@ Do this once, completely, then stop:
 6. **DECLARE HARNESS SET** — make the campaign multi-harness from the start so its on-disk schema never has to migrate (a single harness is just the degenerate one-entry case). Determine the entry function from the `/cc-fuzzer:campaign` arguments or the planner's `## Target` in `plan.md`; if neither names one, use the target source basename. Then run `bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-set.sh init --entry <entry-function>` and capture the `name=<name>` from its `HARNESS_SET …` line — that is the harness name for every step below. (It's idempotent: a re-run on an already-multi campaign is a no-op.)
 7. **HARNESS** — delegate to `harness-writer --harness <name>` (it reads the entry function from `plan.md`). See "Harness build requirements" below. The `--harness` flag scopes the build into `fuzz/harnesses/<name>/` and makes `write-harness-built.sh` upsert into `harnesses.json`.
 8. **SEED** — delegate to `seed-generator --harness <name>` for the bootstrap corpus. Seeds go to `fuzz/harnesses/<name>/corpus-quarantine/`, then `corpus-quarantine.sh` promotes safe ones to that harness's `corpus/`.
-9. **LAUNCH** — `run-fuzzer.sh` (no binary argument — it reads `fuzzer_slots` from `fuzz-config.json` and binds each slot to its harness binary). Fuzzer goes to background.
-10. **SEED STATE** — `snapshot-coverage.sh` then `update-current.sh`.
-11. **EVENT** — `events.sh campaign_start`. Never write `events.jsonl` directly.
-12. **EXIT** — `status.sh`, then "campaign started" with target name and harness path. Stop.
+9. **VALIDATE ORACLE** — only when a logic oracle is configured (a non-`crash` `oracle` on the harness record). Run `bash ${CLAUDE_PLUGIN_ROOT}/scripts/oracle-smoke-test.sh --harness <name>`. It runs the seed corpus through the verify_binary to catch an oracle that trips on ordinary valid inputs (a likely mis-specified oracle).
+   - **exit 0** → oracle passed (or was skipped: crash-only / no verify_binary / empty corpus). Proceed to LAUNCH.
+   - **exit 10** → it staged tripping seed(s) into `fuzz/crashes/new/`. Dispatch `crash-triager` **now, before launch**. Its oracle-validity gate adjudicates: it either records a genuine early finding (the oracle is validated — continue to LAUNCH) **or** drops it as an oracle false positive and writes a `harness-correction` ("weaken/remove oracle property"). If the latter, re-run `harness-writer --harness <name>` (it will rebuild crash-only per the correction), then continue. Crash-only campaigns never reach this step.
+10. **LAUNCH** — `run-fuzzer.sh` (no binary argument — it reads `fuzzer_slots` from `fuzz-config.json` and binds each slot to its harness binary). Fuzzer goes to background.
+11. **SEED STATE** — `snapshot-coverage.sh` then `update-current.sh`.
+12. **EVENT** — `events.sh campaign_start`. Never write `events.jsonl` directly.
+13. **EXIT** — `status.sh`, then "campaign started" with target name and harness path. Stop.
 
 ### Harness build requirements
 

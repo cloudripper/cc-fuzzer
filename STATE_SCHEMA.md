@@ -1771,6 +1771,15 @@ The comparison oracle for `differential` is **user-supplied** via `/cc-fuzzer:ca
 
 The `campaign-planner` auto-selects oracle(s) from the prescan's `oracle_candidates` (inverse pairs → `roundtrip`; validation/auth gates → `invariant`/`differential`) and the target shape, recording the choice in `plan.md ## Oracle`. `/cc-fuzzer:campaign --oracle <type>` forces a specific oracle. Default with no signal and no `--reference` is `crash` (historical behavior — zero change to existing campaigns).
 
+### COLD oracle smoke-test
+
+Before a campaign with a logic oracle launches, `scripts/oracle-smoke-test.sh` (run by the orchestrator's COLD step 9, between SEED and LAUNCH) validates the oracle cheaply: it runs the **seed corpus** (known-good inputs) through the `verify_binary` and watches for the oracle marker. Because the accept-gate only emits the marker on an *accepted* input, a marker on a seed means the target accepted an ordinary valid input yet the oracle property still failed — the smoking gun for a mis-specified oracle.
+
+- **No trip** → launch (the common case; native runs, no LLM).
+- **Trip** → the tripping seed(s) are staged into `fuzz/crashes/new/` and the orchestrator dispatches `crash-triager` **before launch**. The triager's oracle-validity gate (below) decides bad-oracle vs genuine-early-finding — so a real day-0 logic bug is recorded rather than discarded, and a bad oracle is killed (harness-correction → rebuild crash-only) before any fuzzing cycles are spent. Skipped when the oracle is `crash`, no `verify_binary` exists, or the corpus is empty (the last two warn: "oracle unvalidated").
+
+This converts "discovered after the fuzzer floods the triager" into "discovered at COLD time, adjudicated once," reusing the existing triage gate rather than inventing new judgment.
+
 ### Triage: the oracle-validity gate
 
 For a logic finding, the triager's false-positive filter **inverts**. Instead of "is this a harness artifact?", it asks **"is the oracle itself wrong?"** — did the harness assert a property the target's contract never actually guarantees? (E.g. asserting key-order preservation across a round-trip when the format explicitly does not promise it.) A finding survives only if the violated property is genuinely required by the target's documented/intended contract. The triager records logic findings via `findings.sh add` with `ORACLE_TYPE` / `DIVERGENCE` set in the environment and `stack_hash` = the property-divergence hash.

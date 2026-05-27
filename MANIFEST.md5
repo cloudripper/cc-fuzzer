@@ -3,15 +3,15 @@
 # Format: <md5>  <relative-path>
 #
 ba9bc467590581343947ab6ed1a06c11  .claude-plugin/plugin.json
-22b9a091f9cd93810bde9a8911af1777  STATE_SCHEMA.md
+106c086c90a1f909be2c4ec3d3987396  STATE_SCHEMA.md
 0b1de2330d13af29b7f32e795df4eee8  agents/campaign-planner.md
 1c10e5f08e8401b18c66d468834d492c  agents/code-reviewer-deep.md
 0951b4752b235882ba2e422fb2b748f9  agents/code-reviewer.md
 3a86b57bf2cc87f5748cd2ccff8fe26e  agents/concolic-executor.md
 06e4b37d0e315d97035c72cd17b363d0  agents/coverage-analyst.md
 0ee9d395b14a413d2ccdd2a3b4e6b323  agents/crash-triager.md
-11beba48fd8e72ed969e688469068314  agents/fuzz-orchestrator.md
-80fa9cf4dd47f6a2ae2ed9aa71133c5d  agents/harness-writer.md
+2817f28bc4551a24a23904b0ab58d95c  agents/fuzz-orchestrator.md
+acd8f9d3b9887b9eeb91fe0366d7b39e  agents/harness-writer.md
 54c1fe1fa0d493691c343ffbe8105403  agents/mutator.md
 14118f35c4f22d8a4e4d36cc759dd602  agents/nix-builder.md
 abf7a236d12d4e42a66cd6d181be1d76  agents/planner-consult.md
@@ -89,6 +89,7 @@ dffa84b25ecf0668bfc5fe97fb402824  scripts/status.sh
 b7494731f0d9cffa7f7662549756ec4e  scripts/validate-state.sh
 1f35366fb4fd03bebd80cff4dbfce560  scripts/write-harness-built.sh
 be92be6440faeb656bb50c4dd4760ba2  scripts/yolo-state.sh
+b6ba5f4173c229037a2d4d1331c802a1  scripts/oracle-smoke-test.sh
 695259ae94cc327ec0ba77c8465b4460  skills/campaign/SKILL.md
 6718a7c80fbe4ae0abce9e5850582fe7  skills/concolic/SKILL.md
 ae8df8c4167849e40e6334ccdd59cf73  skills/coverage/SKILL.md

@@ -68,6 +68,8 @@ Before any mode below, if `fuzz/state/harness-corrections.jsonl` exists, read it
 
 Treat unconsumed corrections as **prioritised TODO items** for this build. The rewrite should address them concretely. Leave the records in the log when done — they're the audit trail.
 
+**Oracle-property corrections**: a correction whose `suggested_fix` says "weaken/remove oracle property `<id>`" means the triager found the **oracle itself** was mis-specified (it asserted a property the target's contract does not guarantee — often surfaced by the COLD `oracle-smoke-test.sh` tripping on a valid seed). Either tighten the property so it is genuinely contract-guaranteed, or, if it can't be salvaged, **rebuild crash-only** for this harness — drop the `--oracle-config` (or set `{"type":"crash"}`) so the harness no longer carries the bad oracle. Do not keep emitting a property the target never promised.
+
 ## Build matrix
 
 Every COLD start produces THREE binaries plus one optional:
