@@ -2,7 +2,7 @@
 # Generated at release time. Used by integrity-check.sh to detect drift.
 # Format: <md5>  <relative-path>
 #
-6e6b6f2ab59113d92069250183ec1384  .claude-plugin/plugin.json
+e4f4edddf0456168b1e88260defe1909  .claude-plugin/plugin.json
 1b5ff6024a8840dcefa1d5e48fcf81ed  STATE_SCHEMA.md
 e091c82f4f3a9fe49c8d32e42e26b0f8  agents/campaign-planner.md
 1c10e5f08e8401b18c66d468834d492c  agents/code-reviewer-deep.md
@@ -27,7 +27,7 @@ d6e48134299bc68341ef7fbe64f7afd4  dictionaries/utf-edge-cases.dict
 525a0966c5c0f0d3ef7e68d62d9e998a  scripts/_lib/build_current_multi.py
 61b5bff8b00f2d1bdf9c67d06ccf8885  scripts/_lib/build_current_singular.py
 2ad590572f685c903ed6f3e2e3342d01  scripts/_lib/code_review_prescan.py
-0780e8e7c890f31664f58c1ff2b4dbcf  scripts/_lib/cve-context-builder.py
+67d8e39c6552a4ff8360d4afad6ea995  scripts/_lib/cve-context-builder.py
 0ecb7ba1b53bc7158b009e6ae71fb9e9  scripts/_lib/cve_patterns.py
 3e5421f0c317575da597fe7089b5aa80  scripts/_lib/cve_poc_trust.py
 728a80eba881d2adbf3cbce07400125b  scripts/_lib/cve_sources.py
@@ -65,7 +65,7 @@ f06898e88bfa95aa6ab3fce75fc3c1c6  scripts/enforce-readonly.sh
 d648918216e180b7cc9f683dbfe2089d  scripts/events.sh
 a4cd368b5c389602f6917c2220693a55  scripts/extract-cmplog-dict.sh
 b6c93200cb33c51d12fc4cb2450a655b  scripts/find-delta-targets.sh
-9d5e083cba7a448396678ca37dfebe94  scripts/findings.sh
+778d1be48b506ebce78b7aa954fe5bee  scripts/findings.sh
 81fa8bb4a998f5fb32d582562fab0b43  scripts/harness-set.sh
 5f2ce65aca62fad4b86c5b7bbd58108a  scripts/install-symcc.sh
 1ca2ce057eb7ad54c704630567e3bacf  scripts/integrity-check.sh

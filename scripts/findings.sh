@@ -83,7 +83,11 @@ case "$cmd" in
 
   find-by-hash)
     HASH="${1:?stack_hash required}"
-    grep "\"stack_hash\":\"$HASH\"" "$FINDINGS" || true
+    # Whitespace-tolerant: on-disk findings.jsonl may carry spaces after the
+    # colon if a line was rewritten by a writer using json.dumps default
+    # separators (e.g. the triager's in-place annotation edit). A compact-only
+    # grep silently misses those. Mirror the tolerant idiom used by `count`/`add`.
+    grep -E "\"stack_hash\"[[:space:]]*:[[:space:]]*\"$HASH\"" "$FINDINGS" || true
     ;;
 
   add)
@@ -137,8 +141,9 @@ EOF
       *) echo "ERROR: invalid exploitability '$EXPLOITABILITY' (must be likely|medium|unlikely|harness-artifact)." >&2; exit 2;;
     esac
 
-    # Refuse if a finding with this stack_hash already exists - caller should dedup
-    if grep -q "\"stack_hash\":\"$STACK_HASH\"" "$FINDINGS" 2>/dev/null; then
+    # Refuse if a finding with this stack_hash already exists - caller should dedup.
+    # Whitespace-tolerant grep (on-disk lines may have spaces after the colon).
+    if grep -qE "\"stack_hash\"[[:space:]]*:[[:space:]]*\"$STACK_HASH\"" "$FINDINGS" 2>/dev/null; then
       echo "ERROR: stack_hash $STACK_HASH already exists - use 'dedup' instead" >&2
       exit 1
     fi
@@ -316,7 +321,8 @@ EOF
 
   dedup)
     STACK_HASH="${1:?stack_hash required}"
-    if ! grep -q "\"stack_hash\":\"$STACK_HASH\"" "$FINDINGS" 2>/dev/null; then
+    # Whitespace-tolerant grep (on-disk lines may have spaces after the colon).
+    if ! grep -qE "\"stack_hash\"[[:space:]]*:[[:space:]]*\"$STACK_HASH\"" "$FINDINGS" 2>/dev/null; then
       echo "ERROR: no finding with stack_hash $STACK_HASH" >&2
       exit 1
     fi
@@ -341,7 +347,7 @@ EOF
       # the high-dup threshold (v0.18). The triager re-runs the four-principle
       # artifact filter on high-dup findings before recording another duplicate.
       DEDUP_THRESHOLD="${FINDINGS_DEDUP_THRESHOLD:-5}"
-      OUT=$(grep "\"stack_hash\":\"$STACK_HASH\"" "$FINDINGS" | python3 "$OPS" dedup-info)
+      OUT=$(grep -E "\"stack_hash\"[[:space:]]*:[[:space:]]*\"$STACK_HASH\"" "$FINDINGS" | python3 "$OPS" dedup-info)
       MATCH_ID=$(echo "$OUT" | awk '{print $1}')
       MATCH_COUNT=$(echo "$OUT" | awk '{print $2}')
       echo "$MATCH_ID"
@@ -366,7 +372,8 @@ EOF
     ID="${1:?finding id required (e.g. f005)}"
     HARNESS_NAME="${2:?harness name required}"
 
-    if ! grep -q "\"id\":\"$ID\"" "$FINDINGS" 2>/dev/null; then
+    # Whitespace-tolerant grep (on-disk lines may have spaces after the colon).
+    if ! grep -qE "\"id\"[[:space:]]*:[[:space:]]*\"$ID\"" "$FINDINGS" 2>/dev/null; then
       echo "ERROR: no finding with id $ID" >&2
       exit 1
     fi
