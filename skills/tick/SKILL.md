@@ -2,7 +2,6 @@
 name: tick
 description: Advance the fuzzing loop by one tick. Use when running a campaign manually, or as the unit the YOLO self-loop chains.
 argument-hint: "(no arguments — advance one WARM tick)"
-disable-model-invocation: true
 ---
 
 Dispatches the **fuzz-orchestrator** subagent to perform exactly one WARM-tick iteration (its WARM-mode procedure owns the steps). Then, if YOLO is active, chain the next tick (below). One invocation = one tick — the chaining, not a loop inside this skill, is what advances the campaign.

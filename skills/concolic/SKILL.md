@@ -2,7 +2,6 @@
 name: concolic
 description: "Manually invoke concolic execution (SymCC) against the current corpus and gap report. Targets checksum_barrier and deep_path_condition gaps. Auto-dispatched by the orchestrator; available standalone for forced runs. — usage: [gap-id | all] [--harness <name>]"
 argument-hint: "[gap-id | all] [--harness <name>]"
-disable-model-invocation: true
 ---
 
 Dispatches the **concolic-executor** subagent (Haiku driver of SymCC, ~5 min per dispatch).

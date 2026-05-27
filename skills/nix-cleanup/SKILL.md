@@ -2,7 +2,6 @@
 name: nix-cleanup
 description: "Remove nix GC roots left by this campaign's harness builds, freeing store paths for collection. Safe to run after a campaign is complete. — usage: [--gc] [--dry-run]"
 argument-hint: "[--gc] [--dry-run]"
-disable-model-invocation: true
 ---
 
 Runs `scripts/nix-cleanup.sh` to remove the `result-*` symlinks (GC roots) that `nix-build.sh` created under `fuzz/harnesses/*/harness/`. Once removed, nix can reclaim the store paths on the next garbage-collection run.

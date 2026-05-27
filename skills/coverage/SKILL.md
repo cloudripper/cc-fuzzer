@@ -2,7 +2,6 @@
 name: coverage
 description: "Take a coverage snapshot and analyze gaps. Emits a ranked gap report that downstream specialists consume. — usage: [path-to-coverage-snapshot] [--harness <name>] [natural-language guidance...]"
 argument-hint: "[path-to-coverage-snapshot] [--harness <name>] [natural-language guidance...]"
-disable-model-invocation: true
 ---
 
 Refreshes coverage via `${CLAUDE_PLUGIN_ROOT}/scripts/snapshot-coverage.sh`, extracts the cmplog dictionary via `extract-cmplog-dict.sh`, then dispatches the **coverage-analyst** subagent (Sonnet, ~$0.15-0.25).

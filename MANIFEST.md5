@@ -2,7 +2,7 @@
 # Generated at release time. Used by integrity-check.sh to detect drift.
 # Format: <md5>  <relative-path>
 #
-bdce04a9ab60a64e0d3a90d6bb498ec9  .claude-plugin/plugin.json
+69305b90e5d10783e1246424f5998e54  .claude-plugin/plugin.json
 1b5ff6024a8840dcefa1d5e48fcf81ed  STATE_SCHEMA.md
 e091c82f4f3a9fe49c8d32e42e26b0f8  agents/campaign-planner.md
 1c10e5f08e8401b18c66d468834d492c  agents/code-reviewer-deep.md
@@ -90,28 +90,28 @@ dffa84b25ecf0668bfc5fe97fb402824  scripts/status.sh
 4f3f8460f97abf2891e5dc04b9e8ddbd  scripts/write-harness-built.sh
 be92be6440faeb656bb50c4dd4760ba2  scripts/yolo-state.sh
 c21d025974bef7c3de82f50d4bbd8e7e  skills/campaign/SKILL.md
-6718a7c80fbe4ae0abce9e5850582fe7  skills/concolic/SKILL.md
-ae8df8c4167849e40e6334ccdd59cf73  skills/coverage/SKILL.md
+75b89d0d8054fb0c949c834a9586e2bc  skills/concolic/SKILL.md
+86764fb883df1136082324f922631a3a  skills/coverage/SKILL.md
 96d22d5824c9df2a24c977329ea3d8e9  skills/delta/SKILL.md
 c1ed7ac8d06104cef051c84a417a600a  skills/dictionaries/SKILL.md
 43010c0a7751730980f52acabb642cd0  skills/doctor/SKILL.md
-bc73e395bf12e963d0cf9bf59860a019  skills/harness/SKILL.md
+33fb162ad7bf560c4b7c0463b98c52f5  skills/harness/SKILL.md
 c014b0ae2abd1e423f51baa5b21dbe7a  skills/nix-build/SKILL.md
-1eae67f4d935cf2f1b5ed7bdd6b29404  skills/nix-cleanup/SKILL.md
-9d19d267b8ed8cbd124e098ae5e4d16f  skills/plan/SKILL.md
-01821844c6dfe7171900713017b46e7a  skills/poc/SKILL.md
-4516fcd5c88ff49b1c5348e11253df1f  skills/report/SKILL.md
+210d48c416833814842b495b60bb6bb7  skills/nix-cleanup/SKILL.md
+2c0527d6b6699d371b6dd972b54c63e9  skills/plan/SKILL.md
+b6c6746e78759b73f0c10677b76ad8d1  skills/poc/SKILL.md
+e290baf96ab206f60000850d6b4a9891  skills/report/SKILL.md
 798d91c8a644bc860f83f79d498fe7de  skills/reset/SKILL.md
-0e211d81a8df86cad4a2858989611258  skills/resume-campaign/SKILL.md
-de9661bc69bf412723e30790c11867a8  skills/review/SKILL.md
-d9744519758ef24767e9bd16537ff328  skills/run/SKILL.md
-2a1a4c50bcbb71e29a68a17320db1488  skills/seed/SKILL.md
+1005feb93d5928e0c3a85f9f4cb44bff  skills/resume-campaign/SKILL.md
+3ddd9cd8b45bc97980d022dc0b6c0223  skills/review/SKILL.md
+6e5a5612c1c49c3a6b3b5b8b49dff65d  skills/run/SKILL.md
+3762914afd19bbfbed0fb362adb70d35  skills/seed/SKILL.md
 7eefdc11bae42015f747dfd0a6ed8bc8  skills/status/SKILL.md
-b01264a1bfc405bc70751a53dcfb6360  skills/stop/SKILL.md
-28cd6c9e52e1be4d64d5278bfdcb9fce  skills/tick/SKILL.md
-a60644abfae7712dc21c437c1f6d1635  skills/triage/SKILL.md
+c11a1d5caee159203e60aa5cc78350b5  skills/stop/SKILL.md
+ce0daeac7eb933a1eb7690fd6e992eb8  skills/tick/SKILL.md
+165e6d1267fc833d28bfd534ce183ee4  skills/triage/SKILL.md
 063d157eeaaa1a8a49ba342ab7d02311  skills/validate/SKILL.md
-38f24e9ad3e741a267b2aff025ae2ba8  skills/yolo/SKILL.md
+0bcf0de306d777fc0dabd8d9e13cdccd  skills/yolo/SKILL.md
 242ae89e95acebaf99e020e8c1f7ced2  templates/guidance.md
 c19001f0356b4e10dcd99423d650b984  templates/nix-deps.nix
 a2f9ad36cf78db8dd5a2d7de1074e7c1  templates/project-flake.nix

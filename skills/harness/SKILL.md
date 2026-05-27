@@ -2,7 +2,6 @@
 name: harness
 description: "Generate a libFuzzer/AFL++ harness for a target. Building block — for a full campaign use /cc-fuzzer:campaign. — usage: <path-to-target-source-or-header> [entry-function]"
 argument-hint: "<path-to-target-source-or-header> [entry-function]"
-disable-model-invocation: true
 ---
 
 Dispatches the **harness-writer** subagent.

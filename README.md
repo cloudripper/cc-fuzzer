@@ -146,9 +146,9 @@ Every orchestrator invocation begins with `check-campaign-state.sh`:
 
 ### Skills (`/cc-fuzzer:<name>`)
 
-Claude may auto-invoke the read-only utilities (`status`, `doctor`, `validate`, `delta`, `dictionaries`) and the `campaign` headline; the rest carry `disable-model-invocation: true`.
+Claude may model-invoke **every** skill except **`reset`**, which alone carries `disable-model-invocation: true` because it destroys campaign state and must be a deliberate human action. (`reset` is still available to you as a typed `/cc-fuzzer:reset`.)
 
-That flag gates **slash commands** only — it stops the *ambient* assistant from firing an expensive command (`/cc-fuzzer:triage`, `/cc-fuzzer:poc`, …) you didn't ask for. It does **not** gate **subagents**: once a campaign is running, the orchestrator dispatches the underlying agents — including Opus ones like `crash-triager` and `planner-consult` — directly via the Task tool. Each gated skill is just a thin wrapper that dispatches the same agent for one-off manual use. Starting the loop (`/cc-fuzzer:campaign`, `/cc-fuzzer:tick`, or `/cc-fuzzer:yolo on`) is your authorization for that autonomous dispatch; under YOLO the cost/redundancy ledger — not the skill gate — bounds how much Opus it spends.
+The gate is about **slash-command auto-invocation**, not subagents: once a campaign is running, the orchestrator dispatches the underlying agents — including Opus ones like `crash-triager` and `planner-consult` — directly via the Task tool regardless. Each skill is a thin wrapper that dispatches the same agent for one-off manual or model-driven use. Cost is bounded by `--budget` and, under YOLO, the cost/redundancy ledger — not by skill gating. Only the irreversible `reset` stays human-gated.
 
 - **Campaign loop** — `campaign` (headline; auto-detects COLD/RESUME/WARM), `tick`, `resume-campaign`, `run`, `stop`, `yolo`, `reset`
 - **Analysis & corpus** — `plan`, `harness`, `seed`, `coverage`, `concolic`, `review`, `delta`, `dictionaries`

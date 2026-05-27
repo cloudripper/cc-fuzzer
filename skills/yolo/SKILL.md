@@ -2,7 +2,6 @@
 name: yolo
 description: "Toggle YOLO — a self-driving fuzzing loop. `/cc-fuzzer:yolo on` is set-and-forget: it sets the per-tick auto-pilot posture (guided / hybrid / self_loop + aggressiveness), runs a tick immediately, and chains each next tick via ScheduleWakeup so the campaign advances unattended until a hard halt or `/cc-fuzzer:yolo off`. No /loop, no babysitting. — usage: on [--mode guided|hybrid|self_loop] [--aggressiveness conservative|balanced|aggressive] [--no-cap] [--interval 30m] [--max-ticks N] [--max-cost USD] | off [--reason \"...\"] | status"
 argument-hint: "on [--mode guided|hybrid|self_loop] [--aggressiveness conservative|balanced|aggressive] [--no-cap] [--interval 30m] [--max-ticks N] [--max-cost USD] | off [--reason \"...\"] | status"
-disable-model-invocation: true
 ---
 
 **YOLO is off by default — opt in with `/cc-fuzzer:yolo on`.** Without it, advance the campaign manually with `/cc-fuzzer:tick`. `yolo on` is the **set-and-forget** path: it starts a self-driving loop (one command, no `/loop`) that runs ticks automatically until a hard halt or you turn it off.
