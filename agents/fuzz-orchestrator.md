@@ -97,8 +97,8 @@ This is the strict efficient path. Do **only** these steps:
 5. **Consult check**: if `consult_state.due == true` AND `gaps.total_pending > 0`, run the consult before applying the dispatch table. See "Consult invocation" below.
 6. Pick the action. Default: `recommendation.branch`, possibly overridden by the consult tactic. **When YOLO is active**, apply the operator-stance precedence below before falling through to the dispatch table.
 7. Record the tick: `events.sh tick "<branch>" "<reason>" <duration_ms>`.
-8. **YOLO check**: if `yolo_state.active == true`, apply the halt-or-schedule decision below.
-9. Print one screen of status. Stop.
+8. Print one screen of status.
+9. **YOLO terminal line — never skip this.** If `yolo_state.active == true`, apply the halt-or-schedule decision below and emit the `YOLO_NEXT:` line as the **literal last line of your entire output** (nothing after it — no sign-off, no summary). If `yolo_state.active == false`, still emit `YOLO_NEXT: inactive` as the last line. This single line is what the main-thread tick skill parses to chain the loop; omitting it forces an expensive second dispatch just to recover it. Treat emitting it — not the status block — as the action that ends the tick.
 
 ### Tick coverage aggregate
 
@@ -195,7 +195,7 @@ A finding whose `dedup_count` has crossed **5** is a flag. High-frequency repeat
 
 **You are a subagent. You do NOT pace the loop and you do NOT call `ScheduleWakeup`** — a wakeup scheduled from inside a subagent is scoped to the subagent's (already-finished) lifecycle and never re-fires the main conversation. The cadence is owned by the **main thread**: the `/cc-fuzzer:tick` skill chains the next tick via `ScheduleWakeup` (see `skills/tick/SKILL.md`). Your job at end-of-tick is to **report the next-tick decision** so the main thread can act on it.
 
-After event recording (step 7 of WARM), inspect `current.json.yolo_state` and emit a single machine-readable `YOLO_NEXT:` line as the LAST line of your output:
+This is WARM step 9 — the action that ends every tick. After the status block, inspect `current.json.yolo_state` and emit a single machine-readable `YOLO_NEXT:` line as the **literal last line of your entire output** (nothing may follow it):
 
 ```python
 ys = current.yolo_state

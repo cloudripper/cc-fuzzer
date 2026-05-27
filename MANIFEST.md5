@@ -10,7 +10,7 @@ c3ba20b9836a731735f3d63039a36c29  STATE_SCHEMA.md
 3a86b57bf2cc87f5748cd2ccff8fe26e  agents/concolic-executor.md
 06e4b37d0e315d97035c72cd17b363d0  agents/coverage-analyst.md
 0ee9d395b14a413d2ccdd2a3b4e6b323  agents/crash-triager.md
-1a7fd13c1d41d8ba5662d4b53b76a801  agents/fuzz-orchestrator.md
+7d06d290833f8393a359d8d9f23bef64  agents/fuzz-orchestrator.md
 acd8f9d3b9887b9eeb91fe0366d7b39e  agents/harness-writer.md
 54c1fe1fa0d493691c343ffbe8105403  agents/mutator.md
 14118f35c4f22d8a4e4d36cc759dd602  agents/nix-builder.md
@@ -88,7 +88,7 @@ dffa84b25ecf0668bfc5fe97fb402824  scripts/status.sh
 04173d0c6b1c6039d0fa11b3e2f05eb0  scripts/update-current.sh
 b7494731f0d9cffa7f7662549756ec4e  scripts/validate-state.sh
 1f35366fb4fd03bebd80cff4dbfce560  scripts/write-harness-built.sh
-be92be6440faeb656bb50c4dd4760ba2  scripts/yolo-state.sh
+f989c34e08870da7c11f23d756c5b22d  scripts/yolo-state.sh
 b6ba5f4173c229037a2d4d1331c802a1  scripts/oracle-smoke-test.sh
 f7398068a97e6a4ee7edb221e3555f52  references/threat-model.md
 695259ae94cc327ec0ba77c8465b4460  skills/campaign/SKILL.md
@@ -110,7 +110,7 @@ e290baf96ab206f60000850d6b4a9891  skills/report/SKILL.md
 3762914afd19bbfbed0fb362adb70d35  skills/seed/SKILL.md
 7eefdc11bae42015f747dfd0a6ed8bc8  skills/status/SKILL.md
 c11a1d5caee159203e60aa5cc78350b5  skills/stop/SKILL.md
-ce0daeac7eb933a1eb7690fd6e992eb8  skills/tick/SKILL.md
+5f640b10c235230b389518d7828158e8  skills/tick/SKILL.md
 165e6d1267fc833d28bfd534ce183ee4  skills/triage/SKILL.md
 063d157eeaaa1a8a49ba342ab7d02311  skills/validate/SKILL.md
 0bcf0de306d777fc0dabd8d9e13cdccd  skills/yolo/SKILL.md

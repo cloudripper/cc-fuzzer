@@ -52,6 +52,15 @@
 #       Exit 0 = continue (no halt). Exit 1 = halt due. Prints the reason
 #       to stdout regardless. Used by the orchestrator before emitting YOLO_NEXT.
 #
+#   yolo-state.sh next-tick
+#       Print the YOLO_NEXT: directive line derived deterministically from
+#       current.json:yolo_state (inactive / halt / schedule at the base
+#       interval). This is the main-thread tick skill's FALLBACK for when the
+#       orchestrator subagent returned without emitting its own YOLO_NEXT line
+#       — it recovers the next-tick decision without paying for a second full
+#       Opus dispatch. On halt it also disables YOLO (mirrors the orchestrator)
+#       so the state sticks. Always exits 0; prints exactly one YOLO_NEXT: line.
+#
 # Defaults (when fields are absent):
 #   mode:                        hybrid
 #   aggressiveness:              derived from mode (balanced for hybrid)
@@ -372,6 +381,49 @@ PY
 }
 
 # ---------------------------------------------------------------------------
+# next-tick — emit the YOLO_NEXT: directive deterministically from
+# current.json.yolo_state. The main-thread tick skill's fallback for a missing
+# orchestrator YOLO_NEXT line. Read-only except: disables YOLO on halt so the
+# halt sticks (matches the orchestrator). Always exits 0; one YOLO_NEXT: line.
+# ---------------------------------------------------------------------------
+_cmd_next_tick() {
+  if [ ! -f "$CURRENT_FILE" ]; then
+    echo "YOLO_NEXT: inactive"
+    return 0
+  fi
+  local line reason
+  line=$(CURRENT="$CURRENT_FILE" python3 - <<'PY'
+import json, os
+with open(os.environ["CURRENT"]) as f:
+    cur = json.load(f)
+ys = cur.get("yolo_state") or {}
+if not ys.get("active"):
+    print("YOLO_NEXT: inactive")
+elif ys.get("halt_triggered"):
+    r = (ys.get("halt_reason") or "halt_triggered_no_reason").replace('"', "'")
+    print(f'YOLO_NEXT: halt reason="{r}"')
+    print(f'__HALT__\t{r}')  # signal to the shell to disable; stripped below
+else:
+    # Conservative recovery: base interval, no disposition-aware backoff (we
+    # don't know this tick's disposition from state alone). Runtime clamps.
+    delay = ys.get("interval_seconds") or 1800
+    used = ys.get("tick_quota_used", 0)
+    total = used + ys.get("tick_quota_remaining", 0)
+    print(f'YOLO_NEXT: schedule delay={delay} prompt=/cc-fuzzer:tick '
+          f'reason="yolo tick {used + 1}/{total} (recovered: orchestrator omitted YOLO_NEXT)"')
+PY
+)
+  # If the halt sentinel is present, disable YOLO so it sticks, then strip it.
+  if printf '%s\n' "$line" | grep -q '^__HALT__'; then
+    reason=$(printf '%s\n' "$line" | sed -n 's/^__HALT__\t//p')
+    _cmd_disable --reason "$reason" >/dev/null 2>&1 || true
+    printf '%s\n' "$line" | grep -v '^__HALT__'
+  else
+    printf '%s\n' "$line"
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
 cmd="${1:-help}"
@@ -381,11 +433,12 @@ case "$cmd" in
   disable)    _cmd_disable "$@" ;;
   status)     _cmd_status ;;
   check-halt) _cmd_check_halt ;;
+  next-tick)  _cmd_next_tick ;;
   help|-h|--help)
     sed -n '2,/^$/p' "$0" | sed 's/^# \?//'
     ;;
   *)
-    echo "ERROR: unknown subcommand '$cmd' (try: enable | disable | status | check-halt)" >&2
+    echo "ERROR: unknown subcommand '$cmd' (try: enable | disable | status | check-halt | next-tick)" >&2
     exit 2
     ;;
 esac

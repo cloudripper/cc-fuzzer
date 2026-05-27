@@ -46,4 +46,14 @@ When YOLO is on, the campaign self-drives as a **chain of ticks on the main thre
 
 That is the entire loop: `schedule → fire → schedule → …` until a halt or `inactive` breaks it. No `/loop`, no cron — `ScheduleWakeup` re-invokes the conversation on its own (validated: it fires and chains outside any `/loop`). The chain runs while the session is idle; a fired tick won't interrupt you mid-message.
 
+### Missing `YOLO_NEXT:` line — recover, don't re-dispatch
+
+If the orchestrator's output has **no `YOLO_NEXT:` line** (it did the tick work but ended on its status block), the tick itself already happened — only the next-tick directive is missing. Do **not** re-dispatch the orchestrator just to get the line; that burns a second full Opus dispatch (~25k tokens, minutes) for one line. Instead recover it deterministically from state:
+
+```bash
+${CLAUDE_PLUGIN_ROOT}/scripts/yolo-state.sh next-tick
+```
+
+It prints exactly one `YOLO_NEXT:` line (`inactive` / `halt …` / `schedule delay=<base interval> …`) derived from `current.json.yolo_state`, and disables YOLO itself if a halt is due. Act on that line with the table above. The only thing lost versus the orchestrator emitting it directly is the disposition-aware backoff (you get the base interval) — a fine trade for skipping a redundant dispatch. Only re-dispatch the orchestrator if it stalled **before** completing the tick steps (see Stall recovery above), not merely because the trailing line is absent.
+
 If YOLO is **off** and you ran this manually, just report the tick result and stop — no scheduling.
