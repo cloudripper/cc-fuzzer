@@ -76,7 +76,7 @@ What appears in each per-finding H3 by mode:
 
 ## Inputs (read these, nothing else)
 
-- `fuzz/state/findings.jsonl` — every line; both `finding/v1` and `finding/v2` are valid
+- `fuzz/state/findings.jsonl` — every line; both `finding/v1` and `finding/v2` are valid. A finding with `oracle_type != "crash"` is a logic finding — render per "Logic findings (oracle-driven)" below.
 - `fuzz/state/harness-built.json` (singular) or `fuzz/state/harnesses.json` (multi) — used ONLY for the 3a internal sanity-check; never named in the rendered report
 - `fuzz/findings/<id>/repro/` — per-finding maintainer-facing PoC bundle (the triager's deliverable; read-only here)
 - `fuzz/state/dropped_crashes.jsonl` — transparency log, surfaced as an appendix when non-empty
@@ -399,6 +399,18 @@ If `chained_findings` is non-empty AND `chain_dependencies_valid: false` (an ups
 *maintainer/public:* "This region has prior CVE history:" followed by one bullet per CVE in the format `<CVE-id> — <category> patched in <function> (<patched_date>). <patch_idiom>`. Close with: "This may be a regression of a known pattern or a distinct bug in adjacent code. The maintainer should compare the current root cause against the patch idioms recorded in the cited CVEs."
 
 *pre-contact:* a single line — "This region has `<N>` prior CVEs; the maintainer should compare against historical patches."
+
+### Logic findings (oracle-driven)
+
+When `finding.oracle_type` is present and not `"crash"`, the finding is a **logic bug** (wrong behavior, no memory crash). Render with these deltas (see STATE_SCHEMA "Oracle-Driven Fuzzing"):
+
+- **Header**: `### <id> — <category> (logic — <oracle_type> oracle)`.
+- **What was found**: describe the violated property in the target's own terms — what the target produced vs. what its contract requires. E.g. "`json_parse` accepts `json_serialize`'s output but produces a different value — the round-trip is not preserved for inputs containing duplicate keys." No fuzzing jargon, no harness mention.
+- **Replace the "Sanitizer output" subsection with "Oracle divergence"**: a fenced block showing `finding.divergence` — `property_id`, `comparison`, `observed`, `expected` (and `reference` for differential). This is the evidence in place of a stack trace.
+- **Impact**: the security consequence of the wrong behavior, with a realistic ceiling — auth bypass → unauthorized access; parser differential → request smuggling / filter bypass; canonicalization → access-control bypass; integer truncation → downstream corruption. If `finding.verification.exploit_built` is unset (no behavioral PoC yet), say: "Behavioral impact not yet demonstrated — run `/cc-fuzzer:poc <id>` to build a `verify.sh` that confirms the wrong behavior occurs."
+- **Classification**: a logic finding has no crash-style bundle in Phase 1/2, so it classifies `confirmed_harness_only` via 3a (the oracle trap reproduces). That is expected, not a weakness — render the divergence as the proof; do not stamp it "weakly verified" the way a memory crash without a bundle would be.
+
+The crash-only subsections (Weaponization, the crash-style Exploit bundle block) are omitted unless a behavioral PoC bundle exists.
 
 ### Affected versions
 

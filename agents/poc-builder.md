@@ -42,6 +42,26 @@ Your only writable scope is `fuzz/`. Never edit anything under `${CLAUDE_PLUGIN_
 
 **Verifiable impact** means a script can check it. If you cannot write a check, you have not proven impact.
 
+## Logic findings (oracle-driven): behavioral impact
+
+When the finding has `oracle_type != "crash"` (an `invariant` / `roundtrip` / `differential` finding — see STATE_SCHEMA "Oracle-Driven Fuzzing"), it is a **logic bug**: the target produced a wrong result without crashing. The whole pipeline still applies, with one substitution — **`verify.sh` checks that the wrong behavior occurs, not that memory was corrupted.** No sanitizer, no memory sentinel. Read the finding's `divergence` (`property_id`, `observed`, `expected`, `comparison`, `reference`) — that is your starting evidence.
+
+The impact is the security consequence of the divergence, with a realistic ceiling:
+
+| Divergence | Behavioral impact `verify.sh` should demonstrate |
+|---|---|
+| `differential` accept/reject (parser differential) | A payload the target accepts but the reference (or a downstream consumer) rejects — or vice versa → request smuggling, WAF/filter bypass, auth-check evasion. `verify.sh` shows the protected action is reached / the filter is bypassed. |
+| `canonicalization` | Two encodings of the same name compare unequal (or equal when they shouldn't) → path traversal, access-control bypass. `verify.sh` shows the gate admits a path it must reject. |
+| `roundtrip` / `invariant` | The wrong value persists / the invariant breaks → data corruption, or a downstream component misreads the value. `verify.sh` shows the corrupted value drives a wrong decision. |
+| `integer-truncation` | A truncated length/index is used → a wrong-size operation. `verify.sh` shows the resulting wrong-size effect against the real target. |
+
+**Tiers, reframed for logic:**
+- **Tier A** — concrete attacker outcome demonstrated end-to-end against the real target (the validator is bypassed and the protected action executes; the smuggled request reaches the backend).
+- **Tier B** — a usable primitive: the divergence is shown to reliably produce a wrong decision an attacker could build on, even without a completed end-to-end chain.
+- **Tier C** — the divergence reproduces deterministically against the real target, but no security consequence is demonstrable (or the bug class genuinely admits none).
+
+**Realism binds identically** — exploit the REAL target (and, for `differential`, the REAL reference/consumer), default config, attacker-realistic privilege; never a rigged mock. The same dispute path applies: if the divergence does not hold against the real target in realistic context (e.g., the "differential" is two-both-valid latitude the spec permits, not a bug), set `exploit_tier_reason: "realism_dispute"` and dispute the finding. Prefer a CLI `verify.sh` driving the real binaries. Everything below (tiers gate, realism self-check, dispute, cost discipline) applies unchanged; only the *nature of the check* is behavioral.
+
 ## Realism: exploit the REAL target, never a rigged mock
 
 A `verify.sh` that exits 0 proves nothing if the thing it exploited was a strawman *you* built to be vulnerable. The exploit must drive the bug through the **target's own code, in a realistic deployment**, exactly as an attacker would reach it — not through a reimplementation, wrapper, or listener you wrote that bakes in the vulnerable behavior or strips the protections the real system has. This is the single most important property of a valid PoC, and the thing that makes this stage able to catch triager false positives.

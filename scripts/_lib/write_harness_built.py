@@ -72,6 +72,18 @@ def build_doc():
     if bc:
         doc["build_command"] = bc
 
+    # Oracle config (oracle-driven fuzzing). Additive-optional: absent ⇒ the
+    # implicit crash oracle (sanitizer/abort), the historical behavior. When the
+    # harness compiles in an invariant / round-trip / differential oracle, the
+    # harness-writer passes a JSON blob via ORACLE_JSON. See STATE_SCHEMA
+    # "Oracle-Driven Fuzzing".
+    oracle_raw = os.environ.get("ORACLE_JSON", "")
+    if oracle_raw:
+        try:
+            doc["oracle"] = json.loads(oracle_raw)
+        except Exception:
+            doc["oracle"] = {"type": "crash", "_parse_error": True, "_raw": oracle_raw}
+
     return doc, is_multi
 
 

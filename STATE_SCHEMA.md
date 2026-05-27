@@ -258,7 +258,22 @@ Lifecycle: IMMUTABLE once written. Never modified, never deleted (except by `/cc
 **Required when `coverage_tracking: false`**: coverage_disabled_reason (string explaining why coverage was disabled — e.g. "user opted out via --no-coverage" or "build failed - see fuzz/state/coverage-build-failed.log" or "v3 migration: existing campaign predates mandatory coverage").
 **Required when `cmplog_enabled: true`**: cmplog_binary (must be an executable path). Setting `cmplog_enabled: true` with no binary is a validation error; setting it true with a non-executable binary is a warning (run-fuzzer.sh will continue without `-c`).
 **Required when `cmplog_enabled: false`**: cmplog_disabled_reason (string explaining why cmplog was disabled — typical values: `"afl-clang-fast not in PATH; install AFL++ to enable Redqueen-style input-to-state"`, `"engine is libFuzzer; cmplog is AFL++-only"`, or the v5→v6 migration reason).
-**Optional** (set to `null`/empty/omitted): verify_binary, symcc_binary, mutator_source, dict_files (default `[]`).
+**Optional** (set to `null`/empty/omitted): verify_binary, symcc_binary, mutator_source, dict_files (default `[]`), oracle (default: crash oracle — see below).
+
+**Oracle config** (additive-optional, oracle-driven fuzzing): when the harness compiles in a logic oracle, `harness-writer` records the choice so the planner, triager, and reporter can read it. Written via `write-harness-built.sh --oracle-config '<json>'`.
+
+```json
+"oracle": {
+  "type": "roundtrip",
+  "property_id": "json_roundtrip",
+  "functions": {"consumer": "json_parse", "producer": "json_serialize"},
+  "comparison": "normalized_serialization_equal",
+  "reference": null,
+  "execution": "in_process"
+}
+```
+
+`type` ∈ `crash | invariant | roundtrip | differential` (absent ⇒ `crash`). For `differential`: `reference` names the second implementation and `execution` ∈ `subprocess | in_process` (default `subprocess`). The crash oracle is always additionally active — logic oracles are layered on top of sanitizers, never instead of them.
 **Allowed values**:
 - `input_encoding`: one of `passthrough | fdp | length_prefixed_records | custom`
 - `sanitizers`: subset of `address | undefined | memory | thread | fuzzer | leak`
@@ -600,8 +615,15 @@ One finding per line. JSONL format. Strictly append-only for **new** findings; i
 - `disclosure_state`: `pre_contact | maintainer_engaged | cve_requested | cve_assigned | published`. Drives the `/cc-fuzzer:report --mode` rendering.
 - `weaponization`: optional object, present only when the triager attempted weaponization after the verification pipeline passed — `{ attempted: bool, achieved: bool, level: "trigger"|"control"|"exploit", notes: string }`. Failure here does NOT invalidate the trigger-level finding.
 
+**Oracle-driven (logic) finding fields** (additive-optional; absent ⇒ `oracle_type == "crash"`, the historical memory-safety/sanitizer finding — see "Oracle-Driven Fuzzing"):
+
+- `oracle_type`: `crash | invariant | roundtrip | differential`. Omitted entirely on crash findings for back-compat; present on logic findings. Identifies *how the bug was detected*, not its bug class (that's `category`).
+- `divergence`: object, present only when `oracle_type != "crash"`. Records the evidence a logic finding stands on, in place of a sanitizer stack trace: `{ property_id: string, comparison: string, observed: string, expected: string, reference?: string, input_form?: string }`. `property_id` names the violated invariant / round-trip pair / reference comparison; `observed`/`expected` are the divergent values (truncated/normalized); `reference` names the second implementation for `differential`.
+
+**For logic findings, `stack_hash` is the property-divergence hash** — `sha256(oracle_type | property_id | divergence_class)[:16]` — not a stack trace hash. This keeps the `findings.sh dedup` / `find-by-hash` machinery unchanged: two violations of the same property on the same oracle dedup together regardless of input.
+
 **Allowed values**:
-- `category`: `heap-buffer-overflow | heap-use-after-free | stack-buffer-overflow | global-buffer-overflow | stack-overflow | null-deref | assertion-failure | ubsan-<kind> | oom | timeout | flaky | harness-artifact`
+- `category`: crash classes — `heap-buffer-overflow | heap-use-after-free | stack-buffer-overflow | global-buffer-overflow | stack-overflow | null-deref | assertion-failure | ubsan-<kind> | oom | timeout | flaky | harness-artifact`; logic classes (oracle-driven) — `invariant-violation | roundtrip-mismatch | differential-divergence | parser-differential | auth-bypass | access-control | incorrect-validation | canonicalization | state-confusion | integer-truncation | logic-error`
 - `exploitability`: `likely | medium | unlikely | harness-artifact`
 
 **ID assignment rule**: monotonically increasing zero-padded `f001`, `f002`, etc. The next ID is determined by counting lines in `findings.jsonl` + 1. IDs are never reused.
@@ -1691,6 +1713,74 @@ This is deterministic. Every crash has exactly one location at any moment.
 - Never delete crash files. They are evidence. `/cc-fuzzer:reset` is the only thing that does, and only with explicit user confirmation.
 - Never modify `repro.bin`. The bytes the fuzzer found are sacred.
 - Never re-triage files in `fuzz/crashes/known/`. They are settled.
+
+## Oracle-Driven Fuzzing (logic findings)
+
+Coverage-guided fuzzing with sanitizers finds **crashes**: memory-safety violations, aborts, UB. It is structurally blind to **logic bugs** — wrong answers that don't crash (auth bypass, parser differentials, canonicalization mismatches, silent integer truncation, state-machine confusion). These are often the higher-severity, real-world-exploitable bugs. Oracle-driven fuzzing adds the missing oracle: the harness, after driving the input through the target, *checks a property that must hold* and traps (`__builtin_trap()` / `abort()`) when it doesn't. A trap raises a deadly signal, so the existing crash pipeline (detect → triage → findings) carries logic findings end-to-end with only additive schema changes.
+
+### The oracle types
+
+`oracle_type` ∈ `crash | invariant | roundtrip | differential`. The crash oracle is always on; logic oracles are layered on top (sanitizers stay enabled).
+
+| Oracle | The harness checks | Needs a second implementation? |
+|---|---|---|
+| `crash` | sanitizer / abort fired (implicit, always active) | no |
+| `invariant` | a property of the output holds (bounds, ordering, "success ⇒ well-formed", conservation, idempotence) | no |
+| `roundtrip` | `consumer(producer(x))` preserves `x` (parse∘serialize, decode∘encode, decompress∘compress) | no |
+| `differential` | target and a reference agree on the same input (two libs / prior version / equivalent path) | yes — user-supplied `--reference` |
+
+### The accept-gate rule (the crux)
+
+A logic oracle must **never** trap because the target *rejected* the input — rejecting malformed input is correct behavior, not a bug. It traps **only** when, *given the target accepted the input*, the invariant is violated or two oracles diverge. Every oracle harness gates the check on acceptance:
+
+```c
+auto parsed = tgt_parse(data, size);
+if (!parsed.ok) return 0;                       // rejection is correct — NOT a finding
+/* ... run the oracle on the ACCEPTED input ... */
+if (!oracle_holds(parsed)) __builtin_trap();    // logic finding
+```
+
+This gate is what keeps a logic harness from drowning the campaign in false positives. It is a hard rule for `harness-writer`.
+
+### The oracle marker
+
+Before trapping, an oracle harness prints a structured marker to stderr so the triager can tell a logic-oracle violation apart from a memory crash and read the divergence without re-deriving it:
+
+```
+CCFUZZ_ORACLE_VIOLATION oracle=<invariant|roundtrip|differential> property=<property_id>
+CCFUZZ_ORACLE_OBSERVED <short printable string>
+CCFUZZ_ORACLE_EXPECTED <short printable string>
+```
+
+The triager keys on `CCFUZZ_ORACLE_VIOLATION`: present ⇒ logic finding (use `oracle_type`/`property`/`observed`/`expected` to build `divergence` and the property-divergence `stack_hash`); absent ⇒ ordinary crash finding via the normal stack-hash path. The marker plus the deadly signal from `__builtin_trap()` means the standard detect/verify/dedup pipeline carries the finding unchanged.
+
+### Differential execution
+
+`differential` defaults to **subprocess** execution: the reference runs out-of-process (no symbol clash, works for CLI tools), outputs are normalized, and the harness traps on divergence. In-process linking is an opt-in for clean libraries with distinct symbols. Outputs are compared **normalized**, never raw `memcmp` — two correct implementations legitimately differ in in-memory layout; the comparison function (named in `oracle.comparison`) canonicalizes first.
+
+### Reference sourcing
+
+The comparison oracle for `differential` is **user-supplied** via `/cc-fuzzer:campaign --reference <lib|path|nix-attr>`. (Prior-version auto-build and nixpkgs-proposed references are future work.) Without a `--reference`, the planner will not select `differential`; it falls back to `roundtrip`/`invariant`/`crash`.
+
+### Oracle selection
+
+The `campaign-planner` auto-selects oracle(s) from the prescan's `oracle_candidates` (inverse pairs → `roundtrip`; validation/auth gates → `invariant`/`differential`) and the target shape, recording the choice in `plan.md ## Oracle`. `/cc-fuzzer:campaign --oracle <type>` forces a specific oracle. Default with no signal and no `--reference` is `crash` (historical behavior — zero change to existing campaigns).
+
+### Triage: the oracle-validity gate
+
+For a logic finding, the triager's false-positive filter **inverts**. Instead of "is this a harness artifact?", it asks **"is the oracle itself wrong?"** — did the harness assert a property the target's contract never actually guarantees? (E.g. asserting key-order preservation across a round-trip when the format explicitly does not promise it.) A finding survives only if the violated property is genuinely required by the target's documented/intended contract. The triager records logic findings via `findings.sh add` with `ORACLE_TYPE` / `DIVERGENCE` set in the environment and `stack_hash` = the property-divergence hash.
+
+### Differential: two divergence properties
+
+A `differential` harness checks two properties, both respecting the accept-gate:
+- `value_divergence` — both implementations accept the input but their **normalized** outputs differ. High-confidence semantic disagreement.
+- `accept_divergence` — the implementations disagree on validity (one accepts, one rejects). The parser-differential class (request smuggling, filter/WAF bypass, auth evasion). The triager scrutinizes whether the disagreement is a real bug or **both-valid latitude** the spec leaves undefined (e.g. duplicate-key handling) — the latter is an oracle false positive.
+
+Comparison is always **normalized**, never raw `memcmp`. The reference is user-supplied (`--reference`), not built by cc-fuzzer; the harness reads it from `CCFUZZ_REFERENCE_CMD` at runtime with the plan's value compiled in.
+
+### Phasing note
+
+Phases 1–3 are shipped (v0.23.0): the schema + finding fields + prescan `oracle_candidates` + triage path (1); `roundtrip`/`invariant` harness generation + planner oracle selection (2); `differential` subprocess harnesses with user-supplied reference + behavioral-impact PoC in `poc-builder` (3). Phase 4 — stateful-sequence harnesses, the UBSan `integer`/`implicit-conversion` suite, and metamorphic relations — is future work.
 
 ## Concurrency Rules
 

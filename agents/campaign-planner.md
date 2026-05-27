@@ -103,10 +103,30 @@ You make the strategic calls so no downstream specialist re-derives them mid-cam
 | Per-gap seed posture | `seed-generator`'s per-tick behavior |
 | Dictionary picks | bundled + project-local dicts |
 | Concolic hot/cold regions | `concolic-executor`'s targeting |
+| **Oracle** (crash vs invariant/roundtrip/differential) | `harness-writer`'s oracle code (see "Oracle selection") |
 | Coverage targets and out-of-scope | `coverage-analyst`'s ranking |
 | Plateau thresholds (informational) | orchestrator context only |
 
 Be **specific**. "Emphasize UTF-8 edge cases" is not a plan. "Bootstrap with 12 seeds covering the 5 UTF-8 surrogate-pair branches in `get_wchar()` (charset.c:640-712); add the `utf-edge-cases` bundled dictionary; if charset.c plateaus below 60% line coverage, dispatch concolic against multi-byte boundary checks" is a plan.
+
+## Oracle selection
+
+The default oracle is `crash` (sanitizer/abort) — and for many targets that is the right and only choice; do not force a logic oracle where none genuinely applies. But coverage+sanitizers are blind to *logic bugs* (wrong answers that don't crash). When the target supports one, pick a logic oracle and write a `## Oracle` section; `harness-writer` builds it (layered on top of crash detection, never instead of it). See STATE_SCHEMA "Oracle-Driven Fuzzing" for the full model.
+
+**Inputs to the decision:**
+- The code review's `oracle_opportunities` (in `code-review.md` / the `code-review-*.json` snapshot) and the prescan's `oracle_candidates` — confirmed inverse pairs and validation/auth gates.
+- `--oracle <type>` if the user forced one (overrides auto-selection). `--reference <lib|path|nix-attr>` if the user supplied a differential reference.
+
+**Selection rule:**
+1. `--oracle <type>` given → use it.
+2. Else if `--reference` given AND the target has two comparable implementations/paths → `differential`.
+3. Else if the review found a genuine inverse pair (parse∘serialize etc.) → `roundtrip`.
+4. Else if the review named a concrete output invariant worth checking → `invariant`.
+5. Else → `crash` (omit the `## Oracle` section).
+
+**`## Oracle` section content** (when not crash): the `type`; the exact function(s) — `consumer`/`producer` for roundtrip, the `reference` for differential, the gate fn for invariant; the **property in one concrete sentence** (the thing that must hold for every *accepted* input); the comparison/normalization to apply (never raw `memcmp` for differential); and `execution: subprocess|in_process` for differential (default subprocess). Restate the **accept-gate rule** for the harness-writer: trap only on a violated property for *accepted* input — never because the target rejected malformed input. Keep crash detection on regardless.
+
+In multi-harness mode the oracle is per-harness — put a `#### Oracle` block under the relevant harness's H3.
 
 ## Required output structure
 
@@ -124,7 +144,7 @@ See STATE_SCHEMA `### state/plan.md` for the canonical list of required H2 headi
 
 **Revise mode adds**: `## Campaign Status & Revisions` immediately after `## Target`, with three subsections (`### Status snapshot`, `### Lessons learned`, `### Revisions in this plan`) and a closing "Harness-locked decisions" verbatim block sourced from `harness-built.json`.
 
-**Optional H2 sections** (include only when relevant): `## Code-review focus` (when `code-review.md` exists), `## Known prior art` (when `cve-context-*.json` exists), `## Delta Range`, `## Mutator Notes`, `## Known Caveats`.
+**Optional H2 sections** (include only when relevant): `## Oracle` (when a logic oracle applies — see "Oracle selection"), `## Code-review focus` (when `code-review.md` exists), `## Known prior art` (when `cve-context-*.json` exists), `## Delta Range`, `## Mutator Notes`, `## Known Caveats`.
 
 For section content rules, see STATE_SCHEMA `### state/plan.md`. Write each section for its audience, not for the user. The plan is consumed by LLM peers who already know fuzzing.
 

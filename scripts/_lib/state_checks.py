@@ -328,16 +328,22 @@ def cmd_findings():
         "weaponization",
     }
 
+    # Oracle-driven (logic) finding fields. Additive-optional: absent ⇒ crash
+    # finding. See STATE_SCHEMA "Oracle-Driven Fuzzing".
+    ORACLE_OPTIONAL = {"oracle_type", "divergence"}
+
     if mode == "singular":
         expected_schema = "finding/v1"
         required = {"schema", "id", "stack_hash", "category", "location", "exploitability", "root_cause", "reproducer", "first_seen", "last_seen", "dedup_count"}
-        allowed = required | {"subcategory", "sanitizer_report_excerpt", "verified_against_build", "status", "stale_against_build"} | V018_OPTIONAL
+        allowed = required | {"subcategory", "sanitizer_report_excerpt", "verified_against_build", "status", "stale_against_build"} | V018_OPTIONAL | ORACLE_OPTIONAL
     else:
         expected_schema = "finding/v2"
         required = {"schema", "id", "stack_hash", "category", "location", "exploitability", "root_cause", "reproducer", "first_seen", "last_seen", "dedup_count", "harnesses"}
-        allowed = required | {"subcategory", "sanitizer_report_excerpt", "verified_against_build", "status", "stale_against_build"} | V018_OPTIONAL
+        allowed = required | {"subcategory", "sanitizer_report_excerpt", "verified_against_build", "status", "stale_against_build"} | V018_OPTIONAL | ORACLE_OPTIONAL
 
-    allowed_categories = {"heap-buffer-overflow", "heap-use-after-free", "stack-buffer-overflow", "global-buffer-overflow", "stack-overflow", "null-deref", "assertion-failure", "oom", "timeout", "flaky", "harness-artifact"}
+    # Crash classes + logic classes (oracle-driven). ubsan-<kind> handled separately below.
+    allowed_categories = {"heap-buffer-overflow", "heap-use-after-free", "stack-buffer-overflow", "global-buffer-overflow", "stack-overflow", "null-deref", "assertion-failure", "oom", "timeout", "flaky", "harness-artifact",
+                          "invariant-violation", "roundtrip-mismatch", "differential-divergence", "parser-differential", "auth-bypass", "access-control", "incorrect-validation", "canonicalization", "state-confusion", "integer-truncation", "logic-error"}
     allowed_exploitability = {"likely", "medium", "unlikely", "harness-artifact"}
     ID_RE = re.compile(r"^f[0-9]{3,}$")
 

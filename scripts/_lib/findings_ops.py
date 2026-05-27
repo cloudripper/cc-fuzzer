@@ -75,6 +75,22 @@ def cmd_build_finding(argv):
     }
     if is_multi:
         d["harnesses"] = [os.environ["HARNESS"]]
+    # Oracle-driven (logic) findings carry the oracle type and a divergence
+    # record instead of a sanitizer-only narrative. ORACLE_TYPE defaults to
+    # "crash" (omitted for back-compat); a non-crash oracle adds the fields.
+    # DIVERGENCE is a JSON object string the triager assembled. See
+    # STATE_SCHEMA "Oracle-Driven Fuzzing".
+    oracle_type = os.environ.get("ORACLE_TYPE", "") or ""
+    if oracle_type and oracle_type != "crash":
+        d["oracle_type"] = oracle_type
+        div_raw = os.environ.get("DIVERGENCE", "") or ""
+        if div_raw:
+            try:
+                d["divergence"] = json.loads(div_raw)
+            except Exception:
+                # Malformed divergence JSON must not corrupt the record; record
+                # the raw string so the triager can repair it rather than lose it.
+                d["divergence"] = {"_raw": div_raw, "_parse_error": True}
     if excerpt:
         d["sanitizer_report_excerpt"] = excerpt
     print(_compact(d))

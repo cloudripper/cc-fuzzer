@@ -97,14 +97,23 @@ RIGHT: findings.sh add "abc123def456" "null-deref" "func\@file.c:42" "medium" "o
 
 The id is allocated by this script - do NOT pass --id. The argument order is:
   1. stack_hash         (16-hex-char sha256-prefix of the crash stack)
-  2. category           (one of: heap-buffer-overflow heap-use-after-free stack-buffer-overflow
+  2. category           (crash: heap-buffer-overflow heap-use-after-free stack-buffer-overflow
                                   global-buffer-overflow stack-overflow null-deref assertion-failure
-                                  oom timeout harness-artifact, or ubsan-<kind>)
+                                  oom timeout harness-artifact, or ubsan-<kind>;
+                          logic: invariant-violation roundtrip-mismatch differential-divergence
+                                  parser-differential auth-bypass access-control incorrect-validation
+                                  canonicalization state-confusion integer-truncation logic-error)
   3. location           (function@file:line of the actual bug, not the libc frame)
   4. exploitability     (one of: likely medium unlikely harness-artifact)
   5. root_cause         (one or two sentences)
   6. reproducer         (path to fuzz/crashes/known/<id>/repro.bin - placeholder until you mkdir+mv)
   7. sanitizer_excerpt  (optional - first ~10 lines of the sanitizer report)
+
+For a LOGIC finding (oracle-driven), additionally set in the ENVIRONMENT (not flags):
+  ORACLE_TYPE=invariant|roundtrip|differential   and
+  DIVERGENCE='{"property_id":"...","comparison":"...","observed":"...","expected":"..."}'
+The stack_hash for a logic finding is the property-divergence hash (sha256 prefix of
+oracle_type|property_id|divergence_class) — the dedup machinery is unchanged.
 EOF
       exit 2
     fi
@@ -125,9 +134,12 @@ EOF
       exit 2
     fi
 
-    # Validate category enum
+    # Validate category enum. Crash classes (memory safety + sanitizer) plus the
+    # logic classes used by oracle-driven findings (see STATE_SCHEMA "Oracle-Driven
+    # Fuzzing"). Logic findings set ORACLE_TYPE != crash and carry DIVERGENCE.
     case "$CATEGORY" in
       heap-buffer-overflow|heap-use-after-free|stack-buffer-overflow|global-buffer-overflow|stack-overflow|null-deref|assertion-failure|oom|timeout|harness-artifact|ubsan-*) ;;
+      invariant-violation|roundtrip-mismatch|differential-divergence|parser-differential|auth-bypass|access-control|incorrect-validation|canonicalization|state-confusion|integer-truncation|logic-error) ;;
       *) echo "ERROR: invalid category '$CATEGORY'. See 'findings.sh help'." >&2; exit 2;;
     esac
 
@@ -296,9 +308,12 @@ EOF
     # mode write finding/v1 (unchanged from v8).
     IS_MULTI_FLAG=0
     if is_multi && [ -n "$HARNESS_CTX" ]; then IS_MULTI_FLAG=1; fi
+    # ORACLE_TYPE / DIVERGENCE flow through from the caller's environment
+    # (set by crash-triager for logic findings; unset/"crash" for crash findings).
     NEW_LINE=$(IS_MULTI="$IS_MULTI_FLAG" HARNESS="$HARNESS_CTX" \
                NEW_ID="$NEW_ID" STACK_HASH="$STACK_HASH" CATEGORY="$CATEGORY" \
                EXPLOITABILITY="$EXPLOITABILITY" BUILD_HASH="$BUILD_HASH" NOW="$NOW" \
+               ORACLE_TYPE="${ORACLE_TYPE:-}" DIVERGENCE="${DIVERGENCE:-}" \
                python3 "$OPS" build-finding "$LOCATION" "$ROOT_CAUSE" "$REPRODUCER" "$EXCERPT")
 
     # Append atomically

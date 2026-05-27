@@ -47,7 +47,7 @@ If invoked mid-campaign for a new harness via `/cc-fuzzer:review --refresh`, wri
 
 ## Inputs (read in this order)
 
-1. **Prescan output** — `fuzz/state/snapshots/code-review-prescan-<ts>.json`, path passed via `--prescan <path>`.
+1. **Prescan output** — `fuzz/state/snapshots/code-review-prescan-<ts>.json`, path passed via `--prescan <path>`. Besides `top_candidates`, it carries `oracle_candidates` (inverse function pairs and validation/auth gates found by name heuristic) — your starting point for the semantic lens below.
 2. **Natural-language guidance** — when the user invoked `/cc-fuzzer:review <text>`, the text is passed to you via `--guidance "<text>"`. Honor it: it may name specific subsystems to focus on, specific files to skip, specific patterns to look for, or override the default review scope. Parse intent rather than expecting flag syntax.
 3. **`fuzz/state/cve-patterns.md`** (when present) — the CVE-derived pattern vocabulary. Use the **same bug-class names** (`oob_write`, `int_overflow`, `uaf`, etc.) in your findings.
 4. **Target source** for each top-candidate function. Read `prescan.top_candidates[i].file:line_start..line_end` plus ±50 lines of context. Use `Read` with offset/limit to bound cost.
@@ -60,7 +60,11 @@ Do NOT read every file the prescan inventoried. Trust the ranking; read only the
 For each top-candidate function in the prescan:
 
 1. **Read the function** from `<file>:<line_start>` to `<line_end>` plus context.
-2. **Identify pattern(s)** — pick from the bug-class vocabulary: `oob_write`, `oob_read`, `stack_overflow`, `uaf`, `double_free`, `null_deref`, `int_overflow`, `format_string`, `type_confusion`, `race`, `uninit_read`, `divide_by_zero`, `infinite_loop`. When in doubt, prefer the most specific applicable class.
+2. **Identify pattern(s)** — pick from the bug-class vocabulary.
+   - *Memory-safety / crash classes*: `oob_write`, `oob_read`, `stack_overflow`, `uaf`, `double_free`, `null_deref`, `int_overflow`, `format_string`, `type_confusion`, `race`, `uninit_read`, `divide_by_zero`, `infinite_loop`.
+   - *Logic classes* (oracle-driven — bugs that produce a **wrong result without crashing**): `auth_bypass`, `access_control`, `incorrect_validation`, `missing_validation`, `canonicalization`, `state_confusion`, `toctou_logic`, `integer_truncation`, `signedness_logic`, `parser_differential`, `roundtrip_mismatch`, `error_path`. These will never be found by sanitizers; they need a logic oracle (see the semantic lens below).
+
+   When in doubt, prefer the most specific applicable class.
 3. **Rate confidence**:
 
    | Confidence | When |
@@ -82,6 +86,16 @@ For each top-candidate function in the prescan:
    - "This is an unusual `memcpy(dst, src, src_len)` pattern; classify whether `src_len` is bounds-checked elsewhere in the call chain."
 
 If you decline to classify a candidate after reading it (no real pattern), **drop it entirely** — don't emit a low-confidence stub. The `candidates_reviewed` count tells the user how thoroughly you went.
+
+## Semantic lens: invariants and oracle opportunities
+
+The pattern pass above finds dangerous *constructs*. Logic bugs have no dangerous-API signature — they are *wrong behavior*, not unsafe memory. So run a second, lighter lens over the parse/serialize/validate/auth/canonicalize surface (start from the prescan's `oracle_candidates`, extend with anything you noticed while reading). For each such function ask: **what invariant does this claim to maintain, and where could it break?**
+
+- **Round-trip** — does the codebase have an inverse pair (parse/serialize, decode/encode, compress/decompress)? Then `consumer(producer(x))` should preserve `x` for any accepted `x`. Confirm the pair really are inverses (same data model, not e.g. a lossy pretty-printer) before recommending the oracle.
+- **Differential** — are there two code paths that should agree (two parsers, a fast path + slow path, vN vs vN-1)? A divergence is a parser-differential / canonicalization bug. Note that a differential oracle needs a second implementation the user supplies.
+- **Invariant** — does a function document or imply a property (output length bounds, ordering, "returns success ⇒ output is well-formed", a validator that must reject all malformed input)? Name the property concretely.
+
+Emit these as an `oracle_opportunities` array in the JSON (additive to `code-review/v1`) and an `## Oracle opportunities` section in the markdown. Each entry: `{ oracle: "roundtrip"|"differential"|"invariant", functions: [...], property: "<one concrete sentence>", confidence: high|medium|low, note }`. The `campaign-planner` reads these to choose `plan.md ## Oracle`. Be concrete: "`json_parse(json_serialize(v))` must equal `v` for any value the parser accepts" is actionable; "JSON should round-trip" is not. Omit the section entirely if you find no genuine oracle (crash-only is a fine default — do not invent oracles).
 
 ## When to use `needs_deep_pass` vs `medium` vs `low`
 

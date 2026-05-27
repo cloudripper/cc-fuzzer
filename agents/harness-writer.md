@@ -163,6 +163,111 @@ For `process_based`:
 3. Source uses `getopt`, reads `argv[1]`, or is a command-line tool by description → `process_based`
 4. Uncertain → default to `in_process`, warn in the campaign notes
 
+## Oracle harnesses (logic-bug detection)
+
+If `plan.md`'s `## Oracle` (or a harness's `#### Oracle` block in multi mode) names a non-`crash` oracle, build it **into** `LLVMFuzzerTestOneInput`, layered on top of the sanitizers — never instead of them. The crash oracle stays active; the logic oracle adds a second way to fail. A trap (`__builtin_trap()`) on an oracle violation raises a deadly signal that the crash pipeline already handles end-to-end. See STATE_SCHEMA "Oracle-Driven Fuzzing".
+
+**The accept-gate rule is mandatory** (restated from Hard rules): gate every oracle check on the target *accepting* the input. Rejecting malformed input is correct — it must not trap. Only an invariant violated on *accepted* input, or a divergence, is a finding.
+
+### `invariant` and `roundtrip` (Phase 2 — no second implementation)
+
+On a violation, emit the **oracle marker** to stderr *before* trapping, so the triager can recognise the trap as a logic finding and read the divergence (see STATE_SCHEMA "Oracle-Driven Fuzzing"). Use this exact helper:
+
+```c
+#include <stdio.h>
+// Print the marker, then trap. property = the invariant/pair id from ## Oracle.
+#define CCFUZZ_ORACLE_FAIL(otype, property, observed, expected) do {           \
+    fprintf(stderr, "CCFUZZ_ORACLE_VIOLATION oracle=%s property=%s\n",         \
+            (otype), (property));                                              \
+    fprintf(stderr, "CCFUZZ_ORACLE_OBSERVED %s\n", (observed));                \
+    fprintf(stderr, "CCFUZZ_ORACLE_EXPECTED %s\n", (expected));                \
+    __builtin_trap();                                                          \
+} while (0)
+```
+
+```c
+extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
+    // 1. Drive the input through the target (sanitizers watch this — crash oracle).
+    ParsedDoc doc;
+    int rc = tgt_parse(data, size, &doc);     // the real target API
+    if (rc != 0) return 0;                     // ACCEPT-GATE: rejection is correct, NOT a finding
+
+    // 2a. invariant: assert a property that must hold for any accepted input.
+    if (doc.field_count > doc.capacity)
+        CCFUZZ_ORACLE_FAIL("invariant", "field_count_le_capacity",
+                           fmt_int(doc.field_count), fmt_int(doc.capacity));
+
+    // 2b. roundtrip: consumer(producer(x)) preserves x.
+    uint8_t *re = nullptr; size_t re_len = 0;
+    if (tgt_serialize(&doc, &re, &re_len) == 0) {
+        ParsedDoc doc2;
+        if (tgt_parse(re, re_len, &doc2) == 0 && !docs_equal_normalized(&doc, &doc2))
+            CCFUZZ_ORACLE_FAIL("roundtrip", "json_roundtrip",
+                               "reparsed != original", "reparsed == original");
+    }
+    tgt_free(&doc);
+    return 0;
+}
+```
+
+Notes:
+- `docs_equal_normalized` is *your* comparison helper, in the harness file — compare the **normalized** value (canonical form), never a raw `memcmp` of in-memory structs.
+- Keep the `observed`/`expected` strings short and printable — they become the finding's `divergence` evidence. Don't dump raw binary.
+- Confirm the functions named in `## Oracle` are genuine inverses / the invariant is genuinely promised. If you doubt the property holds by contract, surface the disagreement to the orchestrator and fall back to `crash` rather than build a false-positive factory.
+- The verify build (`cov_main.c` shim) compiles the same source, so the oracle trap reproduces under Stage-2 verification automatically — no extra work.
+
+### `differential` (uses `--reference`, subprocess default)
+
+Run the input through the target (in-process, as usual) **and** through a user-supplied reference, then trap on a normalized divergence. The reference comes from `plan.md ## Oracle`'s `reference` (a CLI command, a prebuilt binary path, or a nixpkgs binary on PATH) and `execution` (`subprocess` default, `in_process` opt-in). cc-fuzzer does **not** build the reference — the user supplies it runnable.
+
+**Two distinct divergence properties** — both respect the accept-gate, differently:
+
+```c
+extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
+    TgtResult t = tgt_process(data, size);          // in-process target (sanitizers watch it)
+    RefResult r = run_reference(data, size);        // subprocess reference (see helper below)
+
+    // Property 1 — accept/reject disagreement (parser differential: smuggling / filter bypass).
+    // NOTE the accept-gate still holds: BOTH rejecting is correct and traps nothing;
+    // only a *disagreement* on validity is flagged.
+    if (t.ok != r.ok)
+        CCFUZZ_ORACLE_FAIL("differential", "accept_divergence",
+                           t.ok ? "target=accept ref=reject" : "target=reject ref=accept",
+                           "both accept or both reject");
+
+    // Property 2 — value divergence: both accepted, normalized outputs differ.
+    if (t.ok && r.ok && !outputs_equal_normalized(t, r))
+        CCFUZZ_ORACLE_FAIL("differential", "value_divergence", t.norm, r.norm);
+    return 0;
+}
+```
+
+**Reference subprocess helper** — `run_reference` writes the input to a temp file, `posix_spawn`s the reference, captures stdout + exit code, and parses acceptance from the exit code (and/or a documented output marker). Read the reference command from `CCFUZZ_REFERENCE_CMD` at runtime with the plan's value compiled in as the default, so a maintainer can re-point it:
+
+```c
+// default baked from ## Oracle.reference; overridable at runtime.
+static const char *REF_CMD_DEFAULT = "reference-tool --parse";   // from plan
+// run_reference: mkstemp(input) → posix_spawn(getenv("CCFUZZ_REFERENCE_CMD") ?: REF_CMD_DEFAULT, tmpfile)
+//                → waitpid → RefResult{ ok = (exit==0), norm = normalize(captured_stdout) }
+```
+
+**Normalization is mandatory** — `outputs_equal_normalized` compares *canonical* forms, never raw `memcmp`. Two correct implementations legitimately differ in byte layout / whitespace / field order; the comparison must canonicalize (re-serialize to a normal form, sort independent fields, strip insignificant whitespace) per the plan's `comparison`. A raw compare is a false-positive factory.
+
+**`in_process` opt-in**: only when the reference is a clean library with symbols distinct from the target (no clashing globals). Link it and call directly; otherwise stay subprocess.
+
+If `## Oracle` requests `differential` but no `reference` is set (planner shouldn't emit this, but guard anyway), build the closest single-implementation oracle (`roundtrip`/`invariant`) and tell the orchestrator the reference was missing.
+
+### Recording the oracle
+
+Pass the oracle config to the wrapper so the planner/triager/reporter can read it:
+
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/write-harness-built.sh ... \
+  --oracle-config '{"type":"roundtrip","property_id":"json_roundtrip","functions":{"consumer":"json_parse","producer":"json_serialize"},"comparison":"normalized_serialization_equal","execution":"in_process"}'
+```
+
+Omit `--oracle-config` entirely for a crash-only harness (the default).
+
 ## Workflow
 
 ### Step 0: Read committed build backend
@@ -405,8 +510,8 @@ If the script exits non-zero (survivors remain), do NOT rebuild. Surface the sti
 
 - Never modify files under `${CLAUDE_PLUGIN_ROOT}/`.
 - Never modify target source.
-- Never disable sanitizers on the fuzzing binary.
-- Never `assert()` against fuzzer-supplied input.
+- Never disable sanitizers on the fuzzing binary. (A logic oracle is layered *on top of* sanitizers, never instead of them.)
+- **Oracle assertions follow the accept-gate rule, not a blanket ban.** Never trap (`assert`/`__builtin_trap`/`abort`) because the target *rejected* the input — rejecting malformed input is correct behavior, not a bug. Only trap when, *given the target accepted the input*, a logic-oracle invariant is violated or two oracles diverge (see "Oracle harnesses"). The old blanket "never assert against fuzzer input" was right for crash-only harnesses; it is replaced by this gate.
 - Never declare success without running the build commands.
 - Never hand-write `harness-built.json` — always use the wrapper script.
 - All paths in `harness-built.json` are relative to project root, not absolute.

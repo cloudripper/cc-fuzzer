@@ -51,7 +51,73 @@ If `fuzz/crashes/new/` has more than 3 files, write a todo list with one item pe
 - Recent harness ASan output for the candidate input (run once if not cached)
 - `harness-corrections.jsonl` is YOUR append-only output, not an input — see Step 3.5
 
-## Per-crash workflow
+## Crash vs logic finding (oracle detection)
+
+A candidate is a **logic finding** (not a memory crash) when running it emits the oracle marker. Before the three-step crash workflow, run the input once and check:
+
+```bash
+OUT=$(timeout 10 "$VERIFY_BIN" "$CRASH_FILE" 2>&1 || true)   # or harness if no verify_binary
+echo "$OUT" | grep -q '^CCFUZZ_ORACLE_VIOLATION' && IS_LOGIC=1 || IS_LOGIC=0
+```
+
+- `IS_LOGIC=0` → the normal **crash workflow** below (Steps 1–6), unchanged.
+- `IS_LOGIC=1` → the **logic-finding workflow** in the next section. The harness has a non-`crash` oracle (confirm via `harnesses.json[<harness>].oracle`); the trap is a deliberate invariant/round-trip/differential violation, not a memory bug. See STATE_SCHEMA "Oracle-Driven Fuzzing".
+
+## Logic-finding workflow (oracle violations)
+
+The crash pipeline's machinery (deterministic replay, dedup, `findings.sh`) carries logic findings — only the *meaning* of each step changes. The marker lines give you the evidence:
+
+```
+CCFUZZ_ORACLE_VIOLATION oracle=<type> property=<property_id>
+CCFUZZ_ORACLE_OBSERVED <...>
+CCFUZZ_ORACLE_EXPECTED <...>
+```
+
+### L1 — Oracle-validity gate (replaces the four-principle artifact filter)
+
+The artifact filter's question ("is this a harness artifact?") inverts to: **is the oracle itself wrong?** Read the target's contract for the property the harness asserted (docs, header comments, the standard the format implements). Decide:
+
+- **Oracle is valid** — the property is genuinely required by the target's documented/intended contract (e.g. a parser that accepts input the spec says is invalid; a round-trip the format promises to preserve; a validator that must reject all malformed input). → continue to L2.
+- **Oracle is wrong** — the harness asserted a property the target never promised (e.g. key-order preservation when the format explicitly doesn't guarantee it; an "invariant" that's actually allowed to vary). For a `differential` finding the specific trap is **both-valid latitude**: the two implementations disagree on input the spec leaves *undefined/implementation-defined* (e.g. duplicate-key handling), so neither is wrong — that is an oracle false positive, not a parser-differential bug. A genuine `accept_divergence` (one side accepts what the spec says must be rejected) IS a finding; both-valid disagreement is not. → this is an **oracle false positive**, the logic-bug analogue of a harness artifact. Drop it:
+  ```bash
+  ${CLAUDE_PLUGIN_ROOT}/scripts/findings.sh drop "$CRASH_FILE" artifact_filter \
+    "oracle asserts a property the target does not guarantee: <which property, cite contract>" \
+    --principle api_contract \
+    --evidence "<doc/spec/header citation showing the property is not promised>"
+  mv "$CRASH_FILE" fuzz/crashes/flaky/
+  ```
+  Append a `harness-correction` record (`principle: api_contract`, `suggested_fix:` "weaken/remove oracle property <id>") so `harness-writer` fixes the oracle. No finding.
+
+### L2 — Deterministic replay (same gate, property-keyed)
+
+Run 3× against harness and `verify_binary` as in crash Step 2, but the determinism check is: **≥2/3 runs emit `CCFUZZ_ORACLE_VIOLATION` with the SAME `property=` token** (not matching stack frames — the trap site is always the same harness line; the *property* is the identity). Non-deterministic → drop as `deterministic_replay`.
+
+### L3 — Record the logic finding
+
+- **`stack_hash` = property-divergence hash**: `printf '%s' "<oracle_type>|<property_id>|<divergence_class>" | sha256sum | cut -c1-16`. (`divergence_class` is a short stable label for the *kind* of divergence, e.g. `reparse_neq`, `len_gt_cap` — so the same property failing the same way dedups regardless of input.)
+- Dedup: `findings.sh find-by-hash "$STACK_HASH"`. Existing → `findings.sh dedup` (unchanged). New → record:
+
+```bash
+mkdir -p "fuzz/crashes/known/PLACEHOLDER"   # then mv after add allocates the id
+ORACLE_TYPE="<invariant|roundtrip|differential>" \
+DIVERGENCE='{"property_id":"<id>","comparison":"<how compared>","observed":"<from marker>","expected":"<from marker>"}' \
+${CLAUDE_PLUGIN_ROOT}/scripts/findings.sh add \
+  "$STACK_HASH" \
+  "<logic category: invariant-violation|roundtrip-mismatch|differential-divergence|parser-differential|auth-bypass|access-control|incorrect-validation|canonicalization|state-confusion|integer-truncation|logic-error>" \
+  "<public-function-whose-contract-broke>@<file>:<line>" \
+  "<exploitability>" \
+  "<root_cause: what wrong behavior the target produces, in its own terms>" \
+  "fuzz/crashes/known/PLACEHOLDER/repro.bin" \
+  "<the three CCFUZZ_ORACLE_* marker lines as the excerpt>"
+```
+
+`findings.sh`'s two-stage verification still runs and passes (the trap fires deterministically in both binaries). `ORACLE_TYPE`/`DIVERGENCE` are **environment** variables, not flags. Pick the `category` that names the *semantic* bug class (use `oracle_type`-derived classes like `roundtrip-mismatch` only when nothing more specific fits).
+
+### L4 — Hand off to poc-builder for behavioral impact
+
+For logic findings, the maintainer-facing impact (auth bypass → unauthorized access; parser differential → smuggling/filter bypass; truncation → downstream overflow) is **behavioral**, verified by a `verify.sh` that checks the wrong behavior occurs — not a memory sentinel. That is `poc-builder`'s behavioral lane. So: record the finding with its `divergence` and the triggering input as `repro.bin`, set `disclosure_state: "pre_contact"`, and do **not** run `build-poc-repro.sh` yourself (it scaffolds crash-style bundles). The orchestrator dispatches `poc-builder` after a new finding exactly as for crash findings; `poc-builder` reads `oracle_type`/`divergence` and builds the behavioral bundle. Note in your summary that the finding awaits behavioral PoC.
+
+## Per-crash workflow (crash findings)
 
 For each `fuzz/crashes/new/<...>.bin`, run the three steps in order. Failing any step routes the candidate to `fuzz/state/dropped_crashes.jsonl` via `findings.sh drop` — a transparency log a maintainer can inspect. Pass all three → write a finding and build its bundle.
 

@@ -169,9 +169,63 @@ class FunctionEntry:
     cve_hotspot_match: bool = False
     cve_pattern_hints: List[str] = field(default_factory=list)
     file_recently_changed: bool = False
+    # Logic-bug oracle signal (Phase 1 of oracle-driven fuzzing). `semantic_role`
+    # is "consumer" (parse/decode side), "producer" (serialize/encode side), or
+    # "gate" (validate/auth/canonicalize). `oracle_base` is the verb-stripped
+    # base token used to pair a consumer with its inverse producer for a
+    # round-trip oracle. Both None when the name carries no oracle signal.
+    semantic_role: Optional[str] = None
+    oracle_base: Optional[str] = None
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+# Name-heuristic role detection for oracle selection. Verbs are matched as a
+# leading or trailing token (`parse_json` and `json_parse` both → base "json").
+# Conservative: a hit only suggests an oracle to the LLM reviewer/planner; it is
+# never authoritative. The reviewer confirms semantics before any oracle is built.
+_CONSUMER_VERBS = ("parse", "decode", "deserialize", "unmarshal", "unpack",
+                   "decompress", "inflate", "read", "load", "scan", "demux")
+_PRODUCER_VERBS = ("serialize", "encode", "marshal", "pack", "compress",
+                   "deflate", "write", "save", "dump", "emit", "mux")
+_GATE_VERBS = ("validate", "verify", "check", "authorize", "authenticate",
+               "authn", "authz", "permit", "sanitize", "canonicalize",
+               "canonical", "normalize", "escape", "unescape", "isvalid")
+
+
+def _semantic_role(name: str) -> Tuple[Optional[str], Optional[str]]:
+    """Return (role, base_token) from a function name, or (None, None).
+
+    role ∈ {consumer, producer, gate}; base_token is the name minus the matched
+    verb, lowercased, used to pair inverse functions for a round-trip oracle."""
+    low = name.lower()
+    tokens = [t for t in re.split(r"[_\W]+", low) if t]
+    if not tokens:
+        return None, None
+
+    def _match(verbs):
+        # Verb as a whole leading/trailing token, or a prefix of the first token
+        # (covers camelCase split losses like "parseDoc" → ["parsedoc"]).
+        for v in verbs:
+            if tokens[0] == v or tokens[-1] == v:
+                base = "_".join(t for t in tokens if t != v)
+                return base or low
+            if tokens[0].startswith(v) and len(tokens[0]) > len(v):
+                return tokens[0][len(v):]
+        return None
+
+    # Gates take precedence — an "authenticate_and_parse" is primarily a gate.
+    base = _match(_GATE_VERBS)
+    if base is not None:
+        return "gate", base
+    base = _match(_CONSUMER_VERBS)
+    if base is not None:
+        return "consumer", base
+    base = _match(_PRODUCER_VERBS)
+    if base is not None:
+        return "producer", base
+    return None, None
 
 
 # ---------------------------------------------------------------------------
@@ -256,9 +310,11 @@ def _inventory_functions(path: Path, text: str) -> List[FunctionEntry]:
         # Reject implausibly large functions (more likely a parse error).
         if loc > 5000:
             continue
+        role, base = _semantic_role(name)
         out.append(FunctionEntry(
             file=str(path), name=name,
             line_start=line_start, line_end=line_end, loc=loc,
+            semantic_role=role, oracle_base=base,
         ))
     return out
 
@@ -351,6 +407,57 @@ def _load_cve_hotspots(cve_context_path: Optional[Path]) -> Tuple[Set[str], Set[
     return files, funcs, pat
 
 
+def _detect_oracle_candidates(functions: List[FunctionEntry]) -> dict:
+    """Pair consumers with their inverse producers (round-trip oracle candidates)
+    and collect validation/auth gates (differential / invariant candidates).
+
+    Pure name-heuristic; the LLM reviewer confirms before any oracle is built."""
+    consumers: Dict[str, List[FunctionEntry]] = {}
+    producers: Dict[str, List[FunctionEntry]] = {}
+    gates: List[FunctionEntry] = []
+    for f in functions:
+        if f.semantic_role == "consumer" and f.oracle_base:
+            consumers.setdefault(f.oracle_base, []).append(f)
+        elif f.semantic_role == "producer" and f.oracle_base:
+            producers.setdefault(f.oracle_base, []).append(f)
+        elif f.semantic_role == "gate":
+            gates.append(f)
+
+    def _ref(f: FunctionEntry) -> dict:
+        return {"file": f.file, "name": f.name, "line_start": f.line_start}
+
+    roundtrip = []
+    for base in sorted(set(consumers) & set(producers)):
+        # Pick the highest-suspicion representative on each side.
+        c = max(consumers[base], key=lambda f: f.suspicion_score)
+        p = max(producers[base], key=lambda f: f.suspicion_score)
+        roundtrip.append({
+            "base": base,
+            "consumer": _ref(c),
+            "producer": _ref(p),
+            "oracle": "roundtrip",
+            "note": f"parse/serialize pair on '{base}'; "
+                    f"oracle: consumer(producer(x)) preserves x for accepted x",
+        })
+
+    validation_surface = [
+        {**_ref(g), "oracle": "differential_or_invariant",
+         "note": "validation/auth/canonicalization gate; candidate for a "
+                 "differential or invariant oracle (a decision that must agree "
+                 "with a reference, or hold an invariant, for all inputs)"}
+        for g in sorted(gates, key=lambda f: -f.suspicion_score)[:20]
+    ]
+
+    return {
+        "roundtrip": roundtrip,
+        "validation_surface": validation_surface,
+        "summary": {
+            "roundtrip_pairs": len(roundtrip),
+            "validation_gates": len(gates),
+        },
+    }
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -412,6 +519,8 @@ def main() -> int:
     all_functions.sort(key=lambda f: (-f.suspicion_score, -f.loc))
     top = all_functions[: args.max_functions]
 
+    oracle_candidates = _detect_oracle_candidates(all_functions)
+
     out = {
         "schema": "code-review-prescan/v1",
         "ts": int(time.time()),
@@ -424,6 +533,11 @@ def main() -> int:
             "cve_context_consumed": str(args.cve_context) if args.cve_context else None,
             "recently_changed_files": len(recent),
         },
+        # Oracle candidates for logic-bug fuzzing (Phase 1). The reviewer and
+        # planner read these to decide whether a round-trip / differential /
+        # invariant oracle applies. Empty when no inverse pairs or gates are
+        # found by name heuristic — that just means crash-only by default.
+        "oracle_candidates": oracle_candidates,
         "top_candidates": [f.to_dict() for f in top],
         # Full inventory is kept for transparency/audit but with NO score
         # breakdowns or pattern hits on the non-top entries (keeps the file
