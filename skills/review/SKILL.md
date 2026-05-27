@@ -2,7 +2,6 @@
 name: review
 description: "Run a static code review of the target source — three-tier pipeline (deterministic prescan → Sonnet review → Opus deep pass). Deep pass is the default; use --no-deep to skip it. — usage: [--no-deep] [--refresh] [--delta] [--target-root <path>] [--max-functions <N>] [--cost-cap <USD>] [natural-language guidance...]"
 argument-hint: "[--no-deep] [--refresh] [--delta] [--target-root <path>] [--max-functions <N>] [--cost-cap <USD>] [natural-language guidance...]"
-disable-model-invocation: true
 ---
 
 Runs the code review pipeline:

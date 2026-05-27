@@ -74,7 +74,13 @@ while [ $# -gt 0 ]; do
       ;;
   esac
 done
-CLI_CORPUS="${CLI_CORPUS:-fuzz/corpus}"
+# Do NOT default the corpus to the singular fuzz/corpus here. In multi mode each
+# slot's corpus is per-harness and is resolved by launch-fuzzer-slot.sh from
+# --harness; forcing a corpus at this level pointed every multi slot at the
+# legacy fuzz/corpus (bypassing fuzz/harnesses/<name>/corpus). Forward --corpus
+# downstream ONLY when the caller explicitly set one.
+EXPLICIT_CORPUS=false
+[ -n "$CLI_CORPUS" ] && EXPLICIT_CORPUS=true
 
 # Stop existing slots before launching.
 #   - Explicit per-slot form (--slot or legacy positional with single binary):
@@ -137,7 +143,7 @@ if [ "$NUM_SLOTS" -eq 0 ]; then
   # In multi mode this branch shouldn't usually fire (fuzz-config.json:
   # fuzzer_slots[] should be populated for any multi-harness campaign), but
   # if it does, default to launching on the first declared harness.
-  args=(--slot "$TARGET_SLOT" --engine auto --corpus "$CORPUS")
+  args=(--slot "$TARGET_SLOT" --engine auto)
   if is_multi; then
     fallback=$(default_harness)
     if [ -z "$fallback" ]; then
@@ -148,6 +154,9 @@ if [ "$NUM_SLOTS" -eq 0 ]; then
   else
     args+=(--binary "$HARNESS_BIN")
   fi
+  # Per-harness corpus is resolved by launch-fuzzer-slot.sh from --harness; only
+  # forward an explicitly-requested corpus (override).
+  $EXPLICIT_CORPUS && args+=(--corpus "$CLI_CORPUS")
   bash "$SCRIPT_DIR/launch-fuzzer-slot.sh" "${args[@]}"
   RC=$?
 else
@@ -166,9 +175,11 @@ for entry in data:
         str(entry.get('timeout_ms','') if entry.get('timeout_ms') is not None else ''),
     ]))
 " | while IFS='|' read -r slot engine role schedule lf_forks slot_harness timeout_ms; do
-    args=(--slot "$slot" --engine "$engine" --corpus "$CORPUS")
-    # In multi mode the slot's binary is per-harness; pass --harness and let
-    # launch-fuzzer-slot.sh resolve. In singular mode pass --binary directly.
+    args=(--slot "$slot" --engine "$engine")
+    # In multi mode the slot's binary AND corpus are per-harness; pass --harness
+    # and let launch-fuzzer-slot.sh resolve both. In singular mode pass --binary.
+    # Do NOT pass --corpus here: forcing it pointed every multi slot at the
+    # legacy singular fuzz/corpus instead of fuzz/harnesses/<name>/corpus.
     if is_multi; then
       if [ -z "$slot_harness" ]; then
         echo "ERROR: slot=$slot has no harness binding in multi mode" >&2
@@ -179,6 +190,9 @@ for entry in data:
     else
       args+=(--binary "$HARNESS_BIN")
     fi
+    # Only forward an explicitly-requested corpus (override); otherwise the
+    # launcher resolves per-harness (multi) or fuzz/corpus (singular).
+    $EXPLICIT_CORPUS && args+=(--corpus "$CLI_CORPUS")
     [ -n "$role" ]      && args+=(--role "$role")
     [ -n "$schedule" ]  && args+=(--power-schedule "$schedule")
     [ -n "$lf_forks" ]  && args+=(--libfuzzer-forks "$lf_forks")

@@ -2,7 +2,6 @@
 name: poc
 description: "Characterize the security impact of a confirmed finding for responsible disclosure. Produces a mechanically-verified impact bundle (verify.sh exits 0 only when the demonstrated impact is confirmed). Auto-dispatched after triage; available standalone for rebuilds and upgrades. — usage: <finding-id> [--rebuild] [--upgrade]"
 argument-hint: "<finding-id> [--rebuild] [--upgrade]"
-disable-model-invocation: true
 ---
 
 Dispatches the **poc-builder** subagent (Opus, ~$3-8 per finding).

@@ -3,7 +3,6 @@ name: run
 description: "Run an existing harness binary in the background (no LLM). Used internally by fuzz-orchestrator; available standalone for manual use. — usage: <harness-binary> [corpus-dir] [forks=N] | --slot <name> --binary <path>"
 argument-hint: "<harness-binary> [corpus-dir] [forks=N] | --slot <name> --binary <path>"
 allowed-tools: Bash
-disable-model-invocation: true
 ---
 
 Parse arguments. If `$ARGUMENTS` contains `forks=N` (e.g. `forks=4`), extract N and run:

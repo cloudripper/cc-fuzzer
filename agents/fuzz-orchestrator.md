@@ -81,11 +81,10 @@ Do this once, completely, then stop:
 
 Trust existing state. Do **not** re-analyze, rebuild, or read source.
 
-1. Read `fuzz/state/current.json` for the harness binary path.
-2. `run-fuzzer.sh <harness>` to relaunch.
-3. `snapshot-coverage.sh`, then `update-current.sh`.
-4. `events.sh campaign_resume`.
-5. Print standard tick status. Stop.
+1. **Multi-harness (the default):** relaunch config-driven — run `run-fuzzer.sh` with **NO positional argument**. It reads `fuzz-config.json:fuzzer_slots[]` and binds each slot to its harness binary **and per-harness corpus** (`fuzz/harnesses/<name>/corpus`). Do **NOT** pass a positional binary in multi mode — `run-fuzzer.sh <binary>` forces single-slot mode (only one harness relaunches) and historically misrouted corpora to the legacy singular `fuzz/corpus`. (Singular legacy campaigns — no `harnesses[]` — may still use `run-fuzzer.sh <binary>`.)
+2. `snapshot-coverage.sh`, then `update-current.sh`.
+3. `events.sh campaign_resume`.
+4. Print standard tick status. Stop.
 
 ## WARM mode
 
@@ -256,7 +255,7 @@ Stance keyword:
 | `recommendation.branch` | Action |
 |---|---|
 | `sleep` | Print status. **Read no other files.** Stop. |
-| `restart_fuzzer` | `kill-harness-processes.sh`, then `run-fuzzer.sh`. See "Launch-blocker handling". |
+| `restart_fuzzer` | `kill-harness-processes.sh`, then `run-fuzzer.sh` with **no positional binary** (config-driven — relaunches every declared slot with its per-harness corpus; a positional binary forces single-slot mode and misroutes corpora). For a single dead slot, prefer `check-slot-liveness.sh` (restarts only the dead one, with `--harness`). See "Launch-blocker handling". |
 | `fix_instrumentation` | Read latest snapshot's `instrumentation.errors` and `fuzz/state/preflight.json`. Print errors. **Do not advance.** Tell user to fix or `/cc-fuzzer:campaign --reset --no-coverage`. Stop. |
 | `triage` | Delegate to `crash-triager` (Opus). Pass `fuzz/crashes/new/`. After triage returns, see "Auto-dispatch poc-builder" below. |
 | `analyze_gaps` | Read `current.json.coverage.snapshot_file`. Delegate to `coverage-analyst`. |

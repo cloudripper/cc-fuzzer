@@ -105,7 +105,21 @@ fi
 if [ -z "$BIN" ] && [ -n "$HARNESS" ]; then
   BIN=$(harness_binary "$HARNESS")
 fi
-if [ -z "$CORPUS" ]; then
+if is_multi && [ -n "$HARNESS" ]; then
+  # In multi mode the per-harness corpus is authoritative. Resolve it when no
+  # --corpus was given, AND override (with a warning) when the caller passed the
+  # legacy singular fuzz/corpus — that is almost always a relaunch-path
+  # regression (run-fuzzer.sh used to force it), and using it would bypass the
+  # harness's evolved corpus and trip validate-state. An explicit DIFFERENT
+  # --corpus path is still honored.
+  ph=$(corpus_dir "$HARNESS")
+  case "$CORPUS" in
+    "")                CORPUS="$ph" ;;
+    fuzz/corpus|*/fuzz/corpus)
+      echo "WARN: --corpus pointed at the legacy singular '$CORPUS' in multi mode; using per-harness $ph" >&2
+      CORPUS="$ph" ;;
+  esac
+elif [ -z "$CORPUS" ]; then
   if [ -n "$HARNESS" ]; then
     CORPUS=$(corpus_dir "$HARNESS")
   else

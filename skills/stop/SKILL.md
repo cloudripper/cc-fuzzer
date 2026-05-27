@@ -3,7 +3,6 @@ name: stop
 description: "Stop the running fuzzer cleanly and exit the campaign loop. — usage: [--slot <name>]   (default: all slots)"
 argument-hint: "[--slot <name>]   (default: all slots)"
 allowed-tools: Bash
-disable-model-invocation: true
 ---
 
 First, disable YOLO if it was enabled — `/cc-fuzzer:stop` is the escape hatch:

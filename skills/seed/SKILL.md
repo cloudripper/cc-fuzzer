@@ -2,7 +2,6 @@
 name: seed
 description: "Generate a starter or targeted seed corpus. Building block for /cc-fuzzer:campaign. — usage: <format-name-or-spec-path> [output-dir]"
 argument-hint: "<format-name-or-spec-path> [output-dir]"
-disable-model-invocation: true
 ---
 
 Use the **seed-generator** subagent to produce seeds for: $ARGUMENTS

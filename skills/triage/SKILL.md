@@ -2,7 +2,6 @@
 name: triage
 description: "Triage fuzzer-discovered crashes through the three-step verification pipeline. Dedups, classifies, builds a quick PoC bundle. Auto-dispatched by the orchestrator; use this for one-off manual triage. — usage: <path-to-crashes-dir-or-single-crash-file> [--harness <name>]"
 argument-hint: "<path-to-crashes-dir-or-single-crash-file> [--harness <name>]"
-disable-model-invocation: true
 ---
 
 Dispatches the **crash-triager** subagent (Opus, ~$0.50-2 per crash).

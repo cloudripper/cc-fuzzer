@@ -2,7 +2,6 @@
 name: nix-build
 description: "Build or rebuild harness binaries via nix derivations. Requires CC_FUZZER_FHS=1. — usage: [--harness <name>] [--variant fuzzer|coverage|verify|cmplog|symcc] [--force] [--fallback]"
 argument-hint: "[--harness <name>] [--variant <v>] [--force] [--fallback]"
-disable-model-invocation: true
 ---
 
 Dispatches the **nix-builder** subagent to (re)build harness binaries via nix derivations.
