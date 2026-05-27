@@ -38,6 +38,23 @@ fi
 echo "cc-fuzzer:doctor inspecting $PROJECT_ROOT"
 echo ""
 
+# Resolve the fuzz tree and state dir the SAME way the rest of the toolchain
+# does (_lib/path-anchor.sh sets FUZZ_ROOT=$PROJECT_ROOT/fuzz; scripts then use
+# STATE_DIR="${FUZZ_STATE_DIR:-$FUZZ_ROOT/state}"). doctor can't source
+# path-anchor — it must inspect corrupted/recursive trees that path-anchor
+# refuses to enter — so we mirror that resolution locally. A relative
+# FUZZ_STATE_DIR resolves against PROJECT_ROOT (path-anchor achieves this by
+# cd'ing to PROJECT_ROOT; doctor doesn't cd, so resolve it explicitly).
+FUZZ_ROOT="$PROJECT_ROOT/fuzz"
+if [ -n "${FUZZ_STATE_DIR:-}" ]; then
+  case "$FUZZ_STATE_DIR" in
+    /*) STATE_DIR="$FUZZ_STATE_DIR" ;;
+    *)  STATE_DIR="$PROJECT_ROOT/$FUZZ_STATE_DIR" ;;
+  esac
+else
+  STATE_DIR="$FUZZ_ROOT/state"
+fi
+
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 ISSUES=0
 WARNINGS=0
@@ -58,8 +75,8 @@ ok() {
 # Check 1: Recursive fuzz/fuzz/ directories
 #------------------------------------------------------------------------------
 echo "[1/10] Checking for recursive fuzz/ directories..."
-if [ -d "$PROJECT_ROOT/fuzz/fuzz" ]; then
-  issue "recursive fuzz/fuzz/ exists at $PROJECT_ROOT/fuzz/fuzz/"
+if [ -d "$FUZZ_ROOT/fuzz" ]; then
+  issue "recursive fuzz/fuzz/ exists at $FUZZ_ROOT/fuzz/"
   echo "       This is the 'cwd inside fuzz/' bug - a script ran with cwd"
   echo "       inside the fuzz/ tree, creating nested copies."
   echo "       Fix:"
@@ -70,7 +87,7 @@ if [ -d "$PROJECT_ROOT/fuzz/fuzz" ]; then
   echo "            done"
   echo "         2. Diff corpus to find unique entries:"
   echo "            (see migration steps in v0.10 release notes)"
-  echo "         3. Wipe: rm -rf $PROJECT_ROOT/fuzz/fuzz/"
+  echo "         3. Wipe: rm -rf $FUZZ_ROOT/fuzz/"
 else
   ok "no recursive fuzz/ trees"
 fi
@@ -163,17 +180,17 @@ echo ""
 # Check 5: Multiple state/findings.jsonl
 #------------------------------------------------------------------------------
 echo "[6/10] Checking for duplicate findings.jsonl..."
-COUNT=$(find "$PROJECT_ROOT/fuzz" -maxdepth 5 -name 'findings.jsonl' 2>/dev/null | wc -l)
+COUNT=$(find "$FUZZ_ROOT" -maxdepth 5 -name 'findings.jsonl' 2>/dev/null | wc -l)
 if [ "$COUNT" -le 1 ]; then
   ok "single findings.jsonl"
 else
   issue "$COUNT findings.jsonl files exist"
-  find "$PROJECT_ROOT/fuzz" -maxdepth 5 -name 'findings.jsonl' 2>/dev/null \
+  find "$FUZZ_ROOT" -maxdepth 5 -name 'findings.jsonl' 2>/dev/null \
     | while read f; do
       echo "         $f ($(wc -l < "$f") lines)"
     done
   echo "       Likely caused by recursive fuzz/fuzz/. Pick the canonical one"
-  echo "       (usually $PROJECT_ROOT/fuzz/state/findings.jsonl)"
+  echo "       (usually $STATE_DIR/findings.jsonl)"
 fi
 echo ""
 
@@ -181,11 +198,11 @@ echo ""
 # Check 6: Stale fuzzer.pid
 #------------------------------------------------------------------------------
 echo "[7/10] Checking for stale fuzzer.pid..."
-if [ -f "$PROJECT_ROOT/fuzz/state/fuzzer.pid" ]; then
-  PID=$(cat "$PROJECT_ROOT/fuzz/state/fuzzer.pid" 2>/dev/null)
+if [ -f "$STATE_DIR/fuzzer.pid" ]; then
+  PID=$(cat "$STATE_DIR/fuzzer.pid" 2>/dev/null)
   if [ -n "$PID" ] && ! kill -0 "$PID" 2>/dev/null; then
     warn "fuzzer.pid says $PID but that process is dead"
-    echo "       Fix: rm $PROJECT_ROOT/fuzz/state/fuzzer.pid"
+    echo "       Fix: rm $STATE_DIR/fuzzer.pid"
   else
     ok "fuzzer.pid is valid (PID $PID alive)"
   fi
@@ -198,7 +215,7 @@ echo ""
 # Check 7: Stray timestamped files in state/ root
 #------------------------------------------------------------------------------
 echo "[8/10] Checking for stray snapshot files..."
-STRAY=$(find "$PROJECT_ROOT/fuzz/state" -maxdepth 1 -type f \( -name 'coverage-*.json' -o -name 'gaps-*.json' -o -name 'concolic-*.json' \) 2>/dev/null | wc -l)
+STRAY=$(find "$STATE_DIR" -maxdepth 1 -type f \( -name 'coverage-*.json' -o -name 'gaps-*.json' -o -name 'concolic-*.json' \) 2>/dev/null | wc -l)
 if [ "$STRAY" -eq 0 ]; then
   ok "no stray snapshot files in state/ root"
 else
@@ -211,9 +228,9 @@ echo ""
 # Check 8: Legacy fuzz/state/crashes/ path
 #------------------------------------------------------------------------------
 echo "[9/10] Checking for legacy crash paths..."
-if [ -d "$PROJECT_ROOT/fuzz/state/crashes" ]; then
+if [ -d "$STATE_DIR/crashes" ]; then
   warn "legacy fuzz/state/crashes/ directory exists"
-  COUNT=$(ls "$PROJECT_ROOT/fuzz/state/crashes/" 2>/dev/null | wc -l)
+  COUNT=$(ls "$STATE_DIR/crashes/" 2>/dev/null | wc -l)
   echo "       $COUNT files in there"
   echo "       Fix: triage/move to fuzz/crashes/{new,known,flaky}/, then rmdir"
 else
@@ -225,7 +242,7 @@ echo ""
 # Check 9: Nix tool inventory (v0.18)
 #------------------------------------------------------------------------------
 echo "[10/12] Checking Nix tool inventory..."
-NIX_ENV_FILE="$PROJECT_ROOT/fuzz/state/nix-env.json"
+NIX_ENV_FILE="$STATE_DIR/nix-env.json"
 if [ -f "$NIX_ENV_FILE" ]; then
   NIX_ENV_AGE=$(python3 -c "
 import json, time
@@ -271,47 +288,8 @@ echo ""
 # the declared variant symlinks actually point into /nix/store.
 #------------------------------------------------------------------------------
 echo "[11/12] Checking nix build backend consistency..."
-HS_FILE="$PROJECT_ROOT/fuzz/state/harnesses.json"
+HS_FILE="$STATE_DIR/harnesses.json"
 if [ -f "$HS_FILE" ]; then
-  python3 - <<'PY'
-import json, os, sys
-
-hs_file = os.environ.get("HS_FILE", "")
-issues = []
-warnings = []
-try:
-    doc = json.load(open(hs_file))
-except Exception as e:
-    print(f"  WARN: cannot read harnesses.json: {e}")
-    sys.exit(0)
-for h in doc.get("harnesses", []):
-    if not isinstance(h, dict):
-        continue
-    name = h.get("name", "?")
-    backend = h.get("build_backend", "legacy")
-    if backend != "nix":
-        continue
-    nix_sub = h.get("nix") or {}
-    for variant, vinfo in (nix_sub.get("variants") or {}).items():
-        if not isinstance(vinfo, dict):
-            continue
-        store_path = vinfo.get("store_path", "")
-        out_link = vinfo.get("out_link", "")
-        if store_path and not os.path.exists(store_path):
-            issues.append(f"harness '{name}' variant '{variant}': store path gone (GC'd): {store_path}")
-            issues.append(f"  Fix: /cc-fuzzer:nix-build --harness {name} --variant {variant} --force")
-        elif out_link and not os.path.exists(out_link):
-            warnings.append(f"harness '{name}' variant '{variant}': symlink missing: {out_link}")
-            warnings.append(f"  Fix: /cc-fuzzer:nix-build --harness {name}")
-    manifest_path = nix_sub.get("manifest_path", "")
-    if manifest_path and not os.path.isfile(manifest_path):
-        issues.append(f"harness '{name}': manifest.json missing at {manifest_path}")
-        issues.append(f"  Fix: /cc-fuzzer:harness --harness {name} to regenerate")
-for line in warnings:
-    print(f"  WARN: {line}")
-for line in issues:
-    print(f"  ISSUE: {line}")
-PY
   _NIX_CHECK=$(HS_FILE="$HS_FILE" python3 - <<'PY'
 import json, os, sys
 hs_file = os.environ.get("HS_FILE","")
@@ -355,6 +333,11 @@ for h in doc.get("harnesses",[]):
             print(f"  WARN:  harness '{name}' variant '{variant}' symlink missing: {ol}")
             print(f"         Fix: /cc-fuzzer:nix-build --harness {name}")
             warnings+=1
+    mp=nix_sub.get("manifest_path","")
+    if mp and not os.path.isfile(mp):
+        print(f"  ISSUE: harness '{name}' manifest.json missing at {mp}")
+        print(f"         Fix: /cc-fuzzer:harness --harness {name} to regenerate")
+        issues+=1
 if issues==0 and warnings==0:
     print("  ok: all nix store paths intact")
     print("  tip: run /cc-fuzzer:nix-cleanup after campaign to free store space")
@@ -368,7 +351,7 @@ echo ""
 # Surfaces severity=error issues from nix-environment-issues.json.
 #------------------------------------------------------------------------------
 echo "[12/12] Checking nix environment issues..."
-NIX_ISSUES_FILE="$PROJECT_ROOT/fuzz/state/nix-environment-issues.json"
+NIX_ISSUES_FILE="$STATE_DIR/nix-environment-issues.json"
 if [ -f "$NIX_ISSUES_FILE" ]; then
   python3 - <<'PY'
 import json, os, sys

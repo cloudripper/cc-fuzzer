@@ -58,7 +58,7 @@ e1e55dc17855a03463fa278b8b5e5a4f  scripts/cve-context-build.sh
 6cc42ad94c0d4c4fa38189aace915f9e  scripts/cve-lookup.py
 1777e2f2c84a60f7657fff85ff494e56  scripts/detect-crashes.sh
 a98c113ed1699420b35641515fe9f0a7  scripts/dictionaries.sh
-80f121fac3b0d775e433876e6b024efe  scripts/doctor.sh
+bcc9086e2de9a3465bc00f95adde376b  scripts/doctor.sh
 747b3eb02cce12a11d845d27efc910ac  scripts/nix-cleanup.sh
 f06898e88bfa95aa6ab3fce75fc3c1c6  scripts/enforce-readonly.sh
 7963924dcf588534949e32b2ae2136d2  scripts/env-check.sh
