@@ -26,7 +26,7 @@ The target argument is **required for `guided`/`hybrid`**, but **optional under 
 - `--add-harness <name> --entry <fn>` — add a harness to an existing campaign. On a v0.19.2+ campaign (already multi-harness) this just appends: `harness-set.sh add` then `harness-writer --harness <name>`. A legacy singular campaign first needs the in-place singular→multi upgrade (see STATE_SCHEMA.md "Singular → multi upgrade").
 - `--mutator` — request a custom mutator build for highly-structured inputs
 - `--refresh-cve` — re-run CVE intelligence before the next plan revision
-- `--oracle <crash|invariant|roundtrip|differential>` — force a logic-bug oracle instead of letting the planner auto-select. Default is auto (crash unless the code review finds a genuine inverse pair / invariant). See STATE_SCHEMA "Oracle-Driven Fuzzing".
+- `--oracle <crash|invariant|roundtrip|differential|metamorphic>` — force a logic-bug oracle instead of letting the planner auto-select. Default is auto (crash unless the code review finds a genuine inverse pair / invariant / metamorphic relation). Stateful-sequence harnesses and the UBSan integer suite have no flag — request them in `fuzz/guidance.md`'s `## Oracle` section. See STATE_SCHEMA "Oracle-Driven Fuzzing".
 - `--reference <cmd|path|nix-attr>` — supply the second implementation for a `differential` oracle (a CLI command, a prebuilt binary, or a nixpkgs binary on PATH). Required for `--oracle differential`. cc-fuzzer runs it as a subprocess; it does not build the reference.
 
 Target: $ARGUMENTS

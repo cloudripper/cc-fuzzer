@@ -4,7 +4,7 @@
 #
 ba9bc467590581343947ab6ed1a06c11  .claude-plugin/plugin.json
 22b9a091f9cd93810bde9a8911af1777  STATE_SCHEMA.md
-6f8d5c211aeafee8bdde62feaedf3c83  agents/campaign-planner.md
+0b1de2330d13af29b7f32e795df4eee8  agents/campaign-planner.md
 1c10e5f08e8401b18c66d468834d492c  agents/code-reviewer-deep.md
 0951b4752b235882ba2e422fb2b748f9  agents/code-reviewer.md
 3a86b57bf2cc87f5748cd2ccff8fe26e  agents/concolic-executor.md
@@ -89,7 +89,7 @@ dffa84b25ecf0668bfc5fe97fb402824  scripts/status.sh
 b7494731f0d9cffa7f7662549756ec4e  scripts/validate-state.sh
 1f35366fb4fd03bebd80cff4dbfce560  scripts/write-harness-built.sh
 be92be6440faeb656bb50c4dd4760ba2  scripts/yolo-state.sh
-a17af1876511d2312e740044c4195b76  skills/campaign/SKILL.md
+695259ae94cc327ec0ba77c8465b4460  skills/campaign/SKILL.md
 6718a7c80fbe4ae0abce9e5850582fe7  skills/concolic/SKILL.md
 ae8df8c4167849e40e6334ccdd59cf73  skills/coverage/SKILL.md
 96d22d5824c9df2a24c977329ea3d8e9  skills/delta/SKILL.md
@@ -112,6 +112,6 @@ b01264a1bfc405bc70751a53dcfb6360  skills/stop/SKILL.md
 a60644abfae7712dc21c437c1f6d1635  skills/triage/SKILL.md
 063d157eeaaa1a8a49ba342ab7d02311  skills/validate/SKILL.md
 38f24e9ad3e741a267b2aff025ae2ba8  skills/yolo/SKILL.md
-242ae89e95acebaf99e020e8c1f7ced2  templates/guidance.md
+888fb1d7211167477ca0a398adf6613d  templates/guidance.md
 c19001f0356b4e10dcd99423d650b984  templates/nix-deps.nix
 a2f9ad36cf78db8dd5a2d7de1074e7c1  templates/project-flake.nix

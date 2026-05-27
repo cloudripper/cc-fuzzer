@@ -53,6 +53,18 @@ What shape does input take?
 - **State**: e.g. "stateless per-call", "accumulates state across calls", "requires init() before parsing"
 - **Maximum size**: e.g. "PATH_MAX", "16 MB hard limit", "no documented limit"
 
+## Oracle (optional)
+
+Coverage + sanitizers only catch **crashes**. If this target can have **logic bugs** (wrong answers that don't crash — auth bypass, parser differentials, canonicalization, silent truncation, state confusion), tell the planner which oracle to build. Omit this whole section to let the planner auto-select (or stay crash-only). See `STATE_SCHEMA.md` → "Oracle-Driven Fuzzing".
+
+- **Oracle type**: one of `invariant` / `roundtrip` / `differential` / `metamorphic` (or `crash` to force crash-only). Name the exact functions and the property in one concrete sentence, e.g. "`roundtrip`: `json_parse(json_serialize(v))` must equal `v` for any value the parser accepts."
+- **Differential reference** (for `differential`): the second implementation — a CLI command, a prebuilt binary path, or a nixpkgs binary on PATH. Also settable via `/cc-fuzzer:campaign --reference <…>`. cc-fuzzer runs it as a subprocess; it does not build it.
+- **Metamorphic transform** (for `metamorphic`): the meaning-preserving transform the result must be invariant under, e.g. "insignificant whitespace", "reorder independent fields".
+- **Stateful harness**: set if this is a lifecycle/handle/session API (e.g. `open`/`close`, `create`/`destroy`). Name a small op set (3–6) and one cross-op invariant, e.g. "ops: put/get/del/compact; a value put under a key is returned by a later get." (No CLI flag — request it here.)
+- **Integer suite**: set if the target does length/size arithmetic on attacker-controlled values, to enable the UBSan `integer`/`implicit-conversion` checks (catches silent truncation / unsigned wrap). Note any intentional-wraparound functions to allowlist. (No CLI flag — request it here.)
+
+The accept-gate is automatic: a logic oracle never flags the target *rejecting* malformed input, only a broken property on *accepted* input.
+
 ## Known irrelevant classes
 
 What categories should the LLM **not** waste time on? This is just as important as what to emphasize, because it stops Haiku from generating useless seeds.

@@ -65,7 +65,7 @@ Everything else is fair game: seed strategy, dictionary picks, concolic posture,
 ### Both modes
 
 1. **Target source** — read the entry function and 2-3 levels of callees. Identify input format, length limits, state preconditions, and the hot parsing/decoding/transform paths. **If no target was specified (the autonomous `self_loop` start), select one yourself first — see "Autonomous target selection" — then analyze it the same way.**
-2. **`fuzz/guidance.md`** (optional, user-controlled) — if present, treat its sections as constraints, not suggestions. Carry over target description, input classes, recommended dictionaries, format expectations, known-irrelevant classes, coverage targets, out-of-scope code, delta range, references. If absent, fall back to source-only reasoning and explicitly note this in the plan.
+2. **`fuzz/guidance.md`** (optional, user-controlled) — if present, treat its sections as constraints, not suggestions. Carry over target description, input classes, recommended dictionaries, format expectations, known-irrelevant classes, coverage targets, out-of-scope code, delta range, references, and the **`## Oracle`** section if present (the user's requested oracle type / differential reference / metamorphic transform / stateful op-set / integer-suite request — honor it over auto-selection; it's the declarative equivalent of `--oracle`/`--reference`). If absent, fall back to source-only reasoning and explicitly note this in the plan.
 3. **`${CLAUDE_PLUGIN_ROOT}/templates/guidance.md`** — read once for context on the section names you mirror in plan.md. Do not copy verbatim.
 4. **Bundled dictionaries** — `${CLAUDE_PLUGIN_ROOT}/dictionaries/INDEX.md` describes each.
 5. **Code review** (fresh mode prerequisite) — if `fuzz/state/code-review.md` is missing or stale, the `/cc-fuzzer:campaign` command will have run `/cc-fuzzer:review` before invoking you. Read `code-review.md` + the latest `snapshots/code-review-<ts>.json`. If absent (binary-only target or user opt-out), say so in the plan and proceed without.
@@ -115,10 +115,10 @@ The default oracle is `crash` (sanitizer/abort) — and for many targets that is
 
 **Inputs to the decision:**
 - The code review's `oracle_opportunities` (in `code-review.md` / the `code-review-*.json` snapshot) and the prescan's `oracle_candidates` — confirmed inverse pairs, validation/auth gates, and lifecycle pairs (`stateful_candidates`).
-- `--oracle <type>` if the user forced one (overrides auto-selection). `--reference <cmd|path|nix-attr>` if the user supplied a differential reference.
+- `--oracle <type>` if the user forced one (overrides auto-selection). `--reference <cmd|path|nix-attr>` if the user supplied a differential reference. `fuzz/guidance.md`'s `## Oracle` section (the declarative equivalent — may also request a stateful harness or the integer suite, which have no CLI flag).
 
 **Selection rule** (`type` ∈ `crash | invariant | roundtrip | differential | metamorphic`):
-1. `--oracle <type>` given → use it.
+1. `--oracle <type>` OR a `## Oracle` directive in `guidance.md` given → use it.
 2. Else if `--reference` given AND the target has two comparable implementations/paths → `differential`.
 3. Else if the review found a genuine inverse pair (parse∘serialize etc.) → `roundtrip`.
 4. Else if the format has an insignificant, meaning-preserving transform (whitespace, field reorder, equivalent encoding) the target must be invariant under → `metamorphic`.
