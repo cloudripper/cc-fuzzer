@@ -114,17 +114,22 @@ Be **specific**. "Emphasize UTF-8 edge cases" is not a plan. "Bootstrap with 12 
 The default oracle is `crash` (sanitizer/abort) — and for many targets that is the right and only choice; do not force a logic oracle where none genuinely applies. But coverage+sanitizers are blind to *logic bugs* (wrong answers that don't crash). When the target supports one, pick a logic oracle and write a `## Oracle` section; `harness-writer` builds it (layered on top of crash detection, never instead of it). See STATE_SCHEMA "Oracle-Driven Fuzzing" for the full model.
 
 **Inputs to the decision:**
-- The code review's `oracle_opportunities` (in `code-review.md` / the `code-review-*.json` snapshot) and the prescan's `oracle_candidates` — confirmed inverse pairs and validation/auth gates.
-- `--oracle <type>` if the user forced one (overrides auto-selection). `--reference <lib|path|nix-attr>` if the user supplied a differential reference.
+- The code review's `oracle_opportunities` (in `code-review.md` / the `code-review-*.json` snapshot) and the prescan's `oracle_candidates` — confirmed inverse pairs, validation/auth gates, and lifecycle pairs (`stateful_candidates`).
+- `--oracle <type>` if the user forced one (overrides auto-selection). `--reference <cmd|path|nix-attr>` if the user supplied a differential reference.
 
-**Selection rule:**
+**Selection rule** (`type` ∈ `crash | invariant | roundtrip | differential | metamorphic`):
 1. `--oracle <type>` given → use it.
 2. Else if `--reference` given AND the target has two comparable implementations/paths → `differential`.
 3. Else if the review found a genuine inverse pair (parse∘serialize etc.) → `roundtrip`.
-4. Else if the review named a concrete output invariant worth checking → `invariant`.
-5. Else → `crash` (omit the `## Oracle` section).
+4. Else if the format has an insignificant, meaning-preserving transform (whitespace, field reorder, equivalent encoding) the target must be invariant under → `metamorphic`.
+5. Else if the review named a concrete output invariant worth checking → `invariant`.
+6. Else → `crash` (omit the `## Oracle` section).
 
-**`## Oracle` section content** (when not crash): the `type`; the exact function(s) — `consumer`/`producer` for roundtrip, the `reference` for differential, the gate fn for invariant; the **property in one concrete sentence** (the thing that must hold for every *accepted* input); the comparison/normalization to apply (never raw `memcmp` for differential); and `execution: subprocess|in_process` for differential (default subprocess). Restate the **accept-gate rule** for the harness-writer: trap only on a violated property for *accepted* input — never because the target rejected malformed input. Keep crash detection on regardless.
+These are **not exclusive of two orthogonal harness-shape decisions**, which you make independently and note in `## Oracle` / `## Harness`:
+- **Stateful-sequence harness** — when the target is a *stateful* API (lifecycle/handle/session: the prescan's `stateful_candidates` shows `open`/`close`, `create`/`destroy`, `init`/`free`, `begin`/`end`, `lock`/`unlock` pairs). Set `stateful: true` and name a small op vocabulary (3–6 ops) and the cross-op invariant. `input_encoding: custom`. This reaches order-dependent / state-machine bugs and pairs naturally with the `invariant` oracle.
+- **UBSan integer suite** — when the target does length/size arithmetic on attacker-controlled values (truncation/signedness risk). Request `-fsanitize=integer,implicit-conversion` in `## Harness` and have the harness-writer write a wraparound allowlist. This is a crash-oracle *extension*, orthogonal to the logic `type`.
+
+**`## Oracle` section content** (when not crash): the `type`; the exact function(s) — `consumer`/`producer` for roundtrip, the `reference` for differential, the gate fn for invariant, the `transform` for metamorphic; the **property in one concrete sentence** (the thing that must hold for every *accepted* input); the comparison/normalization to apply (never raw `memcmp`); `execution: subprocess|in_process` for differential (default subprocess); and `stateful: true` + the op vocabulary when stateful. Restate the **accept-gate rule** for the harness-writer: trap only on a violated property for *accepted* input — never because the target rejected malformed input. Keep crash detection on regardless.
 
 In multi-harness mode the oracle is per-harness — put a `#### Oracle` block under the relevant harness's H3.
 

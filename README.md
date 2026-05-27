@@ -184,11 +184,14 @@ Per-harness field `build_backend: "nix" | "legacy"` tracks which path was used. 
 
 ### Logic-bug oracles
 
-Coverage + sanitizers only find **crashes** — they are blind to **logic bugs** that return the wrong answer without crashing (auth bypass, parser differentials, canonicalization mismatches, silent integer truncation, state-machine confusion). cc-fuzzer makes the *oracle* a first-class, pluggable campaign concept: `oracle_type ∈ {crash, invariant, roundtrip, differential}`. Beyond the always-on crash oracle, a harness can check a property that must hold for every input and trap when it doesn't:
+Coverage + sanitizers only find **crashes** — they are blind to **logic bugs** that return the wrong answer without crashing (auth bypass, parser differentials, canonicalization mismatches, silent integer truncation, state-machine confusion). cc-fuzzer makes the *oracle* a first-class, pluggable campaign concept: `oracle_type ∈ {crash, invariant, roundtrip, differential, metamorphic}`. Beyond the always-on crash oracle, a harness can check a property that must hold for every input and trap when it doesn't:
 
 - **invariant** — a property of the output (bounds, ordering, "success ⇒ well-formed", idempotence);
 - **roundtrip** — `consumer(producer(x))` preserves `x` (parse∘serialize, decode∘encode) — no second implementation needed;
-- **differential** — target vs a user-supplied reference (`--reference`) agree on the same input; checks both value divergence (both accept, outputs differ) and accept/reject divergence (the parser-differential class — smuggling, filter bypass), compared **normalized**, reference run as a subprocess by default.
+- **differential** — target vs a user-supplied reference (`--reference`) agree on the same input; checks both value divergence (both accept, outputs differ) and accept/reject divergence (the parser-differential class — smuggling, filter bypass), compared **normalized**, reference run as a subprocess by default;
+- **metamorphic** — the target is invariant under a meaning-preserving transform (whitespace, field reorder, equivalent encoding) — catches canonicalization bugs with no second implementation.
+
+Two orthogonal harness shapes round it out: **stateful-sequence** harnesses drive an op-bytecode against one live object to reach order-dependent / state-machine bugs and check cross-op invariants; and the opt-in **UBSan integer/implicit-conversion suite** catches silent numeric corruption (unsigned wrap, truncation) gated behind a wraparound allowlist.
 
 The crux is the **accept-gate rule**: a logic harness never traps because the target *rejected* malformed input (that's correct behavior) — only when an invariant is violated on *accepted* input, or two oracles diverge. The code review surfaces inverse pairs and validation/auth gates as `oracle_candidates`; the planner auto-selects an oracle (override with `/cc-fuzzer:campaign --oracle <type>`); the harness compiles it in and emits a structured marker on violation; the triager's false-positive filter inverts to *"is the oracle itself wrong?"*. Logic findings carry a **divergence record** (observed vs expected) in place of a sanitizer trace and dedup on a property-divergence hash. See `STATE_SCHEMA.md` → "Oracle-Driven Fuzzing".
 

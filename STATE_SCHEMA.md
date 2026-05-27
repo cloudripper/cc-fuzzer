@@ -273,10 +273,10 @@ Lifecycle: IMMUTABLE once written. Never modified, never deleted (except by `/cc
 }
 ```
 
-`type` ∈ `crash | invariant | roundtrip | differential` (absent ⇒ `crash`). For `differential`: `reference` names the second implementation and `execution` ∈ `subprocess | in_process` (default `subprocess`). The crash oracle is always additionally active — logic oracles are layered on top of sanitizers, never instead of them.
+`type` ∈ `crash | invariant | roundtrip | differential | metamorphic` (absent ⇒ `crash`). For `differential`: `reference` names the second implementation and `execution` ∈ `subprocess | in_process` (default `subprocess`). For `metamorphic`: `transform` names the semantics-preserving transform applied (e.g. `insignificant_whitespace`, `field_reorder`). A stateful-sequence harness additionally sets `"stateful": true` and `"operations": [...]` (the op vocabulary). The crash oracle is always additionally active — logic oracles are layered on top of sanitizers, never instead of them.
 **Allowed values**:
 - `input_encoding`: one of `passthrough | fdp | length_prefixed_records | custom`
-- `sanitizers`: subset of `address | undefined | memory | thread | fuzzer | leak`
+- `sanitizers`: subset of `address | undefined | memory | thread | fuzzer | leak | integer | implicit-conversion` (the last two = the opt-in UBSan integer suite — see "UBSan integer/implicit-conversion suite")
 - `coverage_tracking`: boolean. When true, `coverage_binary` is required and must be a separate `-fprofile-instr-generate -fcoverage-mapping` build (no `-fsanitize=fuzzer`).
 - `cmplog_enabled`: boolean. When true, `cmplog_binary` must point at a separate `AFL_LLVM_CMPLOG=1 afl-clang-fast` build with no sanitizers. cmplog is AFL++-only; libFuzzer campaigns always have `cmplog_enabled: false`.
 - `fuzzing_mode`: one of `in_process | process_based`. `in_process` (default) means the harness defines `LLVMFuzzerTestOneInput` and calls the target library directly (standard libFuzzer mode, or AFL++ persistent mode with `__AFL_LOOP`). `process_based` means the target is a CLI binary that the harness invokes per-input via `fork`/`exec`, writing the input to a temp file passed as `argv[1]` (libFuzzer fork-mode shim), or via AFL++ `@@` placeholder. When `process_based` and the engine is AFL++, `harness_binary` may be the target binary itself. v5 (introduced by schema-version v7 / plugin v0.15) adds this field. Migration backfills `fuzzing_mode: "in_process"` on existing campaigns.
@@ -617,7 +617,7 @@ One finding per line. JSONL format. Strictly append-only for **new** findings; i
 
 **Oracle-driven (logic) finding fields** (additive-optional; absent ⇒ `oracle_type == "crash"`, the historical memory-safety/sanitizer finding — see "Oracle-Driven Fuzzing"):
 
-- `oracle_type`: `crash | invariant | roundtrip | differential`. Omitted entirely on crash findings for back-compat; present on logic findings. Identifies *how the bug was detected*, not its bug class (that's `category`).
+- `oracle_type`: `crash | invariant | roundtrip | differential | metamorphic`. Omitted entirely on crash findings for back-compat; present on logic findings. Identifies *how the bug was detected*, not its bug class (that's `category`).
 - `divergence`: object, present only when `oracle_type != "crash"`. Records the evidence a logic finding stands on, in place of a sanitizer stack trace: `{ property_id: string, comparison: string, observed: string, expected: string, reference?: string, input_form?: string }`. `property_id` names the violated invariant / round-trip pair / reference comparison; `observed`/`expected` are the divergent values (truncated/normalized); `reference` names the second implementation for `differential`.
 
 **For logic findings, `stack_hash` is the property-divergence hash** — `sha256(oracle_type | property_id | divergence_class)[:16]` — not a stack trace hash. This keeps the `findings.sh dedup` / `find-by-hash` machinery unchanged: two violations of the same property on the same oracle dedup together regardless of input.
@@ -1720,7 +1720,7 @@ Coverage-guided fuzzing with sanitizers finds **crashes**: memory-safety violati
 
 ### The oracle types
 
-`oracle_type` ∈ `crash | invariant | roundtrip | differential`. The crash oracle is always on; logic oracles are layered on top (sanitizers stay enabled).
+`oracle_type` ∈ `crash | invariant | roundtrip | differential | metamorphic`. The crash oracle is always on; logic oracles are layered on top (sanitizers stay enabled).
 
 | Oracle | The harness checks | Needs a second implementation? |
 |---|---|---|
@@ -1728,6 +1728,11 @@ Coverage-guided fuzzing with sanitizers finds **crashes**: memory-safety violati
 | `invariant` | a property of the output holds (bounds, ordering, "success ⇒ well-formed", conservation, idempotence) | no |
 | `roundtrip` | `consumer(producer(x))` preserves `x` (parse∘serialize, decode∘encode, decompress∘compress) | no |
 | `differential` | target and a reference agree on the same input (two libs / prior version / equivalent path) | yes — user-supplied `--reference` |
+| `metamorphic` | a relation holds between outputs for *related* inputs `x` and `T(x)` — e.g. an insignificant transform `T` (whitespace, field reorder, equivalent encoding) leaves the result unchanged | no |
+
+`metamorphic` is a relation across **two runs on related inputs** (vs `invariant`'s single-run property); the harness applies a semantics-preserving transform `T`, runs the target on both `x` and `T(x)`, and traps when the relation breaks. It catches canonicalization / normalization bugs without a second implementation.
+
+**Orthogonal: stateful-sequence harnesses.** A *stateful* harness decodes the fuzz input into a **sequence of API operations** (an op-bytecode driven by FuzzedDataProvider) and runs them against one live target object, checking invariants across the sequence (e.g. "get after put returns the put value", "close-after-close is rejected, not a crash"). It reaches order-dependent / state-machine bugs a single-call harness cannot. It is an input-*driving* pattern (`input_encoding: custom`), not a new `oracle_type` — it carries any oracle (`crash` for sanitizer faults across the sequence, `invariant` for the cross-op properties). See `harness-writer` "Stateful-sequence harnesses".
 
 ### The accept-gate rule (the crux)
 
@@ -1747,7 +1752,7 @@ This gate is what keeps a logic harness from drowning the campaign in false posi
 Before trapping, an oracle harness prints a structured marker to stderr so the triager can tell a logic-oracle violation apart from a memory crash and read the divergence without re-deriving it:
 
 ```
-CCFUZZ_ORACLE_VIOLATION oracle=<invariant|roundtrip|differential> property=<property_id>
+CCFUZZ_ORACLE_VIOLATION oracle=<invariant|roundtrip|differential|metamorphic> property=<property_id>
 CCFUZZ_ORACLE_OBSERVED <short printable string>
 CCFUZZ_ORACLE_EXPECTED <short printable string>
 ```
@@ -1778,9 +1783,19 @@ A `differential` harness checks two properties, both respecting the accept-gate:
 
 Comparison is always **normalized**, never raw `memcmp`. The reference is user-supplied (`--reference`), not built by cc-fuzzer; the harness reads it from `CCFUZZ_REFERENCE_CMD` at runtime with the plan's value compiled in.
 
+### UBSan integer/implicit-conversion suite
+
+Beyond ASan+UBSan, the fuzzing and verify builds can opt into `-fsanitize=integer,implicit-conversion` — the checks that catch **silent numeric corruption** (unsigned wraparound, implicit truncation of a wider value into a narrower one feeding a length/index). These are an *extension of the crash oracle*: a violation prints `runtime error:` / a UBSan SUMMARY and is triaged through the normal stack-hash path, recorded as `ubsan-implicit-conversion` / `ubsan-integer` (the `ubsan-<kind>` category) or the `integer-truncation` logic class.
+
+Gated, because `-fsanitize=integer` flags *defined* unsigned wraparound that is frequently intentional (hashing, counters, ring buffers):
+- Enable only when the target shape warrants it (length/size arithmetic on attacker-controlled values) — the planner decides.
+- The harness writes a UBSan **suppressions allowlist** (`fuzz/harnesses/<name>/harness/ubsan-int.supp`, `UBSAN_OPTIONS=suppressions=…`) and/or `__attribute__((no_sanitize("integer")))` notes for known-intentional wrap sites, so the signal isn't drowned.
+- Built with `-fno-sanitize-recover=integer,implicit-conversion` so a surviving violation is a hard, deduplicable signal rather than a logged-and-continued warning.
+- Recorded by adding `integer` / `implicit-conversion` to the harness record's `sanitizers[]`.
+
 ### Phasing note
 
-Phases 1–3 are shipped (v0.23.0): the schema + finding fields + prescan `oracle_candidates` + triage path (1); `roundtrip`/`invariant` harness generation + planner oracle selection (2); `differential` subprocess harnesses with user-supplied reference + behavioral-impact PoC in `poc-builder` (3). Phase 4 — stateful-sequence harnesses, the UBSan `integer`/`implicit-conversion` suite, and metamorphic relations — is future work.
+Phases 1–4 are shipped (v0.23.0): the schema + finding fields + prescan `oracle_candidates` + triage path (1); `roundtrip`/`invariant` harness generation + planner oracle selection (2); `differential` subprocess harnesses with user-supplied reference + behavioral-impact PoC in `poc-builder` (3); stateful-sequence harnesses, the UBSan `integer`/`implicit-conversion` suite, and `metamorphic` relations (4). The logic-oracle capability is complete.
 
 ## Concurrency Rules
 

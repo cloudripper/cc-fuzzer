@@ -99,7 +99,7 @@ Run 3× against harness and `verify_binary` as in crash Step 2, but the determin
 
 ```bash
 mkdir -p "fuzz/crashes/known/PLACEHOLDER"   # then mv after add allocates the id
-ORACLE_TYPE="<invariant|roundtrip|differential>" \
+ORACLE_TYPE="<invariant|roundtrip|differential|metamorphic>" \
 DIVERGENCE='{"property_id":"<id>","comparison":"<how compared>","observed":"<from marker>","expected":"<from marker>"}' \
 ${CLAUDE_PLUGIN_ROOT}/scripts/findings.sh add \
   "$STACK_HASH" \

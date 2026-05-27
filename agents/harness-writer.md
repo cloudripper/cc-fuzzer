@@ -257,6 +257,77 @@ static const char *REF_CMD_DEFAULT = "reference-tool --parse";   // from plan
 
 If `## Oracle` requests `differential` but no `reference` is set (planner shouldn't emit this, but guard anyway), build the closest single-implementation oracle (`roundtrip`/`invariant`) and tell the orchestrator the reference was missing.
 
+### `metamorphic` (relation across related inputs — no second implementation)
+
+Apply a **semantics-preserving transform** `T` (named in `## Oracle`'s `transform`) and check the relation between the target's output on `x` and on `T(x)`. Catches canonicalization/normalization bugs.
+
+```c
+extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
+    R a = tgt_process(data, size);
+    if (!a.ok) return 0;                            // ACCEPT-GATE: rejection isn't a finding
+    // T must preserve meaning: insignificant whitespace, reorder independent
+    // fields, an equivalent encoding of the same value, etc.
+    std::vector<uint8_t> tx = transform_insignificant(data, size);
+    R b = tgt_process(tx.data(), tx.size());
+    // A meaning-preserving transform must NOT flip acceptance, and must NOT
+    // change the normalized result.
+    if (a.ok != b.ok)
+        CCFUZZ_ORACLE_FAIL("metamorphic", "transform_changes_acceptance",
+                           a.ok ? "x=accept Tx=reject" : "x=reject Tx=accept", "equal");
+    if (b.ok && !results_equal_normalized(a, b))
+        CCFUZZ_ORACLE_FAIL("metamorphic", "transform_changes_result", a.norm, b.norm);
+    return 0;
+}
+```
+
+The transform must be genuinely meaning-preserving for the target's contract — if it isn't, you've built a false-positive factory. Confirm `T`'s validity against the format/spec before building; if unsure, fall back to `invariant`/`crash`.
+
+### Stateful-sequence harnesses (order-dependent / state-machine bugs)
+
+When `## Oracle` sets `stateful: true` (the target is an object/handle/session API with a lifecycle), decode the fuzz bytes into a **sequence of operations** and run them against one live target object, checking invariants *across* the sequence. Reaches bugs a single-call harness can't (use-after-state-transition, double-init, missing-teardown, order confusion). `input_encoding` is `custom`; the oracle it carries is `crash` (sanitizer faults across the sequence) and/or `invariant` (the cross-op properties).
+
+```c
+#include <fuzzer/FuzzedDataProvider.h>
+extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
+    FuzzedDataProvider fdp(data, size);
+    Handle *h = tgt_create();                       // one live object for the whole sequence
+    std::map<std::string,std::string> model;        // a tiny reference model for invariants
+    while (fdp.remaining_bytes() > 0) {
+        switch (fdp.ConsumeIntegralInRange<int>(0, 3)) {  // the op vocabulary from ## Oracle
+          case 0: { auto k = fdp.ConsumeRandomLengthString(); auto v = fdp.ConsumeRandomLengthString();
+                    if (tgt_put(h, k, v) == 0) model[k] = v; break; }
+          case 1: { auto k = fdp.ConsumeRandomLengthString();
+                    const char *got = tgt_get(h, k);
+                    // INVARIANT: a successful put must be observable by a later get.
+                    if (model.count(k) && (!got || model[k] != got))
+                        CCFUZZ_ORACLE_FAIL("invariant", "get_after_put", got?got:"(null)", model[k].c_str());
+                    break; }
+          case 2: tgt_del(h, /*...*/); break;
+          case 3: tgt_compact(h); break;             // a state transition; invariants must survive it
+        }
+    }
+    tgt_destroy(h);
+    return 0;
+}
+```
+
+Keep the op vocabulary small (3–6 ops) and the reference `model` minimal — it exists only to express the cross-op invariant. The accept-gate applies per-op: an op the target legitimately rejects (bad args) advances the sequence, it does not trap.
+
+### UBSan integer/implicit-conversion suite (silent numeric corruption)
+
+When `## Oracle` (or the plan's `## Harness`) requests the integer suite — appropriate when the target does length/size arithmetic on attacker-controlled values — add to the **fuzzing and verify** builds (NOT coverage, NOT cmplog):
+
+```
+-fsanitize=integer,implicit-conversion -fno-sanitize-recover=integer,implicit-conversion
+```
+
+`-fno-sanitize-recover` makes a violation abort (a hard, deduplicable signal) rather than log-and-continue. Because `-fsanitize=integer` also flags *defined* unsigned wraparound that is often intentional (hashing, counters, ring buffers), write an allowlist so the signal isn't drowned:
+
+- Emit `fuzz/harnesses/<name>/harness/ubsan-int.supp` with suppressions for known-intentional wrap functions, and have `run-fuzzer.sh`/`verify` set `UBSAN_OPTIONS=suppressions=<path>` (note it in the build), OR
+- Annotate known-intentional sites the harness controls with `__attribute__((no_sanitize("unsigned-integer-overflow")))`.
+
+Record it by adding `integer,implicit-conversion` to `--sanitizers`. Findings are caught by the normal crash pipeline as `ubsan-implicit-conversion` / `ubsan-integer` (or the triager maps to `integer-truncation`). If the suite produces a flood of intentional-wrap noise that the allowlist can't tame, fall back to plain `undefined` and note why.
+
 ### Recording the oracle
 
 Pass the oracle config to the wrapper so the planner/triager/reporter can read it:
@@ -266,7 +337,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/write-harness-built.sh ... \
   --oracle-config '{"type":"roundtrip","property_id":"json_roundtrip","functions":{"consumer":"json_parse","producer":"json_serialize"},"comparison":"normalized_serialization_equal","execution":"in_process"}'
 ```
 
-Omit `--oracle-config` entirely for a crash-only harness (the default).
+For `metamorphic` add `"transform": "<name>"`; for a stateful harness add `"stateful": true, "operations": ["put","get","del","compact"]`; for the integer suite the choice shows up in `--sanitizers integer,implicit-conversion` rather than the oracle config. Omit `--oracle-config` entirely for a crash-only harness (the default).
 
 ## Workflow
 

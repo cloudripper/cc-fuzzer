@@ -193,6 +193,32 @@ _GATE_VERBS = ("validate", "verify", "check", "authorize", "authenticate",
                "authn", "authz", "permit", "sanitize", "canonicalize",
                "canonical", "normalize", "escape", "unescape", "isvalid")
 
+# Lifecycle verbs for stateful-sequence harness detection (Phase 4). A setup
+# verb paired with a teardown verb on the same base token => an object/handle
+# with a lifecycle => candidate for a stateful (op-sequence) harness.
+_SETUP_VERBS = ("create", "open", "init", "alloc", "new", "begin", "start",
+                "connect", "acquire", "lock", "make")
+_TEARDOWN_VERBS = ("destroy", "close", "free", "dealloc", "delete", "end",
+                   "stop", "disconnect", "release", "unlock", "cleanup",
+                   "fini", "deinit")
+
+
+def _lifecycle_role(name: str) -> Tuple[Optional[str], Optional[str]]:
+    """Return ("setup"|"teardown", base_token) or (None, None) from a name.
+
+    Teardown is checked first so "unlock"/"deinit" aren't mis-read as setup."""
+    low = name.lower()
+    tokens = [t for t in re.split(r"[_\W]+", low) if t]
+    if not tokens:
+        return None, None
+    for verbs, role in ((_TEARDOWN_VERBS, "teardown"), (_SETUP_VERBS, "setup")):
+        for v in verbs:
+            if tokens[0] == v or tokens[-1] == v:
+                return role, "_".join(t for t in tokens if t != v) or low
+            if tokens[0].startswith(v) and len(tokens[0]) > len(v):
+                return role, tokens[0][len(v):]
+    return None, None
+
 
 def _semantic_role(name: str) -> Tuple[Optional[str], Optional[str]]:
     """Return (role, base_token) from a function name, or (None, None).
@@ -448,12 +474,38 @@ def _detect_oracle_candidates(functions: List[FunctionEntry]) -> dict:
         for g in sorted(gates, key=lambda f: -f.suspicion_score)[:20]
     ]
 
+    # Lifecycle pairs (setup+teardown on the same base) => stateful API =>
+    # candidate for a stateful-sequence harness (Phase 4).
+    setups: Dict[str, List[FunctionEntry]] = {}
+    teardowns: Dict[str, List[FunctionEntry]] = {}
+    for f in functions:
+        role, base = _lifecycle_role(f.name)
+        if role == "setup" and base:
+            setups.setdefault(base, []).append(f)
+        elif role == "teardown" and base:
+            teardowns.setdefault(base, []).append(f)
+    stateful = []
+    for base in sorted(set(setups) & set(teardowns)):
+        s = max(setups[base], key=lambda f: f.suspicion_score)
+        t = max(teardowns[base], key=lambda f: f.suspicion_score)
+        stateful.append({
+            "base": base,
+            "setup": _ref(s),
+            "teardown": _ref(t),
+            "oracle": "stateful_sequence",
+            "note": f"lifecycle pair on '{base}'; object/handle with a lifecycle "
+                    f"=> candidate for a stateful op-sequence harness checking "
+                    f"cross-op invariants",
+        })
+
     return {
         "roundtrip": roundtrip,
         "validation_surface": validation_surface,
+        "stateful": stateful,
         "summary": {
             "roundtrip_pairs": len(roundtrip),
             "validation_gates": len(gates),
+            "lifecycle_pairs": len(stateful),
         },
     }
 
@@ -533,10 +585,11 @@ def main() -> int:
             "cve_context_consumed": str(args.cve_context) if args.cve_context else None,
             "recently_changed_files": len(recent),
         },
-        # Oracle candidates for logic-bug fuzzing (Phase 1). The reviewer and
-        # planner read these to decide whether a round-trip / differential /
-        # invariant oracle applies. Empty when no inverse pairs or gates are
-        # found by name heuristic — that just means crash-only by default.
+        # Oracle candidates for logic-bug fuzzing. The reviewer and planner read
+        # these to decide whether a round-trip / differential / invariant /
+        # metamorphic oracle applies, and whether a stateful-sequence harness
+        # fits (lifecycle pairs). Empty when no inverse pairs / gates / lifecycle
+        # pairs are found by name heuristic — that just means crash-only default.
         "oracle_candidates": oracle_candidates,
         "top_candidates": [f.to_dict() for f in top],
         # Full inventory is kept for transparency/audit but with NO score
