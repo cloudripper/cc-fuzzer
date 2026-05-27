@@ -391,10 +391,12 @@ The single file the orchestrator reads on warm ticks. Schema is already document
       "non_exhaustive": true,
       "note": "Floor, not ceiling: also reason creatively beyond these; fold in `references`.",
       "eligible_levers": [
-        {"lever": "harness_extend", "agent": "harness-writer", "evidence": "for_harness=2 (also check uncovered CVE hotspots)", "cost_tier": "sonnet", "idle_ticks": 6, "suppressed": false},
-        {"lever": "poc_build", "agent": "poc-builder", "evidence": "1 confirmed finding(s) without an exploit bundle", "cost_tier": "opus", "idle_ticks": 9, "suppressed": false}
+        {"lever": "harness_extend", "agent": "harness-writer", "evidence": "for_harness=2 (also check uncovered CVE hotspots)", "cost_tier": "sonnet", "idle_ticks": 6, "suppressed": false, "affordable": true},
+        {"lever": "poc_build", "agent": "poc-builder", "evidence": "1 confirmed finding(s) without an exploit bundle", "cost_tier": "opus", "idle_ticks": 9, "suppressed": false, "affordable": true}
       ],
       "eligible_count": 2,
+      "ranked_levers": ["poc_build", "harness_extend"],
+      "top_lever": "poc_build",
       "neglected_levers": ["harness_extend", "poc_build"],
       "recent_lever_families": ["seedgen", "seedgen", "concolic", "seedgen"],
       "distinct_recent_families": 2,
@@ -413,7 +415,7 @@ When `active=false` the orchestrator treats yolo as off (other fields may be abs
 
 **`evaluation`** (v0.18+, computed by `_lib/yolo_evaluate.py`) is the **advisory** dynamic-YOLO signal block — it never halts (the hard caps above own that). `posture` ∈ {`normal`, `throttle`, `halt`} engages Opus-throttling at `soft_cost_fraction` of `max_cost_usd` (unless `cost_cap_enabled` is `false`, in which case cost is not a constraint at all — posture stays `normal`, and the hard cost halt in `compute_yolo_state` is suppressed too). `agent_ledger[agent].suppressed` flags an agent that has been dispatched `≥ redundancy_threshold` times with no result (concolic → 0 inputs promoted; coverage agents → no weighted-coverage gain; triager → no new finding). `suggested_disposition` ∈ {`wait`, `act`, `consult`} and `suggested_wait_seconds` (adaptive backoff) are recommendations; how strictly the orchestrator follows them depends on `mode` (see the `yolo` config block). `aggressiveness` ∈ {`conservative`, `balanced`, `aggressive`} (defaults from `mode`; overridable) shapes the disposition: under `aggressive` a self-climbing fuzzer no longer forces `wait`, an empty/`sleep` gap-branch becomes `act` ("pursue strategic toolbox"), and `suggested_wait_seconds` does not compound across consecutive waits.
 
-**`toolbox`** (v0.19+, computed by `_lib/toolbox_eval.py`) is the **materialized lever board** — the whole known orchestrator toolbox computed deterministically each tick so the model doesn't tunnel-vision on the gap-closing agents the recommendation engine happens to surface. `eligible_levers[]` lists every actionable lever (`lever`, `agent`, `evidence`, `cost_tier` ∈ {cheap, haiku, sonnet, opus}, `idle_ticks`, `suppressed`); ineligible levers are omitted to keep the block compact (`eligible_count` is the total). `neglected_levers[]` are eligible+affordable levers idle ≥3 ticks (opus levers drop out under `posture: throttle`). `tunnel_vision` is true when the last ≥3 *act* ticks rode ≤1 distinct lever family while ≥2 levers (or ≥1 neglected lever) were eligible; `suggested_lever` is the highest-priority neglected lever, and under `aggressive` the disposition is steered to `act` on it (or to `consult` if none is affordable). **`non_exhaustive` is always `true`**: the board is a floor, not a ceiling — it captures only deterministically-detectable moves. `references` reports operator steering (`fuzz/guidance.md`, `fuzz/docs/*`) with `changed_recently`, so the orchestrator re-reads it and pursues moves the catalog can't express. The lever set maps to the Action menu in `agents/fuzz-orchestrator.md`: instrumentation, coverage_reanalysis, seedgen, concolic, mutator, dictionary, harness_extend, cve_refresh, code_review, verification_fill, poc_build, poc_upgrade, plan_revise, slot_engine.
+**`toolbox`** (v0.19+, computed by `_lib/toolbox_eval.py`) is the **materialized lever board** — the whole known orchestrator toolbox computed deterministically each tick so the model doesn't tunnel-vision on the gap-closing agents the recommendation engine happens to surface. `eligible_levers[]` lists every actionable lever (`lever`, `agent`, `evidence`, `cost_tier` ∈ {cheap, haiku, sonnet, opus}, `idle_ticks`, `suppressed`, `affordable` [= not (`throttle` ∧ opus)]); ineligible levers are omitted to keep the block compact (`eligible_count` is the total). **`ranked_levers[]`** is those eligible levers ordered high→low by priority, and **`top_lever`** is the single highest-priority affordable, non-suppressed pick — the orchestrator's concrete default action every tick (populated whenever anything is eligible, unlike `suggested_lever` which only fires on neglect/tunnel). `neglected_levers[]` are eligible+affordable levers idle ≥3 ticks (opus levers drop out under `posture: throttle`). `tunnel_vision` is true when the last ≥3 *act* ticks rode ≤1 distinct lever family while ≥2 levers (or ≥1 neglected lever) were eligible; `suggested_lever` is the highest-priority neglected lever, and under `aggressive` the disposition is steered to `act` on it (or to `consult` if none is affordable). **`non_exhaustive` is always `true`**: the board is a floor, not a ceiling — it captures only deterministically-detectable moves. `references` reports operator steering (`fuzz/guidance.md`, `fuzz/docs/*`) with `changed_recently`, so the orchestrator re-reads it and pursues moves the catalog can't express. The lever set maps to the Action menu in `agents/fuzz-orchestrator.md`: instrumentation, coverage_reanalysis, seedgen, concolic, mutator, dictionary, harness_extend, cve_refresh, code_review, verification_fill, poc_build, poc_upgrade, plan_revise, slot_engine.
 
 **`consult_state` block** (v0.18+) — signals whether a strategic check-in is due this tick:
 ```json
@@ -903,11 +905,24 @@ Produced by `scripts/tick-briefing.sh`. The orchestrator writes this on consult 
   "sonnet_recommendation": {
     "branch": "generate_seeds",
     "reason": "plateau, 3 seedgen-eligible gaps pending"
+  },
+  "toolbox": {
+    "top_lever": "poc_build",
+    "ranked_levers": ["poc_build", "harness_extend"],
+    "neglected_levers": ["harness_extend"],
+    "tunnel_vision": false,
+    "suggested_lever": null,
+    "eligible_levers": [
+      {"lever": "poc_build", "evidence": "1 confirmed finding(s) without an exploit bundle", "idle_ticks": 9, "cost_tier": "opus", "suppressed": false},
+      {"lever": "harness_extend", "evidence": "for_harness=2", "idle_ticks": 6, "cost_tier": "sonnet", "suppressed": false}
+    ]
   }
 }
 ```
 
 **Required fields**: schema, ts, tick_number, trigger, coverage, active_gaps, sonnet_recommendation.
+
+**`toolbox`** (v0.23+) mirrors `current.json.yolo_state.evaluation.toolbox` (compacted: per-lever `agent` dropped) so the consult can reason about *strategic* lever choice — `top_lever`, `ranked_levers`, `neglected_levers`, `tunnel_vision`, and the `eligible_levers[]` board — not just the gap mix. Empty `{}` when YOLO is inactive or the evaluation block is absent.
 
 **`trigger`** values:
 - `scheduled` — periodic consult per `fuzz-config.json:tick.consult_every_n` (default 5).
@@ -930,7 +945,7 @@ Produced by `campaign-planner` in consult mode. The orchestrator reads it, appli
   "briefing_file": "fuzz/state/snapshots/tick-briefing-1779100000.json",
   "verdict": "stay_course" | "redirect",
   "reason": "one-line summary surfaced in the tick output",
-  "tactic": null | "force_concolic_on:g012" | "force_seedgen:g015" | "force_mutator" | "widen_scope" | "revise_plan" | "escalate_to_user",
+  "tactic": null | "force_concolic_on:g012" | "force_seedgen:g015" | "force_mutator" | "force_lever:poc_build" | "widen_scope" | "revise_plan" | "escalate_to_user",
   "rationale": "5-10 line explanation the planner wrote for the audit trail"
 }
 ```
@@ -945,6 +960,7 @@ Produced by `campaign-planner` in consult mode. The orchestrator reads it, appli
 | `force_concolic_on:<gap_id>` | Dispatch concolic-executor with the named gap, regardless of `recommendation.branch`. |
 | `force_seedgen:<gap_id>` | Dispatch seed-generator with the named gap. |
 | `force_mutator` | Dispatch mutator agent. |
+| `force_lever:<lever>` | Dispatch the named strategic toolbox lever via the Action menu (e.g. `force_lever:harness_extend` → harness-writer, `force_lever:poc_build` → poc-builder, `force_lever:code_review` → `/cc-fuzzer:review`, `force_lever:cve_refresh` → `/cc-fuzzer:plan --refresh-cve`). `<lever>` matches an `eligible_levers[]` entry in the briefing's `toolbox`. Orchestrator honors `posture` (defer an opus lever under `throttle`) and skips a suppressed agent. |
 | `widen_scope` | Print the planner's scope-widening note for the user; do NOT modify the plan automatically. |
 | `revise_plan` | Dispatch campaign-planner in revise mode in this same tick (heavier). |
 | `escalate_to_user` | Surface the rationale and stop. User decides what to do next. |

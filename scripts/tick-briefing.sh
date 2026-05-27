@@ -181,6 +181,31 @@ sonnet_rec = {
     "reason": recommendation.get("reason") or "",
 }
 
+# --- Toolbox lever board (already computed in current.json; free to surface) ---
+# Lets the consult reason about strategic lever choice when gaps are exhausted.
+# Compact: drop the per-lever agent label (the consult names levers, not agents)
+# and keep it to short fields so the briefing stays ~1 KB.
+_toolbox = ((current.get("yolo_state") or {}).get("evaluation") or {}).get("toolbox") or {}
+toolbox_brief = {}
+if _toolbox:
+    toolbox_brief = {
+        "top_lever": _toolbox.get("top_lever"),
+        "ranked_levers": _toolbox.get("ranked_levers") or [],
+        "neglected_levers": _toolbox.get("neglected_levers") or [],
+        "tunnel_vision": bool(_toolbox.get("tunnel_vision")),
+        "suggested_lever": _toolbox.get("suggested_lever"),
+        "eligible_levers": [
+            {
+                "lever": l.get("lever"),
+                "evidence": l.get("evidence"),
+                "idle_ticks": l.get("idle_ticks"),
+                "cost_tier": l.get("cost_tier"),
+                "suppressed": l.get("suppressed"),
+            }
+            for l in (_toolbox.get("eligible_levers") or [])
+        ],
+    }
+
 briefing = {
     "schema": "tick-briefing/v1",
     "ts": ts,
@@ -206,6 +231,7 @@ briefing = {
         "ids": findings_recent_ids,
     },
     "sonnet_recommendation": sonnet_rec,
+    "toolbox": toolbox_brief,
 }
 
 with open(out_file, "w") as f:

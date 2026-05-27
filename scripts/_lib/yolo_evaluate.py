@@ -276,6 +276,17 @@ def evaluate(state_dir, snaps_dir, cfg, doc, enabled_at_ts, enabled_at_tick, tic
             toolbox = None
     tunnel = bool(toolbox and toolbox.get("tunnel_vision"))
     suggested_lever = (toolbox or {}).get("suggested_lever")
+    top_lever = (toolbox or {}).get("top_lever")
+
+    def _lever_label(lever):
+        """'lever (agent)' for the rationale, agent looked up from the board."""
+        if not lever:
+            return ""
+        for l in (toolbox or {}).get("eligible_levers", []):
+            if l.get("lever") == lever:
+                a = l.get("agent")
+                return f"{lever} ({a})" if a and a != "infra/skill" else lever
+        return lever
 
     # ---- suggested disposition (advisory, posture-aware) --------------------
     rec = (doc or {}).get("recommendation") or {}
@@ -310,9 +321,15 @@ def evaluate(state_dir, snaps_dir, cfg, doc, enabled_at_ts, enabled_at_tick, tic
         elif branch_suppressed and posture != "throttle":
             disposition, rationale = "consult", _loop_reason(branch_agent)
         elif no_gap_move:
-            disposition, rationale = "act", "no gap-closing move; pursue strategic toolbox (harness/CVE/review/PoC/plan)"
+            if top_lever:
+                disposition, rationale = "act", f"no gap-closing move; take top strategic lever '{_lever_label(top_lever)}'"
+            else:
+                disposition, rationale = "act", "no gap-closing move; no lever materialized — reason from plan/guidance/references"
         elif posture == "throttle" and branch_is_opus:
-            disposition, rationale = "act", f"cost throttled; act on a non-Opus lever instead of {branch_agent}"
+            if top_lever:
+                disposition, rationale = "act", f"cost throttled; take non-Opus top lever '{_lever_label(top_lever)}' instead of {branch_agent}"
+            else:
+                disposition, rationale = "act", f"cost throttled; act on a non-Opus lever instead of {branch_agent}"
         else:
             tail = " alongside self-climbing fuzzer" if self_climbing else ""
             disposition, rationale = "act", f"act on '{branch}' ({branch_agent or 'infra'}){tail}"

@@ -31,7 +31,7 @@ You are dispatched with `--consult <path-to-tick-briefing.json>` by `fuzz-orches
 
 ## Inputs (read only these)
 
-1. **The briefing JSON** at the path passed via `--consult`. Contains coverage history (last 5 ticks), active gap mix + a few examples, specialists dispatched since the last consult, findings recorded since the last consult, and the orchestrator's (Sonnet's) default recommendation.
+1. **The briefing JSON** at the path passed via `--consult`. Contains coverage history (last 5 ticks), active gap mix + a few examples, specialists dispatched since the last consult, findings recorded since the last consult, the orchestrator's (Sonnet's) default recommendation, and a **`toolbox`** block — the deterministic lever board (`ranked_levers`, `top_lever`, `neglected_levers`, `tunnel_vision`, and each `eligible_levers[]` entry with its evidence/idle/cost). The toolbox is your window into the *strategic* options (harness extension, CVE refresh, code review, PoC building, plan revision) the gap mix can't show.
 2. **`fuzz/state/plan.md`** — **only the title + first H2 section** (`## Target` or `## Targets`). Use `head -50` or equivalent. Ground yourself in the campaign's stated strategy; do not re-read the full plan.
 
 Do **NOT** read: target source, full coverage snapshots, individual gap reports, `findings.jsonl`. The briefing already summarised what you need. Stay under ~1500 input tokens.
@@ -48,6 +48,7 @@ Do **NOT** read: target source, full coverage snapshots, individual gap reports,
 
 - Coverage is flat or shrinking AND Sonnet's recommendation is a tactical default (e.g., `sleep`) rather than corrective.
 - One gap category dominates the mix and the right specialist is not being dispatched (e.g., 6 `checksum_barrier` gaps and no concolic dispatched).
+- **Gap analysis is exhausted but the `toolbox` shows a high-value strategic lever idle** (e.g. a confirmed finding with no PoC, an uncovered CVE hotspot, no code review yet, or a `neglected_levers`/`tunnel_vision` flag) and Sonnet isn't taking it → return `force_lever:<that lever>`. This is the case the gap mix alone can't surface — lean on the `toolbox` block.
 - The plan's stated strategy and the live state have meaningfully diverged → return `revise_plan`.
 - Sonnet's recommended branch is provably wrong from the briefing (e.g., recommending `generate_seeds` when SymCC is available and there are `checksum_barrier` gaps).
 
@@ -66,6 +67,7 @@ See STATE_SCHEMA `### state/snapshots/planner-consult-<ts>.json` for the canonic
 | `force_concolic_on:<gap_id>` | Specific `checksum_barrier` or `deep_path_condition` gap should be tackled now |
 | `force_seedgen:<gap_id>` | Specific `format_barrier` or `value_constraint` gap is seedgen-tractable |
 | `force_mutator` | Format invariants block default mutation (rare) |
+| `force_lever:<lever>` | A strategic toolbox lever should be taken now — name it from `briefing.toolbox` (`harness_extend`, `cve_refresh`, `code_review`, `poc_build`, `poc_upgrade`, `plan_revise`, `coverage_reanalysis`, `slot_engine`, `dictionary`). E.g. confirmed finding with no exploit → `force_lever:poc_build`; uncovered CVE hotspot → `force_lever:harness_extend`; no `code-review.md` yet → `force_lever:code_review`. Only name an `eligible_levers[]` entry that isn't `suppressed`. |
 | `widen_scope` | Campaign would benefit from currently-out-of-scope APIs (note for user; no auto-edit) |
 | `revise_plan` | Plan and live state have diverged; trigger a full revise pass (heavier, ~10x consult cost) |
 | `escalate_to_user` | Halt the tick; user decides |

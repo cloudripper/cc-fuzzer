@@ -3,18 +3,18 @@
 # Format: <md5>  <relative-path>
 #
 ba9bc467590581343947ab6ed1a06c11  .claude-plugin/plugin.json
-c3ba20b9836a731735f3d63039a36c29  STATE_SCHEMA.md
+4fae6ca6632c137aa23b8bc01366ec4b  STATE_SCHEMA.md
 0b1de2330d13af29b7f32e795df4eee8  agents/campaign-planner.md
 1c10e5f08e8401b18c66d468834d492c  agents/code-reviewer-deep.md
 0951b4752b235882ba2e422fb2b748f9  agents/code-reviewer.md
 3a86b57bf2cc87f5748cd2ccff8fe26e  agents/concolic-executor.md
 06e4b37d0e315d97035c72cd17b363d0  agents/coverage-analyst.md
 0ee9d395b14a413d2ccdd2a3b4e6b323  agents/crash-triager.md
-7d06d290833f8393a359d8d9f23bef64  agents/fuzz-orchestrator.md
+ff411f887f75a825d352e891d7243862  agents/fuzz-orchestrator.md
 acd8f9d3b9887b9eeb91fe0366d7b39e  agents/harness-writer.md
 54c1fe1fa0d493691c343ffbe8105403  agents/mutator.md
 14118f35c4f22d8a4e4d36cc759dd602  agents/nix-builder.md
-abf7a236d12d4e42a66cd6d181be1d76  agents/planner-consult.md
+69d3ed2fbffe82ab73d7ec96eb32b188  agents/planner-consult.md
 3a74536c89c6e4d535bc1b0dff393137  agents/poc-builder.md
 b462bf8b5e4292bc5e4bdcce31e42595  agents/reporting-agent.md
 63b092f672f8d75983b58b2aef79044a  agents/seed-generator.md
@@ -40,9 +40,9 @@ e961fa87edde123666067ba55c6f762e  scripts/_lib/nix-tools.sh
 c0c1563b29f85b5cdddf11020383786c  scripts/_lib/path-anchor.sh
 14658ee22469e166d1746a4e0ed07bc7  scripts/_lib/snapshot_helpers.py
 97ccbb6f92574523ea50c2c31584b7fd  scripts/_lib/state_checks.py
-4ecc06cd9e2d3f1dc858256180256662  scripts/_lib/toolbox_eval.py
+dd7b9ec81491551d2e3c8ea2494cec55  scripts/_lib/toolbox_eval.py
 a084dea87355b99e4b352735d64932d4  scripts/_lib/write_harness_built.py
-3faab6ba84c1241dda9466a77222ccc4  scripts/_lib/yolo_evaluate.py
+e270a703e0d16422fbcc861e1d908ca6  scripts/_lib/yolo_evaluate.py
 0854d8085d4bf17da1d74c3d5eea97da  scripts/blame-finding.sh
 00cd198a005441e59a775fe6886b3acb  scripts/build-poc-repro.sh
 5f414c1f4b5cf42047ea2f92aa7e1182  scripts/build-symcc-target.sh
@@ -83,7 +83,7 @@ b9d7950c772915d8d69acb2b9e8ab739  scripts/run-fuzzer.sh
 ee60e9c124946b8db49d4808ea25d8a4  scripts/snapshot-coverage.sh
 dffa84b25ecf0668bfc5fe97fb402824  scripts/status.sh
 45b91abbb1895bbf70e7e53ae28dfc55  scripts/stop-fuzzer.sh
-0deb1aaf7aff348608e30f6aec1d9df6  scripts/tick-briefing.sh
+82375592db35dbacfdc3e5106bbf2dfa  scripts/tick-briefing.sh
 877c7f871b171a45e636797407c3690e  scripts/tick-coverage-roundup.sh
 04173d0c6b1c6039d0fa11b3e2f05eb0  scripts/update-current.sh
 b7494731f0d9cffa7f7662549756ec4e  scripts/validate-state.sh

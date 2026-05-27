@@ -85,12 +85,19 @@ BRANCH_LEVER = {
     "fix_instrumentation": "instrumentation",
 }
 
-# Suggestion priority when breaking tunnel vision (high → low).
+# Suggestion priority when breaking tunnel vision (high → low). Also the
+# ranking used for `top_lever` — the single best affordable, non-suppressed
+# eligible lever to anchor each tick on (independent of neglect/tunnel).
 SUGGEST_PRIORITY = [
     "instrumentation", "poc_build", "poc_upgrade", "verification_fill",
     "harness_extend", "coverage_reanalysis", "concolic", "seedgen", "mutator",
     "cve_refresh", "code_review", "plan_revise", "dictionary", "slot_engine",
 ]
+_PRIORITY_INDEX = {lever: i for i, lever in enumerate(SUGGEST_PRIORITY)}
+
+
+def _priority(lever):
+    return _PRIORITY_INDEX.get(lever, len(SUGGEST_PRIORITY))
 
 NEGLECT_IDLE_TICKS = 3      # eligible + idle this many ticks ⇒ neglected
 TUNNEL_WINDOW = 4           # look back this many act-ticks
@@ -298,6 +305,7 @@ def compute(state_dir, snaps_dir, cfg, doc, events, findings,
         agent = LEVER_AGENT.get(lever)
         is_sup = bool(agent and agent in suppressed)
         tier = COST_TIER.get(lever, "sonnet")
+        affordable = not (posture == "throttle" and tier == "opus")
         levers.append({
             "lever": lever,
             "agent": agent or "infra/skill",
@@ -305,13 +313,27 @@ def compute(state_dir, snaps_dir, cfg, doc, events, findings,
             "cost_tier": tier,
             "idle_ticks": idle,
             "suppressed": is_sup,
+            "affordable": affordable,
         })
-        affordable = not (posture == "throttle" and tier == "opus")
         if (lever != "instrumentation" and not is_sup and affordable
                 and idle >= NEGLECT_IDLE_TICKS):
             neglected.append(lever)
 
     eligible_names = [l["lever"] for l in levers]
+
+    # ---- ranked board + the single best pick (the per-tick anchor) ----------
+    # `ranked_levers` is every eligible lever ordered high→low by priority so the
+    # board is never an unordered pile. `top_lever` is the highest-priority lever
+    # that's also affordable and not suppressed — the concrete default the
+    # orchestrator anchors on every tick (not just when something's been
+    # neglected, which is all `suggested_lever` covers). instrumentation wins
+    # when broken because it's first in the priority list.
+    ranked_levers = sorted(eligible_names, key=_priority)
+    top_lever = next(
+        (l["lever"] for l in sorted(levers, key=lambda x: _priority(x["lever"]))
+         if l["affordable"] and not l["suppressed"]),
+        None,
+    )
 
     # ---- tunnel vision ------------------------------------------------------
     recent_families = []
@@ -349,6 +371,8 @@ def compute(state_dir, snaps_dir, cfg, doc, events, findings,
                  "moves the catalog doesn't list."),
         "eligible_levers": levers,
         "eligible_count": len(levers),
+        "ranked_levers": ranked_levers,
+        "top_lever": top_lever,
         "neglected_levers": neglected,
         "recent_lever_families": list(reversed(recent_families)),
         "distinct_recent_families": distinct,
