@@ -89,9 +89,9 @@ You're on Sonnet — keep dispatches focused:
 
 | reason | meaning | recommended_agent |
 |---|---|---|
-| `harness_gap` | Harness never calls a path that would reach this. | `harness-writer` |
+| `harness_gap` | Harness never calls a path that would reach this. **Tag a `harness_action` (below)** so the orchestrator knows *which* reshape. | `harness-writer` |
 | `format_barrier` | Needs a magic byte, length, or keyword the fuzzer hasn't produced. | `seed-generator` |
-| `state_precondition` | Needs prior call that sets global state. | `harness-writer` |
+| `state_precondition` | Needs prior call that sets global state. May also carry a `harness_action`. | `harness-writer` |
 | `value_constraint` | Needs a specific int/enum value (e.g., `if (cmd == 0x42)`) readable from source. | `seed-generator` |
 | `direct_compare` | Branch is a direct compare against an input-derived byte sequence AND the cmplog dict already contains the operand. Cmplog is solving this at runtime; no LLM action needed. | `none` |
 | `checksum_barrier` | Needs a computed value (CRC, hash, length-derived) — LLM cannot just write it AND cmplog cannot solve it because the operand is a function of input rather than a literal. | `concolic-executor` |
@@ -99,7 +99,53 @@ You're on Sonnet — keep dispatches focused:
 | `delta_target` | Function appears in latest `delta-*.json` (recently changed) AND is unreached. Priority signal layered over a root cause. | `seed-generator` usually; `harness-writer` if unreachable from current harness |
 | `cve_hotspot` | Function/file appears in `cve-context-*.json:hotspots` AND is unreached. Priority signal. | `seed-generator` usually; `concolic-executor` if underlying cause is checksum/deep-path |
 | `code_review_target` | Function appears in `code-review-*.json:findings` with `confidence in {high, medium}` AND is unreached. The reviewer flagged this function as carrying a vulnerable pattern. | `seed-generator` (use the finding's `fuzzing_recommendation`); `concolic-executor` for checksum/deep-path causes |
-| `dead` | Provably unreachable; skip, do not propose a fix. | `none` |
+| `dead` | Provably unreachable by **ANY** harness design — a true RAII/cleanup stub pulled in via headers but callable by nothing (e.g. `sd_bus_flush_close_unrefp`). NOT "unreachable by the *current* harness." | `none` |
+
+### `dead` vs `harness_gap` — the discipline that keeps YOLO from parking
+
+This distinction is load-bearing. A coverage plateau under autonomous YOLO escalates
+to *structural* moves (rewrite the harness entry, add a new harness, mock a peer,
+switch the engine) **only for functions you classify as reachable.** If you mis-tag a
+reshape-reachable function as `dead`, it vanishes from the structural-candidate set and
+the campaign rationalizes a premature "structural ceiling" halt — exactly the failure
+this taxonomy exists to prevent.
+
+- `dead` = unreachable **no matter how the harness is written** (cleanup destructors,
+  `_unrefp` cleanup attributes, code gated by a compile-time flag the build doesn't set).
+- A function the *current* harness can't reach but a **rewrite / new harness / mock /
+  engine change** could → `harness_gap` (or `state_precondition`) **with a
+  `harness_action`**, never `dead`. The sd-bus auth *server* path
+  (`bus_socket_auth_verify_server`) reached only by changing the entry from the *client*
+  verifier is `harness_gap` + `harness_action: entry_swap` — it is NOT dead.
+
+### Harness action sub-classification (`harness_action`)
+
+For any `harness_gap` / `state_precondition`, add an optional `harness_action` naming the
+**cheapest reshape that reaches it**, so the orchestrator dispatches the right structural
+move instead of a blind "extend":
+
+| `harness_action` | meaning | extra fields |
+|---|---|---|
+| `extend` | The current harness can reach it by extending its existing body-walk / call sequence (the legacy `harness_gap` meaning). | — |
+| `entry_swap` | Reachable by pointing a harness at a **different entry function** (same library, different role/leaf). | `proposed_entry` |
+| `new_harness` | Needs a **brand-new harness** with a different entry/driver (a second protocol role, a body-walk harness). | `proposed_entry` |
+| `mock` / `driver` | Reachable only by **mocking an external dependency** (a hostile broker, a socket peer, a clock) so the server/peer path is drivable in-process. | `mock_target` |
+| `engine_swap` | Not a harness reshape — the gap mix favours **AFL++/Redqueen** (cmplog input-to-state) over libFuzzer. Set this when a `checksum_barrier`/`direct_compare`/`format_barrier` cluster sits behind a comparison cmplog could crack and cmplog is inactive. | — |
+
+`proposed_entry` = the function the reshaped harness should call. `mock_target` = the
+dependency to mock. These flow straight into the ceiling-probe's `structural_candidates`
+and the orchestrator's plateau-breaking levers. They are **additive-optional** — a gap
+with no `harness_action` still validates and still counts toward `gaps.for_harness`.
+
+### Engine fit
+
+When you see a cluster of `checksum_barrier` / `direct_compare` / `value_constraint`
+gaps behind input-derived comparisons AND the campaign engine is libFuzzer with cmplog
+inactive, note it: tag one such gap `harness_action: engine_swap` (or call it out in a
+`hint`). AFL++ with `AFL_LLVM_CMPLOG` (Redqueen) solves input-to-state comparisons the
+default libFuzzer mutator stalls on. Do not default to "libFuzzer is fine" reflexively —
+the deterministic ceiling-probe will also flag this, but your gap-level signal is what
+grounds it.
 
 ### The `direct_compare` / `value_constraint` / `checksum_barrier` lever
 
@@ -172,10 +218,25 @@ Schema is `gaps-report/v1` (full field list in STATE_SCHEMA). Realistic example:
       "reason": "delta_target",
       "hint": "delta_target: function added in main..HEAD lines 615-638. Needs a seed with v2 magic 0x10A1; see parser.c:622.",
       "recommended_agent": "seed-generator"
+    },
+    {
+      "id": "g004",
+      "file": "src/bus-socket.c",
+      "function": "bus_socket_auth_verify_server",
+      "line_range": [880, 940],
+      "reason": "harness_gap",
+      "hint": "Server-side SASL handshake; current harness drives the client verifier only. Point a harness at the server entry to cover the broker-controlled path.",
+      "recommended_agent": "harness-writer",
+      "harness_action": "entry_swap",
+      "proposed_entry": "bus_socket_auth_verify_server"
     }
   ]
 }
 ```
+
+`harness_action` / `proposed_entry` / `mock_target` are **optional** per-gap fields (see
+"Harness action sub-classification"); include them on every `harness_gap` /
+`state_precondition` so the orchestrator's plateau-breaking levers fire on the right move.
 
 The `harness` field is required in multi mode, omitted in singular.
 

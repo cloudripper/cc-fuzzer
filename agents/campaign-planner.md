@@ -128,6 +128,26 @@ The default oracle is `crash` (sanitizer/abort) — and for many targets that is
 These are **not exclusive of two orthogonal harness-shape decisions**, which you make independently and note in `## Oracle` / `## Harness`:
 - **Stateful-sequence harness** — when the target is a *stateful* API (lifecycle/handle/session: the prescan's `stateful_candidates` shows `open`/`close`, `create`/`destroy`, `init`/`free`, `begin`/`end`, `lock`/`unlock` pairs). Set `stateful: true` and name a small op vocabulary (3–6 ops) and the cross-op invariant. `input_encoding: custom`. This reaches order-dependent / state-machine bugs and pairs naturally with the `invariant` oracle.
 - **UBSan integer suite** — when the target does length/size arithmetic on attacker-controlled values (truncation/signedness risk). Request `-fsanitize=integer,implicit-conversion` in `## Harness` and have the harness-writer write a wraparound allowlist. This is a crash-oracle *extension*, orthogonal to the logic `type`.
+- **Engine** — see the rubric below; state the chosen engine and *why* in `## Harness`.
+
+### Engine selection — do NOT default to libFuzzer reflexively
+
+The engine is a real decision, not a default. Choose per the target's input shape and
+write the choice + rationale into `## Harness` (the orchestrator and harness-writer both
+read it):
+
+| Pick | When | Why |
+|---|---|---|
+| **libFuzzer** (`in_process`) | Fast leaf parser/codec, simple/flat inputs, no hard comparison gates; you want maximum exec/s and in-process speed. | Cheapest, fastest iteration; the default *only when it actually fits*. |
+| **AFL++ + cmplog/Redqueen** (`cmplog_enabled: true`) | Inputs gated by **magic bytes, checksums, length-prefix/TLV framing, multi-byte `==` comparisons, or nested format constraints**. | Redqueen's input-to-state replaces the comparison operand directly — it walks through gates the libFuzzer mutator stalls on for hours. This is the single biggest lever for format-heavy targets. |
+| **Both (multi-slot)** | A large surface with both a fast-fuzzable region and a comparison-gated region. | Run a libFuzzer slot for raw speed + an AFL++ cmplog slot for the gates; declare both in `fuzzer_slots[]`. |
+
+Heuristic: if the prescan / your source read shows the target reads a header with a
+magic constant, a CRC/length field, or a chain of `if (x == CONST)` gates before the
+interesting code, **lean AFL++ with cmplog**. cmplog is AFL++-only (`cmplog_enabled` is
+always false on libFuzzer). This is a harness-locked decision in revise mode — if a live
+campaign's gap mix turns out to be checksum/compare-heavy and the engine is libFuzzer,
+say so explicitly and recommend `/cc-fuzzer:campaign --reset` (or an added AFL++ slot).
 
 **`## Oracle` section content** (when not crash): the `type`; the exact function(s) — `consumer`/`producer` for roundtrip, the `reference` for differential, the gate fn for invariant, the `transform` for metamorphic; the **property in one concrete sentence** (the thing that must hold for every *accepted* input); the comparison/normalization to apply (never raw `memcmp`); `execution: subprocess|in_process` for differential (default subprocess); and `stateful: true` + the op vocabulary when stateful. Restate the **accept-gate rule** for the harness-writer: trap only on a violated property for *accepted* input — never because the target rejected malformed input. Keep crash detection on regardless.
 

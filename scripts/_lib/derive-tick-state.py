@@ -190,21 +190,63 @@ def compute_yolo_state(state_dir, snaps_dir, tick_n, now, doc=None):
     except Exception:
         pass
 
+    # Advisory dynamic-YOLO signals (cost posture, redundancy ledger, progress,
+    # the ceiling probe + its escalation-ladder stage). Computed BEFORE the halt
+    # decision so the no_progress gate below reads the SAME ladder stage the
+    # disposition layer used. Never halts itself — that's the block below.
+    evaluation = None
+    if yolo_evaluate is not None:
+        try:
+            evaluation = yolo_evaluate.evaluate(
+                state_dir, snaps_dir, yolo_cfg, doc,
+                enabled_at_ts, enabled_at_tick, tick_n, now,
+            )
+        except Exception:
+            evaluation = None
+    aggressiveness = (evaluation or {}).get("aggressiveness")
+    if aggressiveness not in ("conservative", "balanced", "aggressive"):
+        mode = yolo_cfg.get("mode", "hybrid")
+        aggressiveness = {"guided": "conservative", "hybrid": "balanced",
+                          "self_loop": "aggressive"}.get(mode, "balanced")
+    ceiling = (evaluation or {}).get("ceiling_probe") or {}
+    ladder_stage = int(ceiling.get("ladder_stage", 0) or 0)
+
+    # No-progress halt. Under guided/balanced this is the legacy flat-count halt.
+    # Under aggressive (self_loop) a coverage plateau is NOT terminal — it triggers
+    # the structural escalation ladder (reshape the harness / swap the engine) and
+    # a pre-halt consult. The halt fires only when that ladder reaches stage 3
+    # (structural avenues attempted AND a consult already ran, coverage still flat),
+    # so the campaign breaks through the ceiling before it ever parks.
+    if aggressiveness == "aggressive":
+        no_progress_halt = ladder_stage >= 3
+    else:
+        no_progress_halt = consecutive_no_progress >= stop_no_prog
+
     halt_conditions = {
         "tick_cap":    ticks_used >= max_ticks,
         "cost_cap":    cost_cap_enabled and cost_used >= max_cost,
-        "no_progress": consecutive_no_progress >= stop_no_prog,
+        "no_progress": no_progress_halt,
         "crash_storm": new_findings_last_tick >= crash_storm,
     }
     halt_triggered = any(halt_conditions.values())
     halt_reason = None
     if halt_triggered:
+        # Honest no_progress reason under aggressive: name what the ladder tried.
+        if aggressiveness == "aggressive" and no_progress_halt:
+            attempted = ceiling.get("attempted_since_plateau") or []
+            flat_ticks = ceiling.get("ticks_since_gain", consecutive_no_progress)
+            tried = ", ".join(attempted[:4]) if attempted else "no structural move available"
+            no_progress_reason = (
+                f"structural ceiling: reshape/engine moves attempted ({tried}) and a "
+                f"pre-halt consult ran; coverage flat {flat_ticks} ticks")
+        else:
+            no_progress_reason = f"no coverage progress for {consecutive_no_progress} ticks"
         for k, v in halt_conditions.items():
             if v:
                 halt_reason = {
                     "tick_cap":    f"tick cap reached ({ticks_used}/{max_ticks})",
                     "cost_cap":    f"cost cap reached (${cost_used:.2f}/${max_cost:.2f})",
-                    "no_progress": f"no coverage progress for {consecutive_no_progress} ticks",
+                    "no_progress": no_progress_reason,
                     "crash_storm": f"crash storm: {new_findings_last_tick} new findings in last interval (>= {crash_storm})",
                 }[k]
                 break
@@ -224,16 +266,10 @@ def compute_yolo_state(state_dir, snaps_dir, tick_n, now, doc=None):
         "halt_reason": halt_reason,
         "interval_seconds": interval,
     }
-    # Advisory dynamic-YOLO signals (cost posture, redundancy ledger, progress,
-    # suggested disposition). Never halts — that's the block above. Best-effort.
-    if yolo_evaluate is not None:
-        try:
-            out["evaluation"] = yolo_evaluate.evaluate(
-                state_dir, snaps_dir, yolo_cfg, doc,
-                enabled_at_ts, enabled_at_tick, tick_n, now,
-            )
-        except Exception:
-            pass
+    # Reuse the evaluation block computed above (single ceiling/ladder computation
+    # per tick, so the halt gate and the disposition can never disagree).
+    if evaluation is not None:
+        out["evaluation"] = evaluation
     return out
 
 

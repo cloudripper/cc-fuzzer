@@ -70,6 +70,40 @@ Treat unconsumed corrections as **prioritised TODO items** for this build. The r
 
 **Oracle-property corrections**: a correction whose `suggested_fix` says "weaken/remove oracle property `<id>`" means the triager found the **oracle itself** was mis-specified (it asserted a property the target's contract does not guarantee — often surfaced by the COLD `oracle-smoke-test.sh` tripping on a valid seed). Either tighten the property so it is genuinely contract-guaranteed, or, if it can't be salvaged, **rebuild crash-only** for this harness — drop the `--oracle-config` (or set `{"type":"crash"}`) so the harness no longer carries the bad oracle. Do not keep emitting a property the target never promised.
 
+## Structural reshapes (YOLO plateau-breaking)
+
+Under autonomous YOLO, a coverage plateau is not a stopping point — the orchestrator
+dispatches you to **reshape the harness so it reaches surface the current design can't.**
+The directive arrives in your prompt naming the action and target (derived from a gap's
+`harness_action` / `proposed_entry` / `mock_target` and the ceiling-probe), e.g.
+*"structural reshape: entry_swap → `bus_socket_auth_verify_server`"*. Pick the workflow:
+
+- **`entry_swap`** — rebuild **this** harness against a **different entry function**
+  (the `proposed_entry`). The current entry covers one role/leaf; the swap points it at
+  the uncovered one (e.g. the SASL *server* verifier instead of the *client*). Update the
+  entry function and rebuild all three binaries (+ cmplog if AFL++). Record the new entry
+  in `harness_attempts[]` with the rationale.
+- **`new_harness`** — leave the existing harness alone; **register and build a brand-new
+  one**: `bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-set.sh add --entry <proposed_entry> [--engine aflpp]`,
+  capture the `name=<name>`, then build it exactly like a COLD harness scoped to
+  `fuzz/harnesses/<name>/`. Use this for a second protocol role or a body-walk harness
+  that exercises a different call shape than the original.
+- **`mock` / `driver`** — author a **mock for the named `mock_target`** (a hostile broker,
+  a socket peer, a clock) so an otherwise-unreachable server/peer path becomes drivable
+  in-process. Use the harness's `mocks` scaffolding (the nix manifest has a `mocks` slot);
+  the mock supplies adversarial-but-well-formed peer behaviour so the fuzzer drives the
+  real code under test, **never** a rigged mock that fakes the bug. Keep crash + oracle
+  detection on.
+- **`engine_swap`** — the gap mix favours AFL++/Redqueen (cmplog input-to-state) over
+  libFuzzer. Rebuild this harness with `--engine aflpp` and a cmplog binary, OR add an
+  AFL++ cmplog slot alongside the existing libFuzzer one (`harness-set.sh add --engine aflpp`).
+  See the engine rubric in `plan.md ## Harness`.
+
+These reshapes are the moves the gap-closing engine can't express. The orchestrator
+records the dispatch as `structural:<action>:<entry>` so the ceiling-probe counts it as
+attempted — you just perform the build and report what you changed. **Never** reshape a
+harness to make a known crash "go away"; reshaping is for reaching *new* surface.
+
 ## Build matrix
 
 Every COLD start produces THREE binaries plus one optional:

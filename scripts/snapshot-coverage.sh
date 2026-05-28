@@ -290,6 +290,23 @@ COV_TOTAL=0
 COV_PCT=0
 COV_RUN_OK=false
 
+# Coverage input dirs — engine-agnostic. The coverage binary (a plain-clang
+# -fprofile-instr-generate build) is the same regardless of engine, so coverage
+# must work for AFL++ harnesses too. But AFL seeds FROM corpus/ (-i) and writes
+# every discovered input to its OWN -o queue (aflpp-out/<inst>/queue), and nothing
+# syncs that back into corpus/. Sampling corpus/ alone therefore measures only the
+# static seed set for an AFL++ harness — stale at best, and "broken instrumentation"
+# (zero profraw) when corpus/ is sparse. So union the per-harness corpus with every
+# live AFL queue. (extract-cmplog-dict.sh already treats the queue as authoritative
+# for AFL; this brings coverage in line.)
+COV_INPUT_DIRS=()
+[ -d "$CORPUS_DIR" ] && COV_INPUT_DIRS+=("$CORPUS_DIR")
+if [ -d "$OUT_DIR" ]; then
+  while IFS= read -r _inst; do
+    [ -d "$_inst/queue" ] && COV_INPUT_DIRS+=("$_inst/queue")
+  done < <(afl_instances "$OUT_DIR")
+fi
+
 if [ "$COVERAGE_TRACKING_ENABLED" = "true" ] && [ "$COVERAGE_BUILD_PRESENT" = "true" ] && [ "$LLVM_COV_AVAILABLE" = "true" ]; then
   # Sampling strategy:
   #   1. Always run named seed_*.bin first (these are hand-crafted seeds for
@@ -306,11 +323,12 @@ if [ "$COVERAGE_TRACKING_ENABLED" = "true" ] && [ "$COVERAGE_BUILD_PRESENT" = "t
   rm -f "$PROFRAW" "$PROFDATA"
   rm -f "$COV_DIR"/snap_*.profraw
 
-  if [ -d "$CORPUS_DIR" ]; then
+  if [ "${#COV_INPUT_DIRS[@]}" -gt 0 ]; then
     SAMPLED=0
     MAX_SAMPLES=${SNAPSHOT_COVERAGE_MAX_SAMPLES:-500}
 
-    # Step 1: all named seed_* files (cheap, usually fewer than ~50)
+    # Step 1: all named seed_* files from the corpus (cheap, usually < ~50).
+    # Hand-crafted predicate seeds live only in corpus/, never the AFL queue.
     for f in "$CORPUS_DIR"/seed_*.bin "$CORPUS_DIR"/seed_*.txt; do
       [ -f "$f" ] || continue
       LLVM_PROFILE_FILE="$COV_DIR/snap_%p.profraw" \
@@ -318,7 +336,9 @@ if [ "$COVERAGE_TRACKING_ENABLED" = "true" ] && [ "$COVERAGE_BUILD_PRESENT" = "t
       SAMPLED=$((SAMPLED + 1))
     done
 
-    # Step 2: random sample from the rest, up to MAX_SAMPLES total
+    # Step 2: random sample from the rest across ALL input dirs (corpus non-seed
+    # files + every AFL++ queue), up to MAX_SAMPLES total. -maxdepth 1 -type f
+    # grabs queue inputs (id:NNNNNN,...) while skipping the queue's .state/ subdir.
     if [ "$SAMPLED" -lt "$MAX_SAMPLES" ]; then
       REMAINING=$((MAX_SAMPLES - SAMPLED))
       while IFS= read -r f; do
@@ -326,7 +346,7 @@ if [ "$COVERAGE_TRACKING_ENABLED" = "true" ] && [ "$COVERAGE_BUILD_PRESENT" = "t
         LLVM_PROFILE_FILE="$COV_DIR/snap_%p.profraw" \
           timeout 5 "$COVERAGE_BINARY" "$f" >/dev/null 2>&1 || true
         SAMPLED=$((SAMPLED + 1))
-      done < <(find "$CORPUS_DIR" -maxdepth 1 -type f -not -name 'seed_*' 2>/dev/null \
+      done < <(find "${COV_INPUT_DIRS[@]}" -maxdepth 1 -type f -not -name 'seed_*' 2>/dev/null \
                   | shuf | head -"$REMAINING")
     fi
 

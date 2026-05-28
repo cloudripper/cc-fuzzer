@@ -19,7 +19,8 @@ Flags (defaults shown):
 | `--interval <duration>` | `1800` (30m) | Accepts `30m`, `1800`, `2h`. Minimum 60s. |
 | `--max-ticks <N>` | `24` | Hard tick cap |
 | `--max-cost <USD>` | `10.0` | Soft cost cap from `events.jsonl` token totals |
-| `--stop-on-no-progress <N>` | `30` | Halt after N consecutive zero-delta ticks |
+| `--stop-on-no-progress <N>` | `30` | Halt after N consecutive zero-delta ticks. **In `self_loop` this no longer halts directly** — a plateau first runs the escalation ladder (reshape → consult), and the halt fires only when that's exhausted (see "Plateau escalation ladder"). |
+| `--plateau-escalate-ticks <N>` | `8` | (`self_loop`) flat-coverage ticks before the reshape→consult→halt ladder begins. Auto-clamped to `< --stop-on-no-progress`. |
 | `--crash-storm-threshold <N>` | `10` | Halt when one interval yields > N new findings |
 | `--redundancy-threshold <N>` | `2` | (hybrid/self_loop) suppress an agent after N unproductive dispatches |
 | `--soft-cost-fraction <F>` | `0.6` (`0.8` if aggressive) | (hybrid/self_loop) fraction of max-cost where Opus agents get throttled |
@@ -36,6 +37,17 @@ Every mode shares the same hard halts (tick / cost / no-progress / crash-storm) 
 ### Toolbox board (anti-tunnel-vision)
 
 Every tick the evaluation block carries `toolbox` — the **whole known lever set, materialized deterministically** (`_lib/toolbox_eval.py`) so the orchestrator can't tunnel-vision on seedgen/concolic. It lists each `eligible` lever with its `cost_tier` and `idle_ticks`, flags `neglected_levers` (eligible but idle), and sets `tunnel_vision` + `suggested_lever` when the campaign has been riding one lever family — under `aggressive` the disposition is steered onto the neglected lever to force breadth. The board is explicitly **`non_exhaustive` (a floor, not a ceiling)**: `references` surfaces `fuzz/guidance.md`, `fuzz/docs/`, and `fuzz/state/cve-patterns.md` (the CVE-review output, when present) so the orchestrator folds in operator domain knowledge and the CVE intel it already paid for, and invents moves the catalog can't express. When `references.cve_patterns_md` is set, read that file instead of re-dispatching the `cve_refresh` lever. Drop reference material in `fuzz/docs/` and write `fuzz/guidance.md` to steer the creative reasoning.
+
+### Plateau escalation ladder (self_loop)
+
+Under `self_loop`/`aggressive` a coverage plateau is **not** a stopping point — it's the cue to reshape the campaign and keep going. A deterministic ceiling-probe (`_lib/ceiling_probe.py`, also runnable via `scripts/ceiling-probe.sh`) cross-references the uncovered functions against gap `harness_action`s, code-review findings, CVE hotspots, and engine/gap-mix fit, and drives a four-stage ladder (`yolo_state.evaluation.ceiling_probe.ladder_stage`):
+
+0. **normal** — climbing, or flat < `--plateau-escalate-ticks`.
+1. **escalate** — take the recommended structural move: rewrite the harness entry (`harness_rewrite`), add a new harness (`harness_new`), mock a hostile peer (`mock_env`), or switch to AFL++/Redqueen (`engine_swap`). These show up as top levers on the toolbox board.
+2. **pre-halt consult** — structural avenues attempted and still flat ⇒ one `planner-consult` (throttle-exempt) gets the last word; it may redirect to an untried move the deterministic probe couldn't see.
+3. **honest halt** — only now does `no_progress` fire, with a reason naming what was tried (reshapes attempted + consult ran). The `tick_cap` / `cost_cap` hard halts remain absolute backstops throughout.
+
+So `self_loop` keeps breaking through ceilings (reshaping harnesses, switching engines) until it has genuinely exhausted every structural avenue AND a consult agrees — then it parks honestly. `guided`/`hybrid` keep the legacy direct flat-count halt.
 
 ### Aggressiveness posture
 

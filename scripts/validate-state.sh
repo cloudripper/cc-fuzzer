@@ -481,7 +481,18 @@ if [ -d "$SNAPSHOTS_DIR" ]; then
     validate_json "$f" \
       "tick-briefing/v1" \
       "ts,tick_number,trigger,coverage,active_gaps,sonnet_recommendation" \
-      "ts,tick_number,trigger,last_consult_ts,last_consult_tick,ticks_since_last_consult,coverage,active_gaps,dispatched_since_last_consult,findings_since_last_consult,sonnet_recommendation" \
+      "ts,tick_number,trigger,last_consult_ts,last_consult_tick,ticks_since_last_consult,coverage,active_gaps,dispatched_since_last_consult,findings_since_last_consult,sonnet_recommendation,toolbox,ceiling" \
+      lenient
+  done
+  # Ceiling-probe artifacts (self_loop plateau/structural-ceiling verdict). The
+  # runtime copy lives in current.json.yolo_state.evaluation.ceiling_probe; this
+  # snapshot is written by ceiling-probe.sh for audit + the pre-halt consult.
+  for f in "$SNAPSHOTS_DIR"/ceiling-probe-*.json; do
+    [ -f "$f" ] || continue
+    validate_json "$f" \
+      "ceiling-probe/v1" \
+      "ladder_stage,is_real_ceiling,structural_candidates,engine_fit,summary" \
+      "timestamp,harness,plateau_active,ladder_stage,is_real_ceiling,ticks_since_gain,plateau_escalate_ticks,structural_candidates,untried_candidates,recommended_structural,attempted_since_plateau,harness_writer_dispatches_since_plateau,consult_since_plateau,engine_fit,dead_count,summary" \
       lenient
   done
   for f in "$SNAPSHOTS_DIR"/planner-consult-*.json; do

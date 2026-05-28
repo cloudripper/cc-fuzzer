@@ -37,6 +37,11 @@ try:
 except Exception:
     toolbox_eval = None
 
+try:
+    import ceiling_probe  # sibling _lib module (deterministic plateau/ceiling probe)
+except Exception:
+    ceiling_probe = None
+
 
 # Agents dispatched at each model tier. Opus agents are the cost/spam risk YOLO
 # must watch; the per-model estimate below is advisory (the hard cost_cap in
@@ -159,6 +164,7 @@ def evaluate(state_dir, snaps_dir, cfg, doc, enabled_at_ts, enabled_at_tick, tic
     max_cost = float(yolo.get("max_cost_usd", 10.0))
     interval = int(yolo.get("interval_seconds", 1800))
     max_backoff = int(yolo.get("max_backoff_multiplier", 4))
+    plateau_escalate_ticks = int(yolo.get("plateau_escalate_ticks", 8))
 
     events = _load_jsonl(os.path.join(state_dir, "events.jsonl"))
     series = _roundup_series(snaps_dir, enabled_at_ts)
@@ -264,6 +270,24 @@ def evaluate(state_dir, snaps_dir, cfg, doc, enabled_at_ts, enabled_at_tick, tic
     backoff_mult = min(2 ** consecutive_waits, eff_max_backoff) if eff_max_backoff > 0 else 1
     wait_seconds = interval * max(1, backoff_mult)
 
+    # ---- ceiling probe (plateau / structural-ceiling ground truth) ---------
+    # Computed before the toolbox so its structural_candidates can light up the
+    # plateau-breaking levers, and returned in the block so compute_yolo_state
+    # (halt gate) and the consult briefing read the SAME ladder stage we do.
+    # Aggressive (self_loop) ONLY: the ladder and structural levers are a self_loop
+    # feature; guided/balanced keep legacy halts and their evaluation output stays
+    # byte-identical (ceiling stays None ⇒ toolbox adds no structural levers ⇒ no
+    # ceiling_probe key in the returned block).
+    ceiling = None
+    if aggressiveness == "aggressive" and ceiling_probe is not None:
+        try:
+            ceiling = ceiling_probe.compute(
+                state_dir, snaps_dir, doc, events, enabled_at_ts, gain_ts,
+                ticks_since_gain, plateau_escalate_ticks, now,
+            )
+        except Exception:
+            ceiling = None
+
     # ---- toolbox lever board (the whole toolbox, materialized) -------------
     toolbox = None
     if toolbox_eval is not None:
@@ -271,6 +295,7 @@ def evaluate(state_dir, snaps_dir, cfg, doc, enabled_at_ts, enabled_at_tick, tic
             toolbox = toolbox_eval.compute(
                 state_dir, snaps_dir, yolo, doc, events, findings,
                 enabled_at_ts, posture, suppressed, redundancy_threshold, now,
+                ceiling=ceiling,
             )
         except Exception:
             toolbox = None
@@ -287,6 +312,22 @@ def evaluate(state_dir, snaps_dir, cfg, doc, enabled_at_ts, enabled_at_tick, tic
                 a = l.get("agent")
                 return f"{lever} ({a})" if a and a != "infra/skill" else lever
         return lever
+
+    def _structural_label(cand):
+        """'action → entry (why)' for a ceiling-probe structural candidate."""
+        if not cand:
+            return ""
+        act = cand.get("suggested_action") or "reshape"
+        tgt = (cand.get("proposed_entry") or cand.get("function")
+               or cand.get("engine_recommendation") or "?")
+        why = cand.get("why") or ""
+        return f"{act} → {tgt}" + (f" ({why})" if why else "")
+
+    # Plateau escalation ladder stage (computed once in ceiling_probe so the halt
+    # gate in compute_yolo_state agrees with us): 0 normal, 1 escalate structural,
+    # 2 pre-halt consult, 3 honest halt.
+    ladder_stage = (ceiling or {}).get("ladder_stage", 0)
+    rec_struct = (ceiling or {}).get("recommended_structural")
 
     # ---- suggested disposition (advisory, posture-aware) --------------------
     rec = (doc or {}).get("recommendation") or {}
@@ -312,7 +353,28 @@ def evaluate(state_dir, snaps_dir, cfg, doc, enabled_at_ts, enabled_at_tick, tic
         # self_loop default. A self-climbing fuzzer is NOT a reason to idle:
         # pursue the strategic toolbox in parallel. Only the hard cost halt
         # (handled above) forces a true wait.
-        if tunnel and suggested_lever:
+        #
+        # PLATEAU LADDER FIRST. A coverage plateau is NOT a stopping point — it's
+        # the cue to RESHAPE the harness (entry swap / new harness / mock) or switch
+        # the engine, and only park once those are exhausted AND a pre-halt consult
+        # returned nothing. This takes precedence over the generic toolbox flow,
+        # except that broken instrumentation (always top_lever) is fixed first.
+        if ladder_stage in (1, 2) and top_lever == "instrumentation":
+            disposition, rationale = "act", (
+                f"instrumentation broken — fix before breaking the ceiling "
+                f"('{_lever_label(top_lever)}')")
+        elif ladder_stage == 1 and rec_struct:
+            disposition, rationale = "act", (
+                f"plateau {ticks_since_gain} ticks: break the structural ceiling "
+                f"via {_structural_label(rec_struct)}")
+        elif ladder_stage == 2:
+            # One-shot pre-halt consult — throttle-exempt (a single ~Opus check is
+            # worth it before parking the whole campaign; reaching stage 3 then
+            # lets the honest halt fire).
+            disposition, rationale = "consult", (
+                "structural candidates exhausted; pre-halt consult before parking "
+                "(reshape avenues tried, coverage still flat)")
+        elif tunnel and suggested_lever:
             # Riding one lever family while others sit eligible — redirect to the
             # highest-priority neglected lever to force toolbox breadth.
             disposition, rationale = "act", f"tunnel vision (rode {(toolbox or {}).get('distinct_recent_families', 1)} lever family); switch to neglected lever '{suggested_lever}'"
@@ -367,7 +429,7 @@ def evaluate(state_dir, snaps_dir, cfg, doc, enabled_at_ts, enabled_at_tick, tic
         else:
             disposition, rationale = "act", f"act on '{branch}' ({branch_agent or 'infra'})"
 
-    return {
+    result = {
         "mode": mode,
         "aggressiveness": aggressiveness,
         "cost": {
@@ -392,6 +454,10 @@ def evaluate(state_dir, snaps_dir, cfg, doc, enabled_at_ts, enabled_at_tick, tic
         "rationale": rationale,
         "toolbox": toolbox,
     }
+    # Aggressive-only (keeps guided/balanced output byte-identical to pre-feature).
+    if ceiling is not None:
+        result["ceiling_probe"] = ceiling
+    return result
 
 
 # CLI for testing: evaluate against a written current.json + its campaign state.

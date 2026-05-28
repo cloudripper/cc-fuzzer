@@ -408,6 +408,28 @@ The single file the orchestrator reads on warm ticks. Schema is already document
         "docs": [{"path": "fuzz/docs/protocol.md", "mtime": 1779190000}],
         "changed_recently": false
       }
+    },
+    "ceiling_probe": {
+      "schema": "ceiling-probe/v1",
+      "harness": "sdbus-auth",
+      "plateau_active": true,
+      "ladder_stage": 1,
+      "is_real_ceiling": false,
+      "ticks_since_gain": 10,
+      "plateau_escalate_ticks": 8,
+      "structural_candidates": [
+        {"function": "bus_socket_auth_verify_server", "file": "src/bus-socket.c",
+         "why": "gap_harness_action", "suggested_action": "entry_swap",
+         "proposed_entry": "bus_socket_auth_verify_server", "mock_target": null,
+         "engine_recommendation": null, "source_ref": "g004"}
+      ],
+      "untried_candidates": ["…subset of structural_candidates not yet attempted…"],
+      "recommended_structural": {"suggested_action": "entry_swap", "proposed_entry": "bus_socket_auth_verify_server", "why": "gap_harness_action"},
+      "attempted_since_plateau": [],
+      "consult_since_plateau": false,
+      "engine_fit": {"current_engine": "libfuzzer", "cmplog_active": false, "redqueen_favoured_gaps": 4, "gap_mix_favors": "redqueen", "recommendation": "add_aflpp_cmplog_slot", "rationale": "4 checksum/format-barrier gap(s); engine libfuzzer, cmplog off"},
+      "dead_count": 5,
+      "summary": "plateau 10 ticks: 1 untried structural move(s); next = entry_swap → bus_socket_auth_verify_server"
     }
   }
 }
@@ -416,7 +438,9 @@ When `active=false` the orchestrator treats yolo as off (other fields may be abs
 
 **`evaluation`** (v0.18+, computed by `_lib/yolo_evaluate.py`) is the **advisory** dynamic-YOLO signal block — it never halts (the hard caps above own that). `posture` ∈ {`normal`, `throttle`, `halt`} engages Opus-throttling at `soft_cost_fraction` of `max_cost_usd` (unless `cost_cap_enabled` is `false`, in which case cost is not a constraint at all — posture stays `normal`, and the hard cost halt in `compute_yolo_state` is suppressed too). `agent_ledger[agent].suppressed` flags an agent that has been dispatched `≥ redundancy_threshold` times with no result (concolic → 0 inputs promoted; coverage agents → no weighted-coverage gain; triager → no new finding). `suggested_disposition` ∈ {`wait`, `act`, `consult`} and `suggested_wait_seconds` (adaptive backoff) are recommendations; how strictly the orchestrator follows them depends on `mode` (see the `yolo` config block). `aggressiveness` ∈ {`conservative`, `balanced`, `aggressive`} (defaults from `mode`; overridable) shapes the disposition: under `aggressive` a self-climbing fuzzer no longer forces `wait`, an empty/`sleep` gap-branch becomes `act` ("pursue strategic toolbox"), and `suggested_wait_seconds` does not compound across consecutive waits.
 
-**`toolbox`** (v0.19+, computed by `_lib/toolbox_eval.py`) is the **materialized lever board** — the whole known orchestrator toolbox computed deterministically each tick so the model doesn't tunnel-vision on the gap-closing agents the recommendation engine happens to surface. `eligible_levers[]` lists every actionable lever (`lever`, `agent`, `evidence`, `cost_tier` ∈ {cheap, haiku, sonnet, opus}, `idle_ticks`, `suppressed`, `affordable` [= not (`throttle` ∧ opus)]); ineligible levers are omitted to keep the block compact (`eligible_count` is the total). **`ranked_levers[]`** is those eligible levers ordered high→low by priority, and **`top_lever`** is the single highest-priority affordable, non-suppressed pick — the orchestrator's concrete default action every tick (populated whenever anything is eligible, unlike `suggested_lever` which only fires on neglect/tunnel). `neglected_levers[]` are eligible+affordable levers idle ≥3 ticks (opus levers drop out under `posture: throttle`). `tunnel_vision` is true when the last ≥3 *act* ticks rode ≤1 distinct lever family while ≥2 levers (or ≥1 neglected lever) were eligible; `suggested_lever` is the highest-priority neglected lever, and under `aggressive` the disposition is steered to `act` on it (or to `consult` if none is affordable). **`non_exhaustive` is always `true`**: the board is a floor, not a ceiling — it captures only deterministically-detectable moves. `references` reports operator steering (`fuzz/guidance.md`, `fuzz/docs/*`) with `changed_recently`, so the orchestrator re-reads it and pursues moves the catalog can't express. The lever set maps to the Action menu in `agents/fuzz-orchestrator.md`: instrumentation, coverage_reanalysis, seedgen, concolic, mutator, dictionary, harness_extend, cve_refresh, code_review, verification_fill, poc_build, poc_upgrade, plan_revise, slot_engine.
+**`toolbox`** (v0.19+, computed by `_lib/toolbox_eval.py`) is the **materialized lever board** — the whole known orchestrator toolbox computed deterministically each tick so the model doesn't tunnel-vision on the gap-closing agents the recommendation engine happens to surface. `eligible_levers[]` lists every actionable lever (`lever`, `agent`, `evidence`, `cost_tier` ∈ {cheap, haiku, sonnet, opus}, `idle_ticks`, `suppressed`, `affordable` [= not (`throttle` ∧ opus)]); ineligible levers are omitted to keep the block compact (`eligible_count` is the total). **`ranked_levers[]`** is those eligible levers ordered high→low by priority, and **`top_lever`** is the single highest-priority affordable, non-suppressed pick — the orchestrator's concrete default action every tick (populated whenever anything is eligible, unlike `suggested_lever` which only fires on neglect/tunnel). `neglected_levers[]` are eligible+affordable levers idle ≥3 ticks (opus levers drop out under `posture: throttle`). `tunnel_vision` is true when the last ≥3 *act* ticks rode ≤1 distinct lever family while ≥2 levers (or ≥1 neglected lever) were eligible; `suggested_lever` is the highest-priority neglected lever, and under `aggressive` the disposition is steered to `act` on it (or to `consult` if none is affordable). **`non_exhaustive` is always `true`**: the board is a floor, not a ceiling — it captures only deterministically-detectable moves. `references` reports operator steering (`fuzz/guidance.md`, `fuzz/docs/*`) with `changed_recently`, so the orchestrator re-reads it and pursues moves the catalog can't express. The lever set maps to the Action menu in `agents/fuzz-orchestrator.md`: instrumentation, coverage_reanalysis, seedgen, concolic, mutator, dictionary, harness_extend, **harness_rewrite, harness_new, mock_env, engine_swap** (the plateau-breaking levers, lit by the ceiling probe's `structural_candidates`/`engine_fit`), cve_refresh, code_review, verification_fill, poc_build, poc_upgrade, plan_revise, slot_engine.
+
+**`ceiling_probe`** (computed by `_lib/ceiling_probe.py`; present **only under `self_loop`/`aggressive`**, so guided/balanced `evaluation` output is unchanged) is the deterministic "is this a real coverage ceiling?" verdict that governs whether a plateau may halt. It cross-references the latest coverage snapshot's uncovered functions against gap `harness_action`s, code-review findings, CVE hotspots, and engine/gap-mix fit (`engine_fit`), minus anything tagged `dead`, to produce `structural_candidates[]` (each a concrete reshape: `entry_swap`/`new_harness`/`mock`/`driver`/`extend`/`engine_swap` with `proposed_entry`/`mock_target`). `ladder_stage` is the single source of truth for the **escalation ladder** that both the disposition layer and the halt gate read: **0** normal (climbing, or flat < `plateau_escalate_ticks`); **1** escalate (an untried `recommended_structural` exists → disposition `act`); **2** pre-halt consult (candidates attempted, no consult yet → disposition `consult`); **3** honest halt (consult ran, still flat → the `no_progress` halt is now permitted). `is_real_ceiling` is true only at stage 3. The full block is also written to `state/snapshots/ceiling-probe-<ts>.json` by `scripts/ceiling-probe.sh` for the pre-halt consult briefing.
 
 **`consult_state` block** (v0.18+) — signals whether a strategic check-in is due this tick:
 ```json
@@ -527,6 +551,7 @@ Toggled via `/cc-fuzzer:review [--deep] [--refresh] [--delta]`. Auto-runs at COL
   "max_ticks": 24,
   "max_cost_usd": 10.0,
   "stop_on_no_progress_ticks": 30,
+  "plateau_escalate_ticks": 8,
   "crash_storm_threshold": 10,
   "redundancy_threshold": 2,
   "soft_cost_fraction": 0.6,
@@ -547,7 +572,8 @@ Toggled via `/cc-fuzzer:review [--deep] [--refresh] [--delta]`. Auto-runs at COL
 - `interval_seconds` — base delay between auto-scheduled ticks (default 1800 = 30 min). Hard floor: 60s. Under `hybrid`/`self_loop` a `wait` disposition applies adaptive backoff up to `max_backoff_multiplier × interval_seconds` — except under `aggressiveness: aggressive`, where the backoff does not compound (stays at `interval_seconds`) so priorities never go stale across a long idle stretch.
 - `max_ticks` — hard tick cap (default 24 ≈ 12 hours at the 30-min interval). Counted from `enabled_at_tick`.
 - `max_cost_usd` — soft cost cap (default 10.0). Estimated from `events.jsonl:agent_call` token totals; not a billing source of truth. The hard halt fires at 100%.
-- `stop_on_no_progress_ticks` — halt after N consecutive zero-delta tick-coverage roundups (default 30 ≈ 15 hours stuck).
+- `stop_on_no_progress_ticks` — halt after N consecutive zero-delta tick-coverage roundups (default 30 ≈ 15 hours stuck). **Under `guided`/`balanced` this is a direct flat-count halt. Under `self_loop`/`aggressive` it is gated by the escalation ladder** (see `plateau_escalate_ticks` and `yolo_state.evaluation.ceiling_probe`): a plateau does not halt directly — it first triggers structural reshapes (rewrite entry / new harness / mock / engine swap) and a pre-halt consult, and the `no_progress` halt fires only when the ladder reaches stage 3 (avenues attempted AND a consult returned nothing). The honest `halt_reason` then names what was tried.
+- `plateau_escalate_ticks` — (`self_loop`) number of flat-coverage ticks before the reshape→consult→halt escalation ladder begins (default 8). Auto-clamped to `< stop_on_no_progress_ticks` by `yolo-state.sh enable`. Smaller = react to plateaus sooner; the ladder then runs structural moves while still flat, so the campaign keeps breaking through ceilings instead of idling to the no-progress cap.
 - `crash_storm_threshold` — halt when one interval yields ≥ N new findings (default 10).
 - `redundancy_threshold` — (hybrid/self_loop) suppress an agent after this many consecutive unproductive dispatches (default 2). Surfaced in `yolo_state.evaluation.agent_ledger`.
 - `soft_cost_fraction` — (hybrid/self_loop) fraction of `max_cost_usd` at which cost `posture` becomes `throttle`: prefer cheap/deterministic actions and defer Opus agents (default 0.6; default 0.8 when `aggressiveness: aggressive`, so strategic Opus levers stay available longer).
@@ -801,8 +827,11 @@ Produced by `coverage-analyst`. Shape:
 ```
 
 **Required gap fields**: id, file, function, line_range, reason, hint, recommended_agent.
+**Optional gap fields**: `harness_action`, `proposed_entry`, `mock_target` (additive; see below).
 **Allowed `reason` values**: `harness_gap | format_barrier | state_precondition | value_constraint | direct_compare | checksum_barrier | deep_path_condition | delta_target | cve_hotspot | code_review_target | dead`.
 **Allowed `recommended_agent` values**: `harness-writer | seed-generator | mutator | concolic-executor | none`.
+
+**`harness_action`** (optional, on `harness_gap` / `state_precondition` gaps) names *which* harness reshape reaches the gap, so the orchestrator's plateau-breaking levers dispatch the right structural move instead of a blind "extend": `extend` (grow the current body-walk) | `entry_swap` (rebuild against a different entry — set `proposed_entry`) | `new_harness` (a brand-new harness — set `proposed_entry`) | `mock` / `driver` (mock an external dependency — set `mock_target`) | `engine_swap` (the gap mix favours AFL++/Redqueen over libFuzzer). These flow into the ceiling-probe's `structural_candidates`. **Discipline**: a function unreachable by the *current* harness but reachable via a reshape is `harness_gap` + `harness_action`, **never** `dead` — `dead` means unreachable by ANY harness design (a true cleanup stub). Mis-tagging reshape-reachable surface as `dead` is what makes a `self_loop` campaign park prematurely.
 
 The `delta_target` reason marks gaps whose enclosing function appears in the latest `state/snapshots/delta-*.json` (recently-changed code per the user's chosen git range). It's a priority signal layered on top of the underlying root cause. Only assigned when a `delta-*.json` exists; absence of a delta artifact means delta weighting is disabled.
 
@@ -980,6 +1009,46 @@ Rendered by the `code-reviewer` Sonnet agent at the tail of the Tier-2 pass. The
 **Purpose framing**: this is a starting map for the fuzzer, NOT a security audit and NOT a checklist of bugs to verify. The findings are PATTERNS the campaign should investigate by directing the fuzzer at the flagged regions.
 
 **Lifecycle**: REWRITABLE, overwritten by every `code-reviewer` invocation. The structured JSON snapshot is the immutable record.
+
+### `state/snapshots/ceiling-probe-<ts>.json` — IMMUTABLE (self_loop plateau verdict)
+
+Produced by `scripts/ceiling-probe.sh` (→ `scripts/_lib/ceiling_probe.py`). Deterministic, no LLM. The "is this a real coverage ceiling?" verdict that decides whether a `self_loop` plateau may halt or must first escalate to structural reshapes. The same computation is folded into `current.json.yolo_state.evaluation.ceiling_probe` every tick by `update-current.sh` (via `yolo_evaluate`); this snapshot is the on-disk audit copy and the input the pre-halt `planner-consult` briefing reads.
+
+```json
+{
+  "schema": "ceiling-probe/v1",
+  "timestamp": 1779200000,
+  "harness": "sdbus-auth",
+  "plateau_active": true,
+  "ladder_stage": 1,
+  "is_real_ceiling": false,
+  "ticks_since_gain": 10,
+  "plateau_escalate_ticks": 8,
+  "structural_candidates": [
+    {"function": "bus_socket_auth_verify_server", "file": "src/bus-socket.c",
+     "why": "gap_harness_action", "suggested_action": "entry_swap",
+     "proposed_entry": "bus_socket_auth_verify_server", "mock_target": null,
+     "engine_recommendation": null, "source_ref": "g004"}
+  ],
+  "untried_candidates": [ "…subset of structural_candidates…" ],
+  "recommended_structural": {"suggested_action": "entry_swap", "proposed_entry": "bus_socket_auth_verify_server", "why": "gap_harness_action"},
+  "attempted_since_plateau": [],
+  "harness_writer_dispatches_since_plateau": 0,
+  "consult_since_plateau": false,
+  "engine_fit": {"current_engine": "libfuzzer", "cmplog_active": false, "redqueen_favoured_gaps": 4,
+                 "gap_mix_favors": "redqueen", "recommendation": "add_aflpp_cmplog_slot",
+                 "rationale": "4 checksum/format-barrier gap(s); engine libfuzzer, cmplog off"},
+  "dead_count": 5,
+  "summary": "plateau 10 ticks: 1 untried structural move(s); next = entry_swap → bus_socket_auth_verify_server"
+}
+```
+
+**Required**: schema, ladder_stage, is_real_ceiling, structural_candidates, engine_fit, summary. All other fields optional (validated lenient).
+
+- **`ladder_stage`** — the escalation-ladder state, the single source of truth both `yolo_evaluate` (disposition) and `compute_yolo_state` (halt gate) read so they never disagree: **0** normal · **1** escalate (take `recommended_structural`) · **2** pre-halt consult · **3** honest halt permitted.
+- **`structural_candidates[].suggested_action`** ∈ `entry_swap | new_harness | mock | driver | extend | engine_swap`; `why` ∈ `gap_harness_action | code_review | cve_hotspot | uncovered_interesting`. Built from uncovered functions (coverage snapshot `top_unreached_functions`) minus `dead`, annotated with gap `harness_action`s, code-review high/medium findings, and CVE hotspots.
+- **`engine_fit.recommendation`** — `add_aflpp_cmplog_slot` when the gap mix is checksum/compare-heavy and cmplog is inactive (else `null`); drives the `engine_swap` candidate + the `slot_engine`/engine lever.
+- **`attempted_since_plateau`** / **`consult_since_plateau`** — derived from `events.jsonl` since the last coverage gain (harness-writer dispatches + `structural:<action>:<entry>` tick reasons; planner-consult dispatches). These advance the ladder toward stage 3.
 
 ### `state/snapshots/code-review-prescan-<ts>.json` — IMMUTABLE (v0.18 Tier-1 output)
 

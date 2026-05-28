@@ -42,6 +42,10 @@ COST_TIER = {
     "mutator":              "haiku",
     "dictionary":           "cheap",
     "harness_extend":       "sonnet",
+    "harness_rewrite":      "sonnet",
+    "harness_new":          "sonnet",
+    "mock_env":             "sonnet",
+    "engine_swap":          "sonnet",
     "cve_refresh":          "sonnet",
     "code_review":          "sonnet",
     "verification_fill":    "opus",
@@ -60,6 +64,10 @@ LEVER_AGENT = {
     "concolic":             "concolic-executor",
     "mutator":              "mutator",
     "harness_extend":       "harness-writer",
+    "harness_rewrite":      "harness-writer",
+    "harness_new":          "harness-writer",
+    "mock_env":             "harness-writer",
+    "engine_swap":          "harness-writer",
     "verification_fill":    "crash-triager",
     "poc_build":            "poc-builder",
     "poc_upgrade":          "poc-builder",
@@ -76,6 +84,11 @@ BRANCH_LEVER = {
     "mutator":          "mutator",
     "triage":           "verification_fill",
     "harness":          "harness_extend",
+    "harness_rewrite":  "harness_rewrite",
+    "harness_new":      "harness_new",
+    "mock_env":         "mock_env",
+    "engine_swap":      "engine_swap",
+    "slot_engine":      "slot_engine",
     "refresh_cve":      "cve_refresh",
     "review":           "code_review",
     "poc":              "poc_build",
@@ -90,6 +103,7 @@ BRANCH_LEVER = {
 # eligible lever to anchor each tick on (independent of neglect/tunnel).
 SUGGEST_PRIORITY = [
     "instrumentation", "poc_build", "poc_upgrade", "verification_fill",
+    "harness_rewrite", "harness_new", "mock_env", "engine_swap",
     "harness_extend", "coverage_reanalysis", "concolic", "seedgen", "mutator",
     "cve_refresh", "code_review", "plan_revise", "dictionary", "slot_engine",
 ]
@@ -174,9 +188,14 @@ def _weak_poc(f, n_confirmed):
 
 
 def compute(state_dir, snaps_dir, cfg, doc, events, findings,
-            enabled_at_ts, posture, suppressed, redundancy_threshold, now):
+            enabled_at_ts, posture, suppressed, redundancy_threshold, now,
+            ceiling=None):
     """Build the `evaluation.toolbox` block. Inputs are the same ones
-    yolo_evaluate already has in hand, so this is cheap."""
+    yolo_evaluate already has in hand, so this is cheap. `ceiling` is the
+    ceiling-probe block (ceiling_probe.compute) — when present, its
+    `structural_candidates` light up the plateau-breaking levers
+    (harness_rewrite / harness_new / mock_env / engine_swap) so a coverage
+    plateau hands the orchestrator a concrete reshape to take instead of parking."""
     fuzz_dir = os.path.dirname(os.path.abspath(state_dir))   # .../fuzz
     gaps = (doc or {}).get("gaps") or {}
     harness = (doc or {}).get("harness") or {}
@@ -274,6 +293,29 @@ def compute(state_dir, snaps_dir, cfg, doc, events, findings,
         "fresh cmplog dict vs active — review for new operands")
     add("harness_extend", (gaps.get("for_harness", 0) or 0) > 0,
         f"for_harness={gaps.get('for_harness', 0)} (also check uncovered CVE hotspots)")
+
+    # Plateau-breaking structural levers — eligible when the ceiling-probe surfaces
+    # an UNTRIED candidate of the matching action. These express the moves the gap
+    # engine can't (entry swap / new harness / mock / engine change); on a plateau
+    # the disposition ladder forces one of them instead of parking. A probe `extend`
+    # candidate is already covered by `harness_extend` above, so it isn't re-levered.
+    _cands = (ceiling or {}).get("untried_candidates") or []
+    _actions = {c.get("suggested_action") for c in _cands}
+
+    def _struct_evi(action):
+        cs = [c for c in _cands if c.get("suggested_action") == action]
+        c0 = cs[0] if cs else {}
+        tgt = (c0.get("proposed_entry") or c0.get("function")
+               or c0.get("engine_recommendation") or "?")
+        extra = f" (+{len(cs) - 1} more)" if len(cs) > 1 else ""
+        return f"{action} → {tgt}{extra} [{c0.get('why')}]"
+
+    add("harness_rewrite", "entry_swap" in _actions, _struct_evi("entry_swap"))
+    add("harness_new", "new_harness" in _actions, _struct_evi("new_harness"))
+    add("mock_env", ("mock" in _actions or "driver" in _actions),
+        _struct_evi("mock" if "mock" in _actions else "driver"))
+    add("engine_swap", "engine_swap" in _actions,
+        ((ceiling or {}).get("engine_fit") or {}).get("rationale", "engine fit favours a change"))
     add("cve_refresh", cve_enabled and (not cve_latest or (now - cve_ts) > cve_ttl_days * 86400),
         "no CVE intel" if not cve_latest else f"CVE intel {int((now - cve_ts) / 86400)}d old (ttl {cve_ttl_days}d)")
     add("code_review", cr_enabled and bool(target_source) and not os.path.exists(code_review_md),

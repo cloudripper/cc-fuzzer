@@ -185,7 +185,8 @@ sonnet_rec = {
 # Lets the consult reason about strategic lever choice when gaps are exhausted.
 # Compact: drop the per-lever agent label (the consult names levers, not agents)
 # and keep it to short fields so the briefing stays ~1 KB.
-_toolbox = ((current.get("yolo_state") or {}).get("evaluation") or {}).get("toolbox") or {}
+_eval = (current.get("yolo_state") or {}).get("evaluation") or {}
+_toolbox = _eval.get("toolbox") or {}
 toolbox_brief = {}
 if _toolbox:
     toolbox_brief = {
@@ -204,6 +205,28 @@ if _toolbox:
             }
             for l in (_toolbox.get("eligible_levers") or [])
         ],
+    }
+
+# --- Ceiling probe (self_loop only): the pre-halt consult's most important input.
+# When ladder_stage == 2 the campaign plateaued, exhausted its structural reshapes,
+# and this consult is the last gate before it parks. Surface what was tried + what
+# surface remains so the consult can find a move the deterministic ladder couldn't.
+_ceiling = _eval.get("ceiling_probe") or {}
+ceiling_brief = {}
+if _ceiling:
+    ceiling_brief = {
+        "ladder_stage": _ceiling.get("ladder_stage"),
+        "is_real_ceiling": _ceiling.get("is_real_ceiling"),
+        "ticks_since_gain": _ceiling.get("ticks_since_gain"),
+        "summary": _ceiling.get("summary"),
+        "attempted_since_plateau": _ceiling.get("attempted_since_plateau") or [],
+        "untried_candidates": [
+            {"function": c.get("function"), "suggested_action": c.get("suggested_action"),
+             "proposed_entry": c.get("proposed_entry"), "why": c.get("why")}
+            for c in (_ceiling.get("untried_candidates") or [])
+        ][:6],
+        "engine_fit": _ceiling.get("engine_fit") or {},
+        "dead_count": _ceiling.get("dead_count"),
     }
 
 briefing = {
@@ -232,6 +255,7 @@ briefing = {
     },
     "sonnet_recommendation": sonnet_rec,
     "toolbox": toolbox_brief,
+    "ceiling": ceiling_brief,
 }
 
 with open(out_file, "w") as f:

@@ -68,6 +68,9 @@
 #   max_ticks:                   24
 #   max_cost_usd:                10.0
 #   stop_on_no_progress_ticks:   30
+#   plateau_escalate_ticks:      8  (self_loop: flat ticks before the reshape→
+#                                    consult→halt escalation ladder begins;
+#                                    clamped to < stop_on_no_progress_ticks)
 #   crash_storm_threshold:       10
 #   redundancy_threshold:        2
 #   soft_cost_fraction:          0.6 (0.8 when aggressiveness=aggressive)
@@ -93,6 +96,7 @@ DEFAULT_CRASH_STORM=10
 DEFAULT_REDUNDANCY=2
 DEFAULT_SOFT_COST=0.6
 DEFAULT_MAX_BACKOFF=4
+DEFAULT_PLATEAU_ESCALATE=8
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -161,7 +165,7 @@ except: print(0)
 _cmd_enable() {
   _ensure_config
   local mode="" aggressiveness="" interval="" max_ticks="" max_cost="" stop_no_prog="" crash_storm=""
-  local redundancy="" soft_cost="" max_backoff="" cost_cap=""
+  local redundancy="" soft_cost="" max_backoff="" cost_cap="" plateau_esc=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --mode)                   mode="${2:-}";        shift 2 ;;
@@ -176,6 +180,7 @@ _cmd_enable() {
       --redundancy-threshold)   redundancy="${2:-}";  shift 2 ;;
       --soft-cost-fraction)     soft_cost="${2:-}";   shift 2 ;;
       --max-backoff-multiplier) max_backoff="${2:-}"; shift 2 ;;
+      --plateau-escalate-ticks) plateau_esc="${2:-}"; shift 2 ;;
       *) echo "ERROR: enable: unknown arg '$1'" >&2; exit 2 ;;
     esac
   done
@@ -199,11 +204,13 @@ _cmd_enable() {
   MODE="$mode" AGGR="$aggressiveness" COST_CAP="$cost_cap" INTERVAL="$interval" MAX_TICKS="$max_ticks" MAX_COST="$max_cost" \
   STOP_NO_PROG="$stop_no_prog" CRASH_STORM="$crash_storm" \
   REDUNDANCY="$redundancy" SOFT_COST="$soft_cost" MAX_BACKOFF="$max_backoff" \
+  PLATEAU_ESC="$plateau_esc" \
   NOW="$now" TICK="$tick" \
   DEF_MODE="$DEFAULT_MODE" DEF_INTERVAL="$DEFAULT_INTERVAL" DEF_MAX_TICKS="$DEFAULT_MAX_TICKS" \
   DEF_MAX_COST="$DEFAULT_MAX_COST" DEF_STOP_NO_PROG="$DEFAULT_STOP_NO_PROGRESS" \
   DEF_CRASH_STORM="$DEFAULT_CRASH_STORM" DEF_REDUNDANCY="$DEFAULT_REDUNDANCY" \
   DEF_SOFT_COST="$DEFAULT_SOFT_COST" DEF_MAX_BACKOFF="$DEFAULT_MAX_BACKOFF" \
+  DEF_PLATEAU_ESC="$DEFAULT_PLATEAU_ESCALATE" \
   CFG="$CFG_FILE" \
   python3 - <<'PY'
 import json, os
@@ -255,6 +262,11 @@ _override("crash_storm_threshold",    "CRASH_STORM",  os.environ["DEF_CRASH_STOR
 _override("redundancy_threshold",     "REDUNDANCY",   os.environ["DEF_REDUNDANCY"],   int)
 _override("soft_cost_fraction",       "SOFT_COST",    _soft_default,                  float)
 _override("max_backoff_multiplier",   "MAX_BACKOFF",  os.environ["DEF_MAX_BACKOFF"],  int)
+# plateau_escalate_ticks: flat-coverage ticks before the self_loop escalation ladder
+# (reshape → consult → halt) kicks in. Must be < stop_on_no_progress_ticks; clamp.
+_override("plateau_escalate_ticks",   "PLATEAU_ESC",  os.environ["DEF_PLATEAU_ESC"],  int)
+if yolo["plateau_escalate_ticks"] >= yolo["stop_on_no_progress_ticks"]:
+    yolo["plateau_escalate_ticks"] = max(1, yolo["stop_on_no_progress_ticks"] - 1)
 
 yolo["enabled"]         = True
 yolo["enabled_at_ts"]   = int(os.environ["NOW"])
@@ -274,6 +286,7 @@ print(f"yolo enabled mode={yolo['mode']} aggressiveness={yolo['aggressiveness']}
       f"max_ticks={yolo['max_ticks']} "
       f"max_cost=${yolo['max_cost_usd']:.2f} "
       f"stop_on_no_progress={yolo['stop_on_no_progress_ticks']} "
+      f"plateau_escalate={yolo['plateau_escalate_ticks']} "
       f"redundancy={yolo['redundancy_threshold']} "
       f"soft_cost={yolo['soft_cost_fraction']} "
       f"cost_cap={'on' if yolo.get('cost_cap_enabled', True) else 'OFF'}")
@@ -340,6 +353,7 @@ else:
         print(f"  max_ticks:                {y.get('max_ticks', '?')}")
         print(f"  max_cost_usd:             ${y.get('max_cost_usd', 0):.2f}")
         print(f"  stop_on_no_progress:      {y.get('stop_on_no_progress_ticks', '?')} ticks")
+        print(f"  plateau_escalate:         {y.get('plateau_escalate_ticks', 8)} ticks (self_loop reshape→consult→halt ladder)")
         print(f"  crash_storm_threshold:    {y.get('crash_storm_threshold', '?')} findings/tick")
         print(f"  redundancy_threshold:     {y.get('redundancy_threshold', 2)} unproductive dispatches")
         _cap = y.get('cost_cap_enabled', True)
