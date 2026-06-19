@@ -27,13 +27,22 @@
 # Usage:
 #   scripts/code-review-run.sh \\
 #       [--target-root <path>] \\
-#       [--max-functions <N>] \\
+#       [--max-functions <N>|all] \\
+#       [--sweep]              (review EVERY function: max-functions=all, mode=sweep)
+#       [--batch-size <S>]     (reviewer window size; default 30)
 #       [--excluded-paths <comma-list>] \\
 #       [--refresh]   (ignore stale-source-hash check)
 #       [--no-cve-context]   (skip cross-linking the latest cve-context)
 #
+#   scripts/code-review-run.sh merge-code-review \\
+#       --prescan <prescan.json> --out <code-review-<ts>.json> --md <code-review.md> \\
+#       [--target <name>] -- <window-partial.json> [<window-partial.json> ...]
+#
+# The prescan run prints a machine-readable plan line the caller parses:
+#   BATCH_PLAN windows=<n> batch_size=<S> candidates=<c> mode=<capped|sweep>
+#
 # Exit codes:
-#   0  prescan ran (or was skipped because already-fresh)
+#   0  prescan ran (or was skipped because already-fresh) / merge succeeded
 #   2  bad arguments or no target source available
 
 set -u
@@ -45,16 +54,30 @@ STATE_DIR="${FUZZ_STATE_DIR:-$FUZZ_ROOT/state}"
 SNAPSHOTS_DIR="$STATE_DIR/snapshots"
 mkdir -p "$STATE_DIR" "$SNAPSHOTS_DIR"
 
+# ---------------------------------------------------------------------------
+# Subcommand: merge-code-review — combine window partials into the canonical
+# snapshot + markdown (delegates to _lib/code_review_merge.py). The caller
+# passes through all the merge flags after the subcommand verb.
+# ---------------------------------------------------------------------------
+if [ "${1:-}" = "merge-code-review" ]; then
+  shift
+  exec python3 "$SCRIPT_DIR/_lib/code_review_merge.py" "$@"
+fi
+
 CLI_TARGET_ROOT=""
 CLI_MAX=""
 CLI_EXCLUDES=""
 CLI_REFRESH=false
 CLI_NO_CVE=false
+CLI_SWEEP=false
+CLI_BATCH_SIZE=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --target-root)    CLI_TARGET_ROOT="${2:-}";  shift 2 ;;
     --max-functions)  CLI_MAX="${2:-}";          shift 2 ;;
+    --sweep)          CLI_SWEEP=true;            shift ;;
+    --batch-size)     CLI_BATCH_SIZE="${2:-}";   shift 2 ;;
     --excluded-paths) CLI_EXCLUDES="${2:-}";     shift 2 ;;
     --refresh)        CLI_REFRESH=true;          shift ;;
     --no-cve-context) CLI_NO_CVE=true;           shift ;;
@@ -62,6 +85,13 @@ while [ $# -gt 0 ]; do
     *) echo "ERROR: unknown arg '$1'" >&2; exit 2 ;;
   esac
 done
+
+# --sweep is sugar for --max-functions all. Explicit --max-functions wins only
+# if --sweep was NOT passed (sweep is the stronger intent).
+if [ "$CLI_SWEEP" = "true" ]; then
+  CLI_MAX="all"
+fi
+BATCH_SIZE="${CLI_BATCH_SIZE:-30}"
 
 # ---------------------------------------------------------------------------
 # Resolve config defaults
@@ -161,13 +191,32 @@ if ! python3 "$SCRIPT_DIR/_lib/code_review_prescan.py" "${PRESCAN_ARGS[@]}" >/de
   exit 2
 fi
 
-# Summary for the caller
-TOP_COUNT=$(python3 -c "
+# Summary for the caller. Read scope back from the prescan so mode/candidates
+# come from the authoritative artifact rather than re-deriving here.
+{ read -r TOP_COUNT
+  read -r SCAN_MODE
+} <<< "$(python3 -c "
 import json
 d = json.load(open('$PRESCAN_OUT'))
-print(len(d.get('top_candidates') or []))
-" 2>/dev/null)
+scope = d.get('scope') or {}
+print(scope.get('candidates_selected', len(d.get('top_candidates') or [])))
+print(scope.get('mode', 'capped'))
+" 2>/dev/null)"
+TOP_COUNT="${TOP_COUNT:-0}"
+SCAN_MODE="${SCAN_MODE:-capped}"
 
-echo "[code-review] prescan complete: $TOP_COUNT top-candidate function(s)" >&2
+# Window plan: ceil(candidates / batch_size). Capped mode reviews in one window
+# of the cap; sweep mode fans the full ranked list across ceil(N/batch) windows.
+NUM_WINDOWS=$(python3 -c "
+import math
+c = int('$TOP_COUNT' or 0)
+b = int('$BATCH_SIZE' or 30)
+print(0 if c == 0 else math.ceil(c / b))
+" 2>/dev/null)
+NUM_WINDOWS="${NUM_WINDOWS:-1}"
+
+echo "[code-review] prescan complete: $TOP_COUNT candidate function(s), mode=$SCAN_MODE" >&2
+# Machine-readable plan the skill parses to drive the windowed reviewer dispatch.
+echo "BATCH_PLAN windows=$NUM_WINDOWS batch_size=$BATCH_SIZE candidates=$TOP_COUNT mode=$SCAN_MODE"
 echo "READY: $PRESCAN_OUT"
 exit 0

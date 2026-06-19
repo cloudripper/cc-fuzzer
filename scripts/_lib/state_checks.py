@@ -448,12 +448,34 @@ def cmd_code_review():
         print(f"{os.path.basename(file)}: parse error: {e}")
         return
 
+    base = os.path.basename(file)
+
+    # Loud-coverage scope fields (windowing contract). Validate leniently:
+    # present-and-wrong is an error, absent is fine (window partials and older
+    # snapshots may omit them). `mode` must be a CR_REVIEW_MODE member; the
+    # counts must be ints; coverage_complete must be a bool.
+    scope = doc.get("scope")
+    if isinstance(scope, dict):
+        smode = scope.get("mode")
+        if smode is not None and smode not in enums.CR_REVIEW_MODE:
+            print(f"{base}: scope.mode '{smode}' invalid "
+                  f"(expected one of {sorted(enums.CR_REVIEW_MODE)})")
+        for k in ("functions_inventoried", "candidates_reviewed", "not_reviewed"):
+            v = scope.get(k)
+            if v is not None and not isinstance(v, int):
+                print(f"{base}: scope.{k} must be an int, got {type(v).__name__}")
+        cc = scope.get("coverage_complete")
+        if cc is not None and not isinstance(cc, bool):
+            print(f"{base}: scope.coverage_complete must be a boolean, got {type(cc).__name__}")
+
     findings = doc.get("findings")
     if findings is None:
-        # top-level validate-json already flags a missing required field
+        # top-level validate-json already flags a missing required field. A
+        # window-partial that hasn't been merged yet may legitimately have no
+        # findings; that's handled by the merge step, not flagged here.
         return
     if not isinstance(findings, list):
-        print(f"{os.path.basename(file)}: findings must be a list")
+        print(f"{base}: findings must be a list")
         return
 
     required = {"id", "cr_hash", "status", "file", "function", "line_range",
@@ -463,7 +485,6 @@ def cmd_code_review():
     # check required presence + enum membership.
     HEX16 = re.compile(r"^[0-9a-f]{16}$")
     ID_RE = re.compile(r"^cr[0-9]{3,}$")
-    base = os.path.basename(file)
 
     for i, f in enumerate(findings):
         if not isinstance(f, dict):

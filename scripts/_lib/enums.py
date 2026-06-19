@@ -65,6 +65,10 @@ FINDING_SOURCE = frozenset({"crash", "code_review"})
 # a separate boolean flag (see HARNESS .md fix); every finding has a real
 # confidence so it stays importable.
 CONFIDENCE = frozenset({"high", "medium", "low"})
+# code-review prescan + snapshot `scope.mode` — the review-coverage posture.
+# `capped` = top-N candidates (default per-tick, cost-disciplined); `sweep` =
+# every inventoried function reviewed via batched reviewer dispatch.
+CR_REVIEW_MODE = frozenset({"capped", "sweep"})
 
 # ---------------------------------------------------------------------------
 # Oracle vocabulary
@@ -210,6 +214,7 @@ _REGISTRY = {
     "cr_status": CR_STATUS,
     "finding_source": FINDING_SOURCE,
     "confidence": CONFIDENCE,
+    "cr_review_mode": CR_REVIEW_MODE,
     "oracle_type": ORACLE_TYPE,
     "oracle_kind": ORACLE_KIND,
     "high_impact_oracle_kinds": HIGH_IMPACT_ORACLE_KINDS,
@@ -250,6 +255,7 @@ _DOC_MIRRORS = {
     "finding_status": "FINDING_STATUS",
     "oracle_type": "ORACLE_TYPE",
     "oracle_kind": "ORACLE_KIND",
+    "cr_review_mode": "CR_REVIEW_MODE",
 }
 
 

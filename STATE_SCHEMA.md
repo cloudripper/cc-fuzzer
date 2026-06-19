@@ -1102,6 +1102,10 @@ Produced by `scripts/_lib/code_review_prescan.py` (invoked via `scripts/code-rev
     "files_scanned": 47,
     "functions_inventoried": 312,
     "loc_total": 28453,
+    "mode": "capped",
+    "cap": 50,
+    "candidates_selected": 50,
+    "not_selected": 262,
     "excluded_paths": ["tests/", "docs/", ...],
     "cve_context_consumed": "fuzz/state/snapshots/cve-context-1779100000.json",
     "recently_changed_files": 18
@@ -1129,6 +1133,18 @@ Produced by `scripts/_lib/code_review_prescan.py` (invoked via `scripts/code-rev
 **Required fields**: schema, ts, target_root, scope, top_candidates.
 **Optional fields**: full_inventory_summary.
 
+**Windowing contract / loud coverage disclosure (v0.30).** `scope` carries the review-coverage posture so every stage (prescan → run-script → reviewer → merge) agrees on how much was selected and how much was deliberately left out:
+- **`mode`** — one of `enums.py` `CR_REVIEW_MODE` = `capped | sweep`. `capped` is the default per-tick posture (top-N candidates, cost-disciplined); `sweep` reviews EVERY inventoried function via batched reviewer dispatch.
+- **`cap`** — the integer cap in capped mode, `null` in sweep.
+- **`candidates_selected`** — `len(top_candidates)`. In sweep this equals `functions_inventoried` and `top_candidates` is the FULL deterministically-ranked inventory (stable sort: `-suspicion_score, -loc, file, name, line_start`). In capped it is `min(cap, functions_inventoried)`.
+- **`not_selected`** — `functions_inventoried - candidates_selected` (functions ranked out of the candidate list).
+
+`--max-functions` accepts an int OR the string `all` (and treats `0` as `all`); negatives are rejected. Internally `all`/`0` ⇒ unlimited (sweep).
+
+### `state/snapshots/code-review-<ts>-w<NN>.json` — IMMUTABLE (v0.30 sweep window partial)
+
+A PARTIAL code-review snapshot scoped to one reviewer window. The sweep flow fans `top_candidates[start:start+batch_size]` across `ceil(candidates_selected / batch_size)` windows; each `code-reviewer` dispatch writes one `code-review-<ts>-w<NN>.json` covering its slice and does NOT write the consolidated markdown (the merge step owns that). Schema is `code-review/v1` but a partial need only carry `ts`, `scope` (window-scoped, with an honest per-window `candidates_reviewed`), and `findings`; `focus_areas` is optional on a partial. `scripts/_lib/code_review_merge.py` (via `code-review-run.sh merge-code-review`) consolidates all partials into the canonical `code-review-<ts>.json`: dedup findings by `cr_hash`, reassign stable `cr<NNN>` ids in `cr_hash` order, aggregate scope, and write the loud markdown. Single-window (capped) mode produces one partial the merge passes through trivially. Validated leniently (no required `focus_areas`).
+
 ### `state/snapshots/code-review-<ts>.json` — IMMUTABLE (v0.18 code-review output)
 
 Produced by the `code-reviewer` agent (Tier-2 Sonnet pass; Tier-3 Opus deep pass merges into this same file).
@@ -1143,6 +1159,9 @@ Produced by the `code-reviewer` agent (Tier-2 Sonnet pass; Tier-3 Opus deep pass
     "functions_inventoried": 312,
     "loc_total": 28453,
     "candidates_reviewed": 50,
+    "not_reviewed": 262,
+    "coverage_complete": false,
+    "mode": "capped",
     "excluded_paths": ["tests/", "docs/", ...]
   },
   "tiers_run": ["prescan", "sonnet"],
@@ -1189,6 +1208,14 @@ Produced by the `code-reviewer` agent (Tier-2 Sonnet pass; Tier-3 Opus deep pass
 
 **Required fields**: schema, ts, target, scope, tiers_run, findings, focus_areas.
 **Optional fields**: model_costs, revisit_passes.
+
+**Loud coverage disclosure (v0.30).** `scope` carries the same coverage posture the markdown header surfaces, written by the merge step (`code_review_merge.py`) so a capped review can never read as a complete audit:
+- **`mode`** — `capped | sweep` (`enums.py` `CR_REVIEW_MODE`), carried from the prescan.
+- **`candidates_reviewed`** — sum of each window partial's honest per-window `candidates_reviewed`. Even in sweep, if a window under-reviews (token budget within a window), this reflects it.
+- **`not_reviewed`** — `functions_inventoried - candidates_reviewed`.
+- **`coverage_complete`** — `(mode == "sweep" and not_reviewed == 0)`. True ONLY when a sweep reviewed every inventoried function. Capped reviews (and under-reviewed sweeps) are always `false`.
+
+The markdown `code-review.md` header (written by the merge step) is LOUD in both modes. When `coverage_complete` is false it prints `⚠ COVERAGE: reviewed <candidates_reviewed> of <functions_inventoried> functions (<pct>%). <not_reviewed> functions were NOT reviewed. This is a capped starting map, not a complete audit — re-run /cc-fuzzer:fuzz-review --sweep for full coverage.`; when true it prints `✓ COVERAGE: swept all <functions_inventoried> functions.` `campaign-header.sh` surfaces a one-line `code-review:` digest each tick so the orchestrator sees partial coverage.
 
 **`revisit_passes`** (optional, append-only) — a lightweight log of each adversarial *revisit* the Opus deep pass (`code-reviewer-deep`) ran against this snapshot. A revisit treats the prior findings as PRIORS, not a closed/complete set: it ingests current campaign learnings (coverage gaps, fuzzer-reached vs unreached code, confirmed/dismissed findings, poc-builder verdicts, cmplog evidence, orchestrator-passed context) and hunts for NEW issues under a rotated creative lens — it does not merely re-confirm or re-score the existing list. Each entry: `{pass_n (1-based), ts, lens, learnings_used (short string), new_finding_count}`. The `lens` rotates between **broad** focus (`broad:invariant` system-wide invariants, `broad:stateful` cross-function/stateful sequences, `broad:trust_boundary` trust/privilege boundaries, `broad:protocol` multi-step protocol/state-machine misuse, `broad:differential` metamorphic/differential reasoning) and **narrow** focus (`narrow:frontier` functions at the coverage frontier, `narrow:near_confirmed` code near confirmed/dismissed findings, `narrow:fuzzer_stall` the exact spots the fuzzer keeps bouncing off). Successive revisits READ this list to see which lenses were already tried and pick an under-used one. The point is logic bugs (lead with `oracle_kind` / `trust_boundary_crossed`), not just memory corruption. `cr_hash` dedup keeps a known finding's identity/status stable across revisits, but it MUST NOT suppress discovery — a revisit's value is its *additive* new candidates.
 

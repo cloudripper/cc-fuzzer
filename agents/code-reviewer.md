@@ -44,9 +44,25 @@ The code review runs **once per campaign**, not per harness. The target source i
 
 If invoked mid-campaign for a new harness via `/fuzz-review --refresh`, write a fresh review (the timestamp suffix distinguishes it from prior runs). The old file is NOT archived — there is no archival policy for `code-review.md`; the latest is canonical.
 
+## Window mode (batched dispatch — read this first)
+
+You are dispatched over a WINDOW of the prescan's `top_candidates`, not the whole list. The skill passes:
+
+- `--window-start <i>` (default `0`) and `--window-count <S>` (default = all remaining). You review ONLY `top_candidates[start : start+count]`.
+- In the default capped review this is a single window covering the whole cap (start 0, count = cap), so behavior is unchanged. In a `--sweep` the skill fans the full ranked inventory across `ceil(candidates_selected / batch_size)` windows and dispatches you once per window.
+
+In window mode you write a **PARTIAL** snapshot, not the canonical files:
+
+- Write `fuzz/state/snapshots/code-review-<ts>-w<NN>.json` where `<ts>` is the prescan's `ts` (so all windows of one review share a timestamp) and `<NN>` is the zero-padded window index (`w00`, `w01`, …). This partial is scoped to YOUR window's candidates only.
+- The partial carries `ts`, a window-scoped `scope` with an HONEST `candidates_reviewed` (the count YOU actually reviewed — if your token budget ran out mid-window, report the truth, do not claim the full window), and `findings`. `focus_areas` is optional on a partial (the merge re-derives them); include it if cheap.
+- **Do NOT write `code-review.md`** and do NOT write the canonical `code-review-<ts>.json` — the merge step (`code-review-run.sh merge-code-review`) consolidates all partials, dedups by `cr_hash`, reassigns stable `cr<NNN>` ids, aggregates scope, and writes the loud markdown. A single-window (capped) review still produces one partial that the merge trivially passes through.
+- Allocate `cr<NNN>` ids locally within your window (the merge reassigns them globally); keep `cr_hash` honest (it is the dedup key across windows AND across runs).
+
+Everything below (per-candidate workflow, oracle classification, dedup, output schema) applies WITHIN your window.
+
 ## Inputs (read in this order)
 
-1. **Prescan output** — `fuzz/state/snapshots/code-review-prescan-<ts>.json`, path passed via `--prescan <path>`. Besides `top_candidates`, it carries `oracle_candidates` (inverse function pairs and validation/auth gates found by name heuristic) — your starting point for the semantic lens below.
+1. **Prescan output** — `fuzz/state/snapshots/code-review-prescan-<ts>.json`, path passed via `--prescan <path>`. Besides `top_candidates`, it carries `oracle_candidates` (inverse function pairs and validation/auth gates found by name heuristic) — your starting point for the semantic lens below. The prescan's `scope.mode` (`capped`/`sweep`) and `scope.candidates_selected` tell you whether you're in a sweep; review only your window's slice of `top_candidates`.
 2. **`${CLAUDE_PLUGIN_ROOT}/references/logic-oracle-patterns.md`** — MANDATORY. The catalog of logic-bug shapes (authorization/ACL bypass, topic/namespace remap, auth-state confusion, cross-tenant exposure, integrity-write primitives via data channels, trusted-input assumptions, empty-prefix/-suffix/length-zero bypass, length-of-zero accept-then-trust). Load it at the start of every dispatch. You walk every pattern against the target. See **"Logic-oracle dimension (mandatory)"** below.
 3. **`${CLAUDE_PLUGIN_ROOT}/references/threat-model.md`** — the trust-boundary taxonomy. You cite a boundary on every non-memory finding; this is the vocabulary.
 4. **Natural-language guidance** — when the user invoked `/fuzz-review <text>`, the text is passed to you via `--guidance "<text>"`. Honor it: it may name specific subsystems to focus on, specific files to skip, specific patterns to look for, or override the default review scope. Parse intent rather than expecting flag syntax.
@@ -224,7 +240,7 @@ Schema is `code-review/v1` (full field list in STATE_SCHEMA `### state/snapshots
   "target": "polkit",
   "scope": {
     "files_scanned": 142, "functions_inventoried": 1847, "loc_total": 28940,
-    "candidates_reviewed": 47, "excluded_paths": ["tests/", "docs/"]
+    "candidates_reviewed": 30, "mode": "sweep", "excluded_paths": ["tests/", "docs/"]
   },
   "tiers_run": ["prescan", "sonnet"],
   "findings": [
@@ -301,9 +317,14 @@ Schema is `code-review/v1` (full field list in STATE_SCHEMA `### state/snapshots
 
 **`tier_classified`**: `"sonnet"` for findings you emit. The deep-pass agent will mark its additions/promotions with `"opus"`.
 
-## Markdown companion
+## Markdown companion (written by the MERGE step, not you)
 
-Write `fuzz/state/code-review.md` with this structure:
+In window mode you do NOT write `code-review.md` — the merge step (`code-review-run.sh merge-code-review`) consolidates all window partials and writes the consolidated report with a LOUD coverage header as its first content line:
+
+- When `coverage_complete` is false: `⚠ COVERAGE: reviewed <candidates_reviewed> of <functions_inventoried> functions (<pct>%). <not_reviewed> functions were NOT reviewed. This is a capped starting map, not a complete audit — re-run /cc-fuzzer:fuzz-review --sweep for full coverage.`
+- When `coverage_complete` is true: `✓ COVERAGE: swept all <functions_inventoried> functions.`
+
+`coverage_complete` is `(mode == "sweep" and not_reviewed == 0)` — a capped review is always reported incomplete so it never reads as a complete audit. The report body otherwise follows this structure (the merge renders it):
 
 ```markdown
 # Code review for `<target>`
@@ -380,7 +401,7 @@ Don't over-interpret. If guidance is ambiguous, do the standard review and note 
 
 ## Hard rules
 
-- **Write only to `fuzz/state/snapshots/code-review-<ts>.json` and `fuzz/state/code-review.md`** (atomic via `.tmp` + `mv`).
+- **Write only your window PARTIAL `fuzz/state/snapshots/code-review-<ts>-w<NN>.json`** (atomic via `.tmp` + `mv`). Do NOT write the canonical `code-review-<ts>.json` or `code-review.md` — the merge step owns both.
 - **Never modify the target source.** You're reading, not patching.
 - **Never run the source** (no compilation, no execution). The review is static.
 - **Never invent CVE matches** — `cve_pattern_match` must use bug-class names you saw in `cve-patterns.md`, or be empty.
@@ -399,12 +420,12 @@ Don't over-interpret. If guidance is ambiguous, do the standard review and note 
 ## Output to stdout
 
 ```
-code-review: <N> findings (high=<H>, medium=<M>, low=<L>; needs_deep_pass=<D>) across <F> files
+code-review[w<NN>]: <N> findings (high=<H>, medium=<M>, low=<L>; needs_deep_pass=<D>) across <F> files
+  window: start=<i> count=<S>; candidates_reviewed=<R> (honest)
   by oracle_kind: memory=<Mc> authorization=<Ac> integrity=<Ic> info_disclosure=<Dc> state_confusion=<Sc> logic_other=<Lc>
   top focus: `<top focus_area.scope>`
-  deep-pass items: <D> (will be processed by code-reviewer-deep)
-  artifact:  fuzz/state/snapshots/code-review-<ts>.json
-  narrative: fuzz/state/code-review.md
+  deep-pass items: <D> (will be processed by code-reviewer-deep after merge)
+  partial:   fuzz/state/snapshots/code-review-<ts>-w<NN>.json
 ```
 
-Plus the absolute path of the JSON artifact on its own line so the caller can pipe it to `code-reviewer-deep`.
+Plus the absolute path of your window PARTIAL on its own line so the skill can collect it for the merge step.

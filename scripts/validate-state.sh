@@ -515,7 +515,29 @@ if [ -d "$SNAPSHOTS_DIR" ]; then
       lenient
   done
   for f in "$SNAPSHOTS_DIR"/code-review-*.json; do
-    case "$(basename "$f")" in code-review-prescan-*.json) continue ;; esac
+    case "$(basename "$f")" in
+      code-review-prescan-*.json) continue ;;
+      # Window partials (code-review-<ts>-w<NN>.json) are the sweep flow's
+      # per-window scratch output the merge step consolidates. They carry
+      # findings + a window-scoped scope but need not have focus_areas yet.
+      # Validate leniently (no required focus_areas) but still run the
+      # per-finding + scope enum check below.
+      code-review-*-w[0-9]*.json)
+        validate_json "$f" \
+          "code-review/v1" \
+          "ts,scope,findings" \
+          "ts,target,scope,tiers_run,findings,focus_areas,model_costs,revisit_passes" \
+          lenient
+        CR_ERRS=$(FILE="$f" python3 "$CHECKS" code-review 2>&1)
+        if [ -n "$CR_ERRS" ]; then
+          while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            err "$line"
+          done <<< "$CR_ERRS"
+        fi
+        continue
+        ;;
+    esac
     [ -f "$f" ] || continue
     validate_json "$f" \
       "code-review/v1" \

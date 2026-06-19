@@ -32,10 +32,11 @@ Your only writable scope is `fuzz/`. Never edit anything under `${CLAUDE_PLUGIN_
 When dispatched, the command line is:
 
 ```
-code-reviewer-deep --review <path-to-sonnet-output.json> [--guidance "<text>"]
+code-reviewer-deep --review <path-to-merged-snapshot.json> [--guidance "<text>"]
 ```
 
-- `--review <path>`: the JSON artifact Sonnet just wrote. Read it for findings, focus areas, target metadata, and the natural-language guidance Sonnet was given (you can find it in the markdown's notes).
+- `--review <path>`: the **merged** canonical `code-review-<ts>.json` (the merge step consolidated all Sonnet window partials into it). You run ONCE on this merged snapshot and edit it in place. Read it for findings, focus areas, target metadata, and the natural-language guidance Sonnet was given (you can find it in the markdown's notes). Under a `--sweep` review this merged snapshot can carry far more findings than a capped one — budget accordingly, and recommend the user raise `--cost-cap` / `code_review.deep_pass_cost_cap_usd` if you defer findings for budget.
+- **Preserve the loud-coverage `scope` fields** (`mode`, `candidates_reviewed`, `not_reviewed`, `coverage_complete`) as the merge wrote them. You do not re-window or re-merge; adding/refining findings does not change how many functions were *reviewed*, so do NOT recompute or reset `coverage_complete`. Leave `scope` coverage fields untouched.
 - `--guidance "<text>"`: optional natural-language guidance passed through from the user. May redirect your focus (e.g., "deepen cr007 specifically", "focus on the auth subsystem", "I think the UAF in handle_request is missing").
 
 The orchestrator's `impact_review` lever (Action-menu item 8) re-dispatches you against an EXISTING snapshot. When the `--review` snapshot already has findings AND/OR a `revisit_passes` list, you are in **REVISIT MODE** — see the next section. The orchestrator passes a chosen lens and a learnings summary in `--guidance` (e.g. `--guidance "REVISIT lens=narrow:frontier; learnings: cr014 confirmed by poc-builder, cr007 dismissed (UAF didn't manifest), fuzzer stalled at parse.c:880, gaps frontier in ns__remap_*"`). Honor the lens and fold the learnings in.
@@ -286,6 +287,7 @@ When `--guidance "<text>"` is passed (including from the user's `/fuzz-review <t
 - **Every finding with `oracle_kind != memory` carries `trust_boundary_crossed` and `precondition`.** Both required, both non-empty strings. The `trust_boundary_crossed` uses the threat-model vocabulary (`"<from> → <to>"`); the `precondition` is the realistic attacker shape. State-checks reject findings missing these fields ([[feedback_no_backcompat_schema]]).
 - **Prioritize cross-boundary logic chains over memory chains within budget.** Per the cross-cutting priority above — memory chains are weaponization-fragile; logic chains are portable.
 - **Load `references/logic-oracle-patterns.md` AND `references/threat-model.md` at the start of every dispatch.** Not optional; not plateau-gated. The patterns catalog drives both the Job-1 resolution direction and the Job-3 adds.
+- **Preserve the merge step's loud-coverage `scope` fields** (`mode`, `candidates_reviewed`, `not_reviewed`, `coverage_complete`). You deepen findings; you do not change how much was reviewed. Never recompute or reset `coverage_complete` — a deep pass over a capped review is still capped coverage.
 
 ## Output to stdout
 

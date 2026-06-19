@@ -23,7 +23,7 @@ CLI:
     code_review_prescan.py \\
         --target-root /path/to/source \\
         --out fuzz/state/code-review-prescan-<ts>.json \\
-        [--max-functions 50] \\
+        [--max-functions 50|all] \\
         [--excluded-paths "tests/,docs/,examples/,third_party/,vendor/"] \\
         [--cve-context fuzz/state/snapshots/cve-context-<ts>.json]
 """
@@ -520,13 +520,37 @@ def main() -> int:
                     help="Root directory of the target source.")
     ap.add_argument("--out", required=True,
                     help="Output JSON path.")
-    ap.add_argument("--max-functions", type=int, default=50,
-                    help="Top-N functions to surface in the candidates list (default 50).")
+    ap.add_argument("--max-functions", default="50",
+                    help="Top-N functions to surface in the candidates list (default 50). "
+                         "Accepts an int, or 'all'/0 for UNLIMITED (sweep mode — the full "
+                         "ranked inventory becomes the candidate list). Negatives are rejected.")
     ap.add_argument("--excluded-paths", default="",
                     help="Comma-separated path fragments to exclude (defaults union with built-ins).")
     ap.add_argument("--cve-context", default="",
                     help="Optional path to cve-context-<ts>.json for hotspot cross-ref.")
     args = ap.parse_args()
+
+    # Resolve --max-functions into `max_functions: Optional[int]`.
+    #   None  => unlimited (sweep): the full ranked inventory is the candidate list.
+    #   int>0 => capped: top-N.
+    #   "all" / 0 => unlimited.
+    #   negative / non-numeric => error.
+    raw_max = str(args.max_functions).strip().lower()
+    if raw_max in ("all", "0"):
+        max_functions: Optional[int] = None
+    else:
+        try:
+            n = int(raw_max)
+        except ValueError:
+            print(f"ERROR: --max-functions must be an int or 'all', got {args.max_functions!r}",
+                  file=sys.stderr)
+            return 2
+        if n < 0:
+            print(f"ERROR: --max-functions cannot be negative ({n}); use 'all' or 0 for unlimited.",
+                  file=sys.stderr)
+            return 2
+        max_functions = n  # n == 0 already handled above
+    mode = "sweep" if max_functions is None else "capped"
 
     target_root = Path(args.target_root).resolve()
     if not target_root.is_dir():
@@ -567,9 +591,15 @@ def main() -> int:
                 pass
             all_functions.append(entry)
 
-    # Sort by suspicion score descending; ties broken by LOC descending.
-    all_functions.sort(key=lambda f: (-f.suspicion_score, -f.loc))
-    top = all_functions[: args.max_functions]
+    # Sort by suspicion score descending; ties broken by LOC descending, then by
+    # (file, name, line_start) so the order is STABLE across re-runs and the
+    # window slices the merge step takes are deterministic.
+    all_functions.sort(
+        key=lambda f: (-f.suspicion_score, -f.loc, f.file, f.name, f.line_start)
+    )
+    # In sweep (max_functions is None) the candidate list is the FULL ranked
+    # inventory; in capped mode it is the top-N.
+    top = all_functions if max_functions is None else all_functions[:max_functions]
 
     oracle_candidates = _detect_oracle_candidates(all_functions)
 
@@ -581,6 +611,13 @@ def main() -> int:
             "files_scanned": len(sources),
             "functions_inventoried": len(all_functions),
             "loc_total": loc_total,
+            # Windowing contract (loud coverage disclosure): mode + cap let the
+            # run-script, reviewer, and merge agree on how much was selected and
+            # how much was deliberately left out. cap is null in sweep mode.
+            "mode": mode,
+            "cap": max_functions,
+            "candidates_selected": len(top),
+            "not_selected": len(all_functions) - len(top),
             "excluded_paths": excludes,
             "cve_context_consumed": str(args.cve_context) if args.cve_context else None,
             "recently_changed_files": len(recent),

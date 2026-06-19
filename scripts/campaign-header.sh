@@ -164,6 +164,30 @@ else:
 last_halt = yolo.get("last_halt_reason") or "—"
 print(f"last-halt:   {last_halt}")
 
+# --- code-review coverage ----------------------------------------------
+# Surface review coverage so the orchestrator sees PARTIAL coverage each tick
+# and a capped review never reads as a complete audit. Reads the latest
+# canonical code-review-<ts>.json (skips the prescan and the per-window
+# partials, which are merge scratch).
+import re as _re
+# Canonical snapshot only: code-review-<digits>.json. Excludes prescan and the
+# per-window partials (code-review-<ts>-w<NN>.json), which are merge scratch.
+_CR_CANON = _re.compile(r"^code-review-\d+\.json$")
+cr_snaps = [p for p in glob.glob(os.path.join(state_dir, "snapshots", "code-review-*.json"))
+            if _CR_CANON.match(os.path.basename(p))]
+cr_latest = sorted(cr_snaps)[-1] if cr_snaps else None
+if cr_latest:
+    crd = _load_json(cr_latest) or {}
+    cs = crd.get("scope") or {}
+    inv = cs.get("functions_inventoried")
+    rev = cs.get("candidates_reviewed")
+    if inv:
+        pct = int(round(100.0 * (rev or 0) / inv))
+        if cs.get("coverage_complete"):
+            print(f"code-review:  swept {rev}/{inv} ({pct}%)")
+        else:
+            print(f"code-review:  {rev}/{inv} fns ({pct}%) INCOMPLETE [mode={cs.get('mode','capped')}]")
+
 # --- authorization ------------------------------------------------------
 print()
 print("authorization:")
