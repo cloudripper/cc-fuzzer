@@ -54,9 +54,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Multi-mode dispatch: with no --harness in multi mode, recurse once per
-# declared harness so callers get a fresh dict for each.
-if is_multi && [ -z "$HARNESS" ] && [ -z "$AFLPP_OUT" ]; then
+# Multi-harness dispatch: with no --harness, recurse once per declared harness
+# so callers get a fresh dict for each.
+if [ -z "$HARNESS" ] && [ -z "$AFLPP_OUT" ]; then
   RC=0
   while IFS= read -r h; do
     [ -n "$h" ] || continue
@@ -65,17 +65,12 @@ if is_multi && [ -z "$HARNESS" ] && [ -z "$AFLPP_OUT" ]; then
   exit "$RC"
 fi
 
-# Default harness in singular mode (ignored by helpers); in multi mode the
-# --harness arg has been honored already.
+# Default harness when --harness was not provided.
 [ -z "$HARNESS" ] && HARNESS=$(default_harness)
 
 # Resolve defaults if not given on CLI
 if [ -z "$AFLPP_OUT" ]; then
-  if is_multi; then
-    AFLPP_OUT="$FUZZ_ROOT/harnesses/$HARNESS/aflpp-out"
-  else
-    AFLPP_OUT="${FUZZ_OUT_DIR:-$PROJECT_ROOT/out}"
-  fi
+  AFLPP_OUT="$FUZZ_ROOT/harnesses/$HARNESS/aflpp-out"
 fi
 if [ -z "$OUTPUT" ]; then
   OUTPUT="$STATE_DIR/$(cmplog_dict_name "$HARNESS" "$TS")"

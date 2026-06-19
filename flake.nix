@@ -111,7 +111,6 @@
           ltrace
           lcov
           gcovr
-          casr           # automated crash triage with structured output
 
           # === Build systems ===
           gnumake

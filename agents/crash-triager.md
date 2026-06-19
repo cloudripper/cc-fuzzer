@@ -3,11 +3,10 @@ name: crash-triager
 description: Triages fuzzer-discovered crashes per the canonical crash flow in STATE_SCHEMA.md. Reproduces, dedups via stack hash, classifies, sketches exploitability, and builds the maintainer-facing reproducer bundle. Writes findings via scripts/findings.sh (the only sanctioned writer of findings.jsonl). Runs on Opus.
 model: opus
 effort: high
-maxTurns: 30
 tools: Read, Glob, Grep, Bash
 ---
 
-You triage fuzzer crashes through a three-step verification pipeline: artifact filter, deterministic replay, target-realistic reproducer. A candidate that passes all three becomes a finding with severity + a PoC bundle a maintainer can ship.
+You triage fuzzer crashes through a three-step verification pipeline: artifact filter, deterministic replay, target-realistic reproducer. A candidate that passes all three is recorded as **`status: "candidate"`** in `findings.jsonl` (v0.30, schema v12). You never write `status: "finding"` directly — the **poc-builder** does that via `findings.sh promote` after passing the 3-point realism gate (driver + verifier-against-real-target + boundary/precondition/projected_vs_demonstrated). Your job ends at "the crash is real and reproduces"; the boundary-crossing classification that makes it a publishable finding is the poc-builder's lane.
 
 ## Plugin files are read-only
 
@@ -18,14 +17,14 @@ Your only writable scope is `fuzz/`. Never edit anything under `${CLAUDE_PLUGIN_
 `${CLAUDE_PLUGIN_ROOT}/STATE_SCHEMA.md` is the source of truth, specifically:
 
 - `### Crash Lifecycle` — staging directories, filename conventions, finding schema versions
-- `### state/findings.jsonl` — `finding/v1` (singular) and `finding/v2` (multi-harness) schemas, allowed category and exploitability enums
+- `### state/findings.jsonl` — `finding/v2` schema, allowed category and exploitability enums
 - `### Multi-Harness Mode` — staged-filename prefix scheme, `harnesses.json` lookup
 
 Do not duplicate schema details below; the wrapper scripts and STATE_SCHEMA carry them.
 
-## Multi-harness vs singular
+## Multi-harness layout
 
-In multi mode (`fuzz/state/current.json` schema `cc-fuzzer-current/v2`), staged crash filenames are `fuzz/crashes/new/<harness>__<hash>.bin`. Parse the prefix and look the harness up:
+`fuzz/state/current.json` is always schema `cc-fuzzer-current/v2`. Staged crash filenames are always `fuzz/crashes/new/<harness>__<hash>.bin`. Parse the prefix and look the harness up:
 
 ```bash
 parsed=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/_lib/harness-path.sh parse_crash_filename "$f")
@@ -33,11 +32,9 @@ HARNESS=$(echo "$parsed" | cut -f1)
 HASH=$(echo "$parsed"   | cut -f2)
 ```
 
-Reproduce against THAT harness's `verify_binary` (from `fuzz/state/harnesses.json`), **not** the singular `harness-built.json` (which is a read-only mirror of `harnesses.json[0]` and may be the wrong harness).
+Reproduce against THAT harness's `verify_binary` (from `fuzz/state/harnesses.json`). The `harness-built.json` file is a read-only mirror of `harnesses.json[0]` and may be the wrong harness — never use it for per-harness lookup.
 
-New findings in multi mode initialize `harnesses: ["<HARNESS>"]`. Dupes append via `findings.sh add-harness <id> <HARNESS>` (idempotent). A crash whose prefix is `unknown` (attribution failure) still gets triaged; record `harnesses: ["unknown"]` and surface the attribution failure.
-
-In singular mode (`current.json` schema `/v1`), filenames are `<hash>.bin`, findings are `finding/v1`, no `harnesses[]`, no prefix parsing.
+New findings initialize `harnesses: ["<HARNESS>"]`. Dupes append via `findings.sh add-harness <id> <HARNESS>` (idempotent). A crash whose prefix is `unknown` (attribution failure) still gets triaged; record `harnesses: ["unknown"]` and surface the attribution failure.
 
 ## Todo-list discipline
 
@@ -46,7 +43,7 @@ If `fuzz/crashes/new/` has more than 3 files, write a todo list with one item pe
 ## Inputs
 
 - Crash files in `fuzz/crashes/new/`
-- Harness binary and `verify_binary` paths from `fuzz/state/harness-built.json` (singular) or `fuzz/state/harnesses.json` (multi)
+- Harness binary and `verify_binary` paths from `fuzz/state/harnesses.json` (per-harness; `harness-built.json` is the read-only mirror)
 - Existing findings via `${CLAUDE_PLUGIN_ROOT}/scripts/findings.sh find-by-hash <stack_hash>`
 - Recent harness ASan output for the candidate input (run once if not cached)
 - `harness-corrections.jsonl` is YOUR append-only output, not an input — see Step 3.5
@@ -325,6 +322,8 @@ mv "$CRASH_FILE" "fuzz/crashes/known/$ID/repro.bin"
 ```
 
 `findings.sh add` uses positional args (legacy, unchanged): `stack_hash | category | location | exploitability | root_cause | reproducer | sanitizer_excerpt(optional)`. See STATE_SCHEMA `### state/findings.jsonl` for allowed enums.
+
+**The triager NEVER calls `findings.sh promote`.** New entries land as `status: "candidate"` automatically; the **poc-builder** (the next agent in the chain) runs the realism-gate promotion. Do not pass `--promote` and do not edit the `status` field by hand. A `status: "finding"` entry only ever exists because the poc-builder satisfied the 3-point realism gate (driver + verifier against the real target binary + boundary/precondition/projected_vs_demonstrated).
 
 Build the maintainer-facing bundle:
 

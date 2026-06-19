@@ -31,6 +31,12 @@ from __future__ import annotations
 import glob
 import json
 import os
+import sys
+from pathlib import Path
+
+# SSOT for all state enums. Same sibling-import pattern as cve-context-builder.py.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import enums  # type: ignore  # noqa: E402
 
 
 # lever -> the model tier its dispatch costs (for throttle-aware suggestion).
@@ -48,6 +54,7 @@ COST_TIER = {
     "engine_swap":          "sonnet",
     "cve_refresh":          "sonnet",
     "code_review":          "sonnet",
+    "impact_review":        "opus",
     "verification_fill":    "opus",
     "poc_build":            "opus",
     "poc_upgrade":          "opus",
@@ -68,6 +75,7 @@ LEVER_AGENT = {
     "harness_new":          "harness-writer",
     "mock_env":             "harness-writer",
     "engine_swap":          "harness-writer",
+    "impact_review":        "code-reviewer-deep",
     "verification_fill":    "crash-triager",
     "poc_build":            "poc-builder",
     "poc_upgrade":          "poc-builder",
@@ -88,6 +96,7 @@ BRANCH_LEVER = {
     "harness_new":      "harness_new",
     "mock_env":         "mock_env",
     "engine_swap":      "engine_swap",
+    "impact_review":    "impact_review",
     "slot_engine":      "slot_engine",
     "refresh_cve":      "cve_refresh",
     "review":           "code_review",
@@ -104,6 +113,7 @@ BRANCH_LEVER = {
 SUGGEST_PRIORITY = [
     "instrumentation", "poc_build", "poc_upgrade", "verification_fill",
     "harness_rewrite", "harness_new", "mock_env", "engine_swap",
+    "impact_review",
     "harness_extend", "coverage_reanalysis", "concolic", "seedgen", "mutator",
     "cve_refresh", "code_review", "plan_revise", "dictionary", "slot_engine",
 ]
@@ -316,6 +326,44 @@ def compute(state_dir, snaps_dir, cfg, doc, events, findings,
         _struct_evi("mock" if "mock" in _actions else "driver"))
     add("engine_swap", "engine_swap" in _actions,
         ((ceiling or {}).get("engine_fit") or {}).get("rationale", "engine fit favours a change"))
+
+    # impact_review — a plateau-breaking lever (v0.30, recommendation C). Coverage
+    # plateaued but maybe the existing findings haven't been re-examined under the
+    # logic-oracle + poc-builder realism lens. Eligible when the ceiling-probe
+    # reports stage ≥ 1 AND (any open candidates with a high-impact oracle_kind
+    # OR no `code-reviewer-deep` dispatch since the last coverage gain).
+    _stage = (ceiling or {}).get("ladder_stage", 0)
+    _gain_ts = (ceiling or {}).get("gain_ts") or enabled_at_ts
+    last_impact_ts = 0
+    for e in events:
+        if int(e.get("ts") or 0) < _gain_ts:
+            continue
+        if (e.get("agent_called") or e.get("agent")) == "code-reviewer-deep":
+            r = (e.get("reason") or "")
+            # Only impact_review dispatches count — a plain code-reviewer-deep
+            # dispatched via the Tier-3 pipeline doesn't satisfy this lever.
+            if r.startswith("structural:impact_review") or "impact_review" in r:
+                last_impact_ts = max(last_impact_ts, int(e.get("ts") or 0))
+    # Match oracle_kind and category against their OWN vocabularies (they differ:
+    # oracle_kind is underscore_case + coarse; category is hyphenated). The old
+    # set mixed the two plus an invented "logic" and a pattern token "auth_bypass".
+    _impact_candidates = [
+        f for f in findings
+        if (f.get("oracle_kind") in enums.HIGH_IMPACT_ORACLE_KINDS
+            or f.get("category") in enums.HIGH_IMPACT_CATEGORIES)
+    ]
+    impact_eligible = (
+        _stage >= 1
+        and (bool(_impact_candidates) or last_impact_ts == 0)
+    )
+    if _impact_candidates and impact_eligible:
+        _ev = f"plateau stage {_stage}; {len(_impact_candidates)} candidate(s) with impact-relevant oracle_kind; impact_review not run since last gain"
+    elif impact_eligible:
+        _ev = f"plateau stage {_stage}; no impact_review since last coverage gain"
+    else:
+        _ev = None
+    add("impact_review", impact_eligible, _ev or "")
+
     add("cve_refresh", cve_enabled and (not cve_latest or (now - cve_ts) > cve_ttl_days * 86400),
         "no CVE intel" if not cve_latest else f"CVE intel {int((now - cve_ts) / 86400)}d old (ttl {cve_ttl_days}d)")
     add("code_review", cr_enabled and bool(target_source) and not os.path.exists(code_review_md),
@@ -376,6 +424,37 @@ def compute(state_dir, snaps_dir, cfg, doc, events, findings,
          if l["affordable"] and not l["suppressed"]),
         None,
     )
+
+    # impact_review override (v0.30, recommendation C). The plain priority order
+    # ranks structural levers (harness_rewrite/new/mock/engine_swap) above
+    # impact_review, so when both are eligible the structural lever wins on the
+    # first plateau tick — correct. But if a structural lever already ran in the
+    # last plateau tick AND impact_review is still eligible AND it hasn't been
+    # taken since the last gain, swap top_lever to impact_review for this tick.
+    # Also: when no structural candidate remains untried but impact_review is
+    # eligible, ensure top_lever is impact_review.
+    if "impact_review" in eligible_names and not any(
+            l["suppressed"] for l in levers if l["lever"] == "impact_review"):
+        _struct_untried = bool((ceiling or {}).get("untried_candidates"))
+        # Did a structural lever run on the very last act-tick?
+        _last_struct_tick = False
+        for e in reversed(events):
+            if e.get("event") != "tick" or int(e.get("ts") or 0) < enabled_at_ts:
+                continue
+            br = e.get("branch") or ""
+            if br in ("wait", "sleep", ""):
+                continue
+            if br in ("harness", "harness_rewrite", "harness_new",
+                      "mock_env", "engine_swap", "slot_engine"):
+                _last_struct_tick = True
+            break
+        # affordability / suppression
+        _ir_entry = next((l for l in levers if l["lever"] == "impact_review"), None)
+        if _ir_entry and _ir_entry["affordable"] and not _ir_entry["suppressed"]:
+            if not _struct_untried:
+                top_lever = "impact_review"
+            elif _last_struct_tick:
+                top_lever = "impact_review"
 
     # ---- tunnel vision ------------------------------------------------------
     recent_families = []

@@ -2,21 +2,20 @@
 # launch-fuzzer-slot.sh
 #
 # Launches a single fuzzer slot in the background. A "slot" is one fuzzer
-# process within a (possibly multi-fuzzer) campaign. In v0.17 a slot has its
-# own pid/log/engine files and engine-specific flags; in schema v9 a slot
-# additionally binds to a specific harness (`--harness <name>`), and its
-# binary/corpus/output paths are resolved per-harness via _lib/harness-path.sh.
+# process within a (possibly multi-fuzzer, always multi-harness) campaign. A
+# slot has its own pid/log/engine files and engine-specific flags, and binds to
+# a specific harness (`--harness <name>`); its binary/corpus/output paths are
+# resolved per-harness via _lib/harness-path.sh.
 #
-# Single-fuzzer singular-mode campaigns use exactly one slot named "main"
-# with no harness binding (the implicit campaign harness). Multi-fuzzer or
-# multi-harness campaigns declare additional slots in
-# fuzz/state/fuzz-config.json under `fuzzer_slots`.
+# Slots are declared in fuzz/state/fuzz-config.json under `fuzzer_slots`, each
+# bound to a declared harness. A single-harness campaign is the degenerate case
+# (one harness bundle under fuzz/harnesses/<name>/).
 #
 # Usage:
 #   launch-fuzzer-slot.sh \
 #     --slot <name>                       (default: main)
 #     --engine libfuzzer|aflpp            (required; auto-detect if "auto")
-#     [--harness <name>]                  (multi mode: required; singular: ignored)
+#     [--harness <name>]                  (required; defaults to first declared)
 #     [--binary <harness-binary>]         (defaults to per-harness harness_binary)
 #     [--corpus <dir>]                    (defaults to per-harness corpus dir)
 #     [--role master|secondary]           (AFL++ only)
@@ -28,18 +27,15 @@
 #   - Launches the fuzzer with nohup; PID written to fuzz/state/fuzzer-<slot>.pid
 #   - Engine written to fuzz/state/fuzzer-<slot>.engine
 #   - Stdout/stderr tee'd into fuzz/state/fuzzer-<slot>.log
-#   - Slot entry created/updated in fuzz/state/fuzzers.json
-#       (schema fuzzers/v1 in singular mode, fuzzers/v2 in multi mode w/ harness)
-#   - Multi mode: each slot runs in its own cwd (libFuzzer) or out-dir (AFL++)
-#       under fuzz/harnesses/<harness>/ so crash files attribute to the harness.
-#   - When --slot=main and singular mode, also writes legacy fuzzer.pid/.engine/.log
-#     symlinks so pre-v0.17 readers keep working.
+#   - Slot entry created/updated in fuzz/state/fuzzers.json (schema fuzzers/v2)
+#   - Each slot runs in its own cwd (libFuzzer) or out-dir (AFL++) under
+#       fuzz/harnesses/<harness>/ so crash files attribute to the harness.
 #
 # Refuses to launch if:
 #   - The slot is already running (existing PID is alive)
 #   - The binary doesn't exist or isn't executable
 #   - The engine value is bogus
-#   - Multi mode but --harness is missing or references an undeclared harness
+#   - --harness is missing/unresolvable or references an undeclared harness
 #   - Forbidden ASAN_OPTIONS / UBSAN_OPTIONS env vars are set
 
 set -u
@@ -82,50 +78,36 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# Resolve harness binding. In multi mode --harness is required and must match
-# a declared harness; in singular mode the implicit harness is the only one.
-if is_multi; then
-  if [ -z "$HARNESS" ]; then
-    echo "ERROR: multi-harness mode active but --harness <name> was not provided" >&2
-    exit 2
-  fi
-  if ! is_known_harness "$HARNESS"; then
-    echo "ERROR: harness '$HARNESS' is not declared in fuzz-config.json:harnesses[]" >&2
-    exit 2
-  fi
-else
-  # Singular: ignore --harness, fall back to the implicit harness name (for
-  # uniform downstream code). default_harness reads harness-built.json:entry_function.
-  if [ -z "$HARNESS" ]; then
-    HARNESS=$(default_harness)
-  fi
+# Resolve harness binding. --harness is required and must match a declared
+# harness (multi-harness is the only mode since v0.30). Fall back to the first
+# declared harness when omitted, for callers that don't specify one.
+if [ -z "$HARNESS" ]; then
+  HARNESS=$(default_harness)
+fi
+if [ -z "$HARNESS" ]; then
+  echo "ERROR: no --harness <name> given and no declared harness resolvable" >&2
+  exit 2
+fi
+if ! is_known_harness "$HARNESS"; then
+  echo "ERROR: harness '$HARNESS' is not declared in fuzz-config.json:harnesses[]" >&2
+  exit 2
 fi
 
 # Resolve binary and corpus defaults from the per-harness record if not given.
-if [ -z "$BIN" ] && [ -n "$HARNESS" ]; then
+if [ -z "$BIN" ]; then
   BIN=$(harness_binary "$HARNESS")
 fi
-if is_multi && [ -n "$HARNESS" ]; then
-  # In multi mode the per-harness corpus is authoritative. Resolve it when no
-  # --corpus was given, AND override (with a warning) when the caller passed the
-  # legacy singular fuzz/corpus — that is almost always a relaunch-path
-  # regression (run-fuzzer.sh used to force it), and using it would bypass the
-  # harness's evolved corpus and trip validate-state. An explicit DIFFERENT
-  # --corpus path is still honored.
-  ph=$(corpus_dir "$HARNESS")
-  case "$CORPUS" in
-    "")                CORPUS="$ph" ;;
-    fuzz/corpus|*/fuzz/corpus)
-      echo "WARN: --corpus pointed at the legacy singular '$CORPUS' in multi mode; using per-harness $ph" >&2
-      CORPUS="$ph" ;;
-  esac
-elif [ -z "$CORPUS" ]; then
-  if [ -n "$HARNESS" ]; then
-    CORPUS=$(corpus_dir "$HARNESS")
-  else
-    CORPUS="fuzz/corpus"
-  fi
-fi
+# The per-harness corpus is authoritative. Resolve it when no --corpus was
+# given, AND override (with a warning) when the caller passed the retired
+# singular fuzz/corpus — that is almost always a relaunch-path regression.
+# An explicit DIFFERENT --corpus path is still honored.
+ph=$(corpus_dir "$HARNESS")
+case "$CORPUS" in
+  "")                CORPUS="$ph" ;;
+  fuzz/corpus|*/fuzz/corpus)
+    echo "WARN: --corpus pointed at the retired singular '$CORPUS'; using per-harness $ph" >&2
+    CORPUS="$ph" ;;
+esac
 
 # Slot-name validation
 case "$SLOT" in
@@ -177,14 +159,13 @@ if [ "$ENGINE" = "auto" ]; then
   fi
 fi
 
-case "$ENGINE" in
-  libfuzzer|aflpp) ;;
-  *) echo "ERROR: invalid --engine '$ENGINE' (expected libfuzzer or aflpp)" >&2; exit 2 ;;
-esac
+# Validate engine against the SSOT (enums.ENGINES).
+if ! python3 "$SCRIPT_DIR/_lib/enums.py" check engines "$ENGINE"; then
+  echo "ERROR: invalid --engine '$ENGINE' (expected libfuzzer or aflpp)" >&2; exit 2
+fi
 
-# Read fuzzing_mode, cmplog, and dict files via the per-harness helper. In
-# singular mode this reads from harness-built.json; in multi mode it reads
-# from harnesses.json[<harness>].
+# Read fuzzing_mode, cmplog, and dict files via the per-harness helper
+# (reads harnesses.json[<harness>]).
 FUZZING_MODE=$(harness_field "$HARNESS" fuzzing_mode)
 [ -z "$FUZZING_MODE" ] && FUZZING_MODE="in_process"
 
@@ -224,16 +205,11 @@ if [ -n "$DICT_JSON" ] && [ "$DICT_JSON" != "None" ]; then
 fi
 
 # Resolve per-harness output paths so crash files attribute back to a harness.
-# Multi mode:
 #   - libFuzzer cwd = fuzz/harnesses/<harness>/.libfuzzer-cwd/   (per-harness)
 #   - AFL++ -o      = fuzz/harnesses/<harness>/aflpp-out/        (per-harness)
-# Singular mode: keep existing behavior (cwd=$PROJECT_ROOT; OUT_DIR as set above).
-SLOT_CWD="$PROJECT_ROOT"
-if is_multi; then
-  SLOT_CWD="$FUZZ_ROOT/harnesses/$HARNESS/.libfuzzer-cwd"
-  OUT_DIR="$FUZZ_ROOT/harnesses/$HARNESS/aflpp-out"
-  mkdir -p "$SLOT_CWD" "$OUT_DIR"
-fi
+SLOT_CWD="$FUZZ_ROOT/harnesses/$HARNESS/.libfuzzer-cwd"
+OUT_DIR="$FUZZ_ROOT/harnesses/$HARNESS/aflpp-out"
+mkdir -p "$SLOT_CWD" "$OUT_DIR"
 
 # Absolutize paths that get passed to a process running in SLOT_CWD. Realpath
 # is preferred but may fail on non-existent dict files; fall back to PROJECT_ROOT
@@ -315,11 +291,7 @@ else
   AFL_DICT_FLAG=()
   if [ "${#DICT_FILES[@]}" -gt 0 ]; then
     # Per-harness merged dict so different harnesses don't stomp on each other.
-    if is_multi; then
-      MERGED="$STATE_DIR/merged-dict-${HARNESS}.dict"
-    else
-      MERGED="$STATE_DIR/merged-dict.dict"
-    fi
+    MERGED="$STATE_DIR/merged-dict-${HARNESS}.dict"
     : > "$MERGED"
     for df in "${DICT_FILES[@]}"; do
       [ -f "$df" ] || continue
@@ -397,19 +369,7 @@ STARTED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 MANIFEST="$STATE_DIR/fuzzers.json"
 MANIFEST_TMP="$MANIFEST.tmp"
 
-IS_MULTI=0
-if is_multi; then IS_MULTI=1; fi
-export SLOT ENGINE BIN PID PGID STARTED_AT LOG_FILE PID_FILE ENGINE_FILE ROLE POWER_SCHEDULE MANIFEST RESTART_OF HARNESS IS_MULTI
+export SLOT ENGINE BIN PID PGID STARTED_AT LOG_FILE PID_FILE ENGINE_FILE ROLE POWER_SCHEDULE MANIFEST RESTART_OF HARNESS
 python3 "$SCRIPT_DIR/_lib/launch_slot.py" update-manifest
-
-# Backward-compat: when slot is "main" and we're in singular mode, maintain the
-# legacy single-slot files so pre-v0.17 readers (anything still doing
-# `cat fuzz/state/fuzzer.pid`) keep working. In multi mode the singular
-# fuzzer.pid is meaningless — there is no single "the fuzzer" — so skip.
-if [ "$SLOT" = "main" ] && ! is_multi; then
-  ln -sf "fuzzer-main.pid"    "$STATE_DIR/fuzzer.pid"
-  ln -sf "fuzzer-main.engine" "$STATE_DIR/fuzzer.engine"
-  ln -sf "fuzzer-main.log"    "$STATE_DIR/fuzzer.log"
-fi
 
 echo "slot=$SLOT engine=$ENGINE pid=$PID pgid=$PGID log=$LOG_FILE"

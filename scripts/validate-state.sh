@@ -15,12 +15,13 @@
 #   - Unrecognized fields are an ERROR
 #   - File locations must match STATE_SCHEMA.md exactly
 #
-# Multi-harness mode (schema v9):
-#   Mode is detected from fuzz-config.json:harnesses[] (non-empty list = multi).
-#   In multi mode, validates the v9 shapes (harness-set/v1, harness-built/v6,
-#   current/v2, fuzz-config/v3, fuzzers/v2, finding/v2) and per-harness
-#   filesystem layout under fuzz/harnesses/<name>/. In singular mode, validates
-#   the v8 shapes unchanged (only the schema-version bumps to v9).
+# Multi-harness only (schema v12, the only supported version in v0.30+):
+#   Every campaign is multi-harness. A campaign with state present MUST declare
+#   a non-empty fuzz-config.json:harnesses[]; validation hard-errors otherwise
+#   (the singular flat layout has been retired). The per-harness layout under
+#   fuzz/harnesses/<name>/ is validated. No back-compat: v0.30 calibrates to
+#   schema v12. Older state cannot be migrated — start a fresh campaign with
+#   /cc-fuzzer:campaign.
 
 set -u
 
@@ -31,12 +32,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FUZZ_ROOT="${FUZZ_ROOT:-fuzz}"
 STATE_DIR="$FUZZ_ROOT/state"
 SNAPSHOTS_DIR="$STATE_DIR/snapshots"
-HARNESS_DIR="$FUZZ_ROOT/harness"            # singular only
-HARNESSES_DIR="$FUZZ_ROOT/harnesses"        # multi only
+HARNESSES_DIR="$FUZZ_ROOT/harnesses"
 CRASHES_DIR="$FUZZ_ROOT/crashes"
-CORPUS_DIR="$FUZZ_ROOT/corpus"              # singular only
+# Retired singular top-level paths — must NOT exist (the singular->multi layout
+# was removed in v0.30). Checked as forbidden below.
+LEGACY_HARNESS_DIR="$FUZZ_ROOT/harness"
+LEGACY_CORPUS_DIR="$FUZZ_ROOT/corpus"
 
-EXPECTED_SCHEMA_VERSION="v10"
+EXPECTED_SCHEMA_VERSION="v12"
 
 ERRORS=()
 WARNINGS=()
@@ -45,19 +48,27 @@ err()  { ERRORS+=("$1"); }
 warn() { WARNINGS+=("$1"); }
 
 #------------------------------------------------------------------------------
-# Multi-harness mode detection (schema v10)
+# Declared-harness discovery (schema v12, multi-only)
 #
-# Multi mode is active iff fuzz-config.json contains a non-empty harnesses[]
-# array of objects with a `name` field. All schema versions and filesystem
-# checks below dispatch on this single signal.
+# Every campaign is multi-harness. fuzz-config.json MUST contain a non-empty
+# harnesses[] array of objects with a `name` field. The declared set drives
+# every per-harness filesystem and JSON check below. There is NO silent
+# downgrade to a singular layout: if state exists but the declared set cannot
+# be read (missing config, unreadable, or empty), that is a hard error,
+# surfaced once the state directory is confirmed present (Step 1).
 #------------------------------------------------------------------------------
-MODE="singular"
+MODE="multi"   # constant — kept for the python subcommands that take MODE
 DECLARED_HARNESSES=()
+HARNESS_NAMES_OK=0
 CHECKS="$SCRIPT_DIR/_lib/state_checks.py"
+ENUMS="$SCRIPT_DIR/_lib/enums.py"             # SSOT enum CLI (print/check)
 if [ -f "$STATE_DIR/fuzz-config.json" ]; then
-  NAMES=$(CFG="$STATE_DIR/fuzz-config.json" python3 "$CHECKS" config-harness-names 2>/dev/null)
+  # NOTE: no `2>/dev/null` — a python failure here used to be swallowed and
+  # silently downgraded the campaign to singular. Now an empty result is a
+  # hard error (raised below), so a broken helper or config fails loudly.
+  NAMES=$(CFG="$STATE_DIR/fuzz-config.json" python3 "$CHECKS" config-harness-names)
   if [ -n "$NAMES" ]; then
-    MODE="multi"
+    HARNESS_NAMES_OK=1
     while IFS= read -r n; do
       [ -n "$n" ] && DECLARED_HARNESSES+=("$n")
     done <<< "$NAMES"
@@ -93,20 +104,20 @@ if [ -d "$STATE_DIR" ]; then
   done
 fi
 
-# Mode-specific filesystem layout
-if [ "$MODE" = "singular" ]; then
-  if [ -d "$STATE_DIR" ]; then
-    [ -d "$HARNESS_DIR" ] || warn "missing required directory: $HARNESS_DIR (will be created)"
-    [ -d "$CORPUS_DIR" ]  || warn "missing required directory: $CORPUS_DIR (will be created)"
+# Multi-harness layout (the only layout). A campaign with state present MUST
+# declare a non-empty harnesses[]; there is no singular fallback.
+if [ -d "$STATE_DIR" ] && [ "$HARNESS_NAMES_OK" -ne 1 ]; then
+  if [ ! -f "$STATE_DIR/fuzz-config.json" ]; then
+    err "state exists but $STATE_DIR/fuzz-config.json is missing. v0.30 is multi-harness only — run 'harness-set.sh init --entry <fn>' (or /cc-fuzzer:campaign) to declare a harness set."
+  else
+    err "fuzz-config.json declares no harnesses[] (or could not be read). v0.30 is multi-harness only; the singular flat layout was retired. Declare a harness set with 'harness-set.sh init --entry <fn>', or /fuzz-reset and start fresh."
   fi
-  # Multi-mode layout must NOT exist in singular mode
-  if [ -d "$HARNESSES_DIR" ]; then
-    err "singular mode but $HARNESSES_DIR/ exists (multi-mode layout). Either remove it or activate multi-mode by declaring harnesses[] in fuzz-config.json."
-  fi
-else
-  # Multi: fuzz/harnesses/<name>/{harness,corpus,coverage}/ per declared harness
+fi
+
+# fuzz/harnesses/<name>/{harness,corpus,coverage}/ per declared harness
+if [ "$HARNESS_NAMES_OK" -eq 1 ]; then
   if [ ! -d "$HARNESSES_DIR" ]; then
-    err "multi mode (harnesses[] declared in fuzz-config.json) but $HARNESSES_DIR/ does not exist"
+    err "harnesses[] declared in fuzz-config.json but $HARNESSES_DIR/ does not exist"
   else
     for name in "${DECLARED_HARNESSES[@]}"; do
       bundle="$HARNESSES_DIR/$name"
@@ -116,13 +127,15 @@ else
       [ -d "$bundle/coverage" ] || warn "missing $bundle/coverage/"
     done
   fi
-  # Singular-mode top-level paths must NOT exist as regular directories in multi mode
-  for legacy in "$HARNESS_DIR" "$CORPUS_DIR"; do
-    if [ -d "$legacy" ] && [ ! -L "$legacy" ]; then
-      err "multi mode but singular path $legacy/ still exists (the singular->multi upgrade should have moved it to $HARNESSES_DIR/<original>/). Either complete the upgrade or remove the stray directory."
-    fi
-  done
 fi
+
+# Retired singular top-level paths must NOT exist (the singular layout and the
+# singular->multi upgrade were removed in v0.30).
+for legacy in "$LEGACY_HARNESS_DIR" "$LEGACY_CORPUS_DIR"; do
+  if [ -d "$legacy" ] && [ ! -L "$legacy" ]; then
+    err "retired singular path $legacy/ still exists. v0.30 is multi-harness only; per-harness state lives under $HARNESSES_DIR/<name>/. Remove the stray directory (or /fuzz-reset and start fresh)."
+  fi
+done
 
 # Forbidden legacy paths (these are bug-magnets - the triager has been known
 # to write to fuzz/state/crashes/ instead of fuzz/crashes/new/)
@@ -165,11 +178,11 @@ fi
 #------------------------------------------------------------------------------
 
 if [ -d "$STATE_DIR" ] && [ ! -f "$STATE_DIR/schema-version" ]; then
-  warn "missing $STATE_DIR/schema-version (run migrate-state.sh to create)"
+  err "missing $STATE_DIR/schema-version. v0.30 requires schema $EXPECTED_SCHEMA_VERSION; older campaigns cannot be migrated. Start a fresh campaign with /cc-fuzzer:campaign."
 elif [ -f "$STATE_DIR/schema-version" ]; then
   ACTUAL_VERSION=$(head -1 "$STATE_DIR/schema-version" | tr -d ' \n')
   if [ "$ACTUAL_VERSION" != "$EXPECTED_SCHEMA_VERSION" ]; then
-    err "schema version mismatch: state has '$ACTUAL_VERSION', plugin expects '$EXPECTED_SCHEMA_VERSION'"
+    err "schema version mismatch: state has '$ACTUAL_VERSION', plugin requires '$EXPECTED_SCHEMA_VERSION'. v0.30 requires schema v12; older campaigns cannot be migrated. Start a fresh campaign with /cc-fuzzer:campaign."
   fi
 fi
 
@@ -208,7 +221,9 @@ validate_json() {
   esac
 }
 
-# Field sets shared by singular v5 and multi v6/v7 (v6 adds `name`, v7 adds nix backend fields)
+# Field-set building blocks. The active schema is harness-built/v7; v5/v6 here
+# are just the shared base field lists v7 composes on (v6 adds `name`, v7 adds
+# nix backend fields).
 HARNESS_BUILT_REQUIRED_V5="harness_source,harness_binary,build_script,entry_function,target_source,target_source_hash,build_command_hash,built_at,coverage_tracking,cmplog_enabled,fuzzing_mode"
 HARNESS_BUILT_ALLOWED_V5="harness_source,harness_binary,coverage_binary,coverage_dso,verify_binary,coverage_tracking,coverage_disabled_reason,cmplog_binary,cmplog_enabled,cmplog_disabled_reason,symcc_binary,mutator_source,build_script,dict_files,entry_function,input_encoding,sanitizers,fuzzing_mode,target_source,target_source_hash,build_command_hash,harness_attempts,built_at,build_command,oracle"
 HARNESS_BUILT_REQUIRED_V6="name,${HARNESS_BUILT_REQUIRED_V5}"
@@ -216,19 +231,12 @@ HARNESS_BUILT_ALLOWED_V6="name,${HARNESS_BUILT_ALLOWED_V5}"
 HARNESS_BUILT_REQUIRED_V7="name,build_backend,${HARNESS_BUILT_REQUIRED_V5}"
 HARNESS_BUILT_ALLOWED_V7="build_backend,build_backend_decided_at,build_backend_decided_by,nix,${HARNESS_BUILT_ALLOWED_V6}"
 
-# 3a. harness-built.json
-# Singular mode: this is the canonical record (harness-built/v5).
-# Multi mode:    this is a read-only mirror of harnesses.json[0] (harness-built/v7).
+# 3a. harness-built.json — read-only mirror of harnesses.json[0] (harness-built/v7).
 if [ -f "$STATE_DIR/harness-built.json" ]; then
-  if [ "$MODE" = "singular" ]; then
-    validate_json "$STATE_DIR/harness-built.json" "harness-built/v5" \
-      "$HARNESS_BUILT_REQUIRED_V5" "$HARNESS_BUILT_ALLOWED_V5"
-  else
-    validate_json "$STATE_DIR/harness-built.json" "harness-built/v7" \
-      "$HARNESS_BUILT_REQUIRED_V7" "$HARNESS_BUILT_ALLOWED_V7"
-  fi
+  validate_json "$STATE_DIR/harness-built.json" "harness-built/v7" \
+    "$HARNESS_BUILT_REQUIRED_V7" "$HARNESS_BUILT_ALLOWED_V7"
 
-  # Coverage/cmplog/fuzzing_mode cross-checks apply identically to both schemas.
+  # Coverage/cmplog/fuzzing_mode cross-checks.
   HB="$STATE_DIR/harness-built.json"
   TRACK=$(python3 "$CHECKS" field "$HB" coverage_tracking False 2>/dev/null)
   COV_BIN=$(python3 "$CHECKS" field "$HB" coverage_binary 2>/dev/null)
@@ -241,7 +249,7 @@ if [ -f "$STATE_DIR/harness-built.json" ]; then
   else
     REASON=$(python3 "$CHECKS" field "$HB" coverage_disabled_reason 2>/dev/null)
     if [ -z "$REASON" ]; then
-      warn "harness-built.json: coverage_tracking=false but no coverage_disabled_reason set. Run migrate-state.sh to backfill, or rebuild with /cc-fuzzer:campaign --reset to enable coverage."
+      warn "harness-built.json: coverage_tracking=false but no coverage_disabled_reason set. Rebuild with /cc-fuzzer:campaign --reset to enable coverage."
     fi
   fi
 
@@ -256,14 +264,14 @@ if [ -f "$STATE_DIR/harness-built.json" ]; then
   else
     CMPLOG_REASON=$(python3 "$CHECKS" field "$HB" cmplog_disabled_reason 2>/dev/null)
     if [ -z "$CMPLOG_REASON" ]; then
-      warn "harness-built.json: cmplog_enabled=false but no cmplog_disabled_reason set. Run migrate-state.sh to backfill."
+      warn "harness-built.json: cmplog_enabled=false but no cmplog_disabled_reason set."
     fi
   fi
 
   FMODE=$(python3 "$CHECKS" field "$HB" fuzzing_mode 2>/dev/null)
   case "$FMODE" in
     in_process|process_based) ;;
-    "") err "harness-built.json: fuzzing_mode missing (run migrate-state.sh to backfill)" ;;
+    "") err "harness-built.json: fuzzing_mode missing — rebuild with /cc-fuzzer:campaign --reset" ;;
     *) err "harness-built.json: invalid fuzzing_mode '$FMODE' (expected in_process or process_based)" ;;
   esac
 
@@ -276,10 +284,10 @@ if [ -f "$STATE_DIR/harness-built.json" ]; then
   fi
 fi
 
-# 3a-multi. harnesses.json (multi mode only) + mirror-drift check
-if [ "$MODE" = "multi" ]; then
+# 3a-multi. harnesses.json + mirror-drift check
+if [ "$HARNESS_NAMES_OK" -eq 1 ]; then
   if [ ! -f "$STATE_DIR/harnesses.json" ]; then
-    err "multi mode (harnesses[] declared) but $STATE_DIR/harnesses.json is missing"
+    err "harnesses[] declared but $STATE_DIR/harnesses.json is missing"
   else
     validate_json "$STATE_DIR/harnesses.json" "harness-set/v1" \
       "harnesses" "harnesses"
@@ -300,35 +308,28 @@ if [ "$MODE" = "multi" ]; then
   fi
 fi
 
-# 3b. current.json
+# 3b. current.json (cc-fuzzer-current/v2)
 if [ -f "$STATE_DIR/current.json" ]; then
-  if [ "$MODE" = "singular" ]; then
-    validate_json "$STATE_DIR/current.json" "cc-fuzzer-current/v1" \
-      "now,tick_number,fuzzer,fuzzers,harness,coverage,fuzzer_stats,findings,gaps,recommendation" \
-      "now,tick_number,fuzzer,fuzzers,harness,coverage,fuzzer_stats,findings,gaps,recommendation,last_report_at,multi_fuzzer,tick_coverage,consult_state,yolo_state"
-  else
-    validate_json "$STATE_DIR/current.json" "cc-fuzzer-current/v2" \
-      "now,tick_number,active_harness,harnesses,fuzzers,findings,recommendation" \
-      "now,tick_number,active_harness,harnesses,fuzzers,findings,recommendation,last_report_at,multi_fuzzer,coverage,fuzzer_stats,gaps,fuzzer,harness,tick_coverage,consult_state,yolo_state"
+  validate_json "$STATE_DIR/current.json" "cc-fuzzer-current/v2" \
+    "now,tick_number,active_harness,harnesses,fuzzers,findings,recommendation" \
+    "now,tick_number,active_harness,harnesses,fuzzers,findings,recommendation,last_report_at,multi_fuzzer,coverage,fuzzer_stats,gaps,fuzzer,harness,tick_coverage,consult_state,yolo_state"
 
-    # active_harness + recommendation.harness must reference declared harnesses
-    CUR="$STATE_DIR/current.json"
-    ACTIVE=$(python3 "$CHECKS" field "$CUR" active_harness 2>/dev/null)
-    if [ -n "$ACTIVE" ] && ! is_known_harness "$ACTIVE"; then
-      err "current.json: active_harness '$ACTIVE' is not a declared harness"
-    fi
-    REC_H=$(python3 "$CHECKS" field "$CUR" recommendation.harness 2>/dev/null)
-    if [ -n "$REC_H" ] && ! is_known_harness "$REC_H"; then
-      err "current.json: recommendation.harness '$REC_H' is not a declared harness"
-    fi
+  # active_harness + recommendation.harness must reference declared harnesses
+  CUR="$STATE_DIR/current.json"
+  ACTIVE=$(python3 "$CHECKS" field "$CUR" active_harness 2>/dev/null)
+  if [ -n "$ACTIVE" ] && ! is_known_harness "$ACTIVE"; then
+    err "current.json: active_harness '$ACTIVE' is not a declared harness"
+  fi
+  REC_H=$(python3 "$CHECKS" field "$CUR" recommendation.harness 2>/dev/null)
+  if [ -n "$REC_H" ] && ! is_known_harness "$REC_H"; then
+    err "current.json: recommendation.harness '$REC_H' is not a declared harness"
   fi
 
   BRANCH=$(python3 "$CHECKS" field "$STATE_DIR/current.json" recommendation.branch 2>/dev/null)
-  case "$BRANCH" in
-    sleep|restart_fuzzer|fix_instrumentation|triage|analyze_gaps|reanalyze_gaps|generate_seeds|concolic|mutator|stop) ;;
-    "") ;; # empty is fine, will be set on next update
-    *) err "current.json: invalid recommendation.branch '$BRANCH'" ;;
-  esac
+  # Validate recommendation.branch against the SSOT (enums.REC_BRANCHES).
+  if [ -n "$BRANCH" ] && ! python3 "$ENUMS" check rec_branches "$BRANCH"; then
+    err "current.json: invalid recommendation.branch '$BRANCH'"
+  fi
 fi
 
 # 3c. budget.json (campaign-level, unchanged across modes)
@@ -339,15 +340,10 @@ if [ -f "$STATE_DIR/budget.json" ]; then
     "campaign_started,limit_usd,spent_usd,spent_per_model,tokens_in,tokens_out,last_updated"
 fi
 
-# 3c2. fuzz-config.json
+# 3c2. fuzz-config.json (fuzz-config/v3)
 if [ -f "$STATE_DIR/fuzz-config.json" ]; then
-  if [ "$MODE" = "singular" ]; then
-    validate_json "$STATE_DIR/fuzz-config.json" "fuzz-config/v2" \
-      "fuzz_forks" "fuzz_forks,fuzzer_slots,tick,cve,yolo,code_review"
-  else
-    validate_json "$STATE_DIR/fuzz-config.json" "fuzz-config/v3" \
-      "fuzz_forks,harnesses,fuzzer_slots" "fuzz_forks,harnesses,fuzzer_slots,tick,cve,yolo,code_review"
-  fi
+  validate_json "$STATE_DIR/fuzz-config.json" "fuzz-config/v3" \
+    "fuzz_forks,harnesses,fuzzer_slots" "fuzz_forks,harnesses,fuzzer_slots,tick,cve,yolo,code_review"
 
   SLOT_ERRS=$(MODE="$MODE" \
               DECLARED="$(declared_env)" \
@@ -361,13 +357,9 @@ if [ -f "$STATE_DIR/fuzz-config.json" ]; then
   fi
 fi
 
-# 3c3. fuzzers.json (live manifest)
+# 3c3. fuzzers.json (live manifest, fuzzers/v2)
 if [ -f "$STATE_DIR/fuzzers.json" ]; then
-  if [ "$MODE" = "singular" ]; then
-    validate_json "$STATE_DIR/fuzzers.json" "fuzzers/v1" "slots" "slots"
-  else
-    validate_json "$STATE_DIR/fuzzers.json" "fuzzers/v2" "slots" "slots"
-  fi
+  validate_json "$STATE_DIR/fuzzers.json" "fuzzers/v2" "slots" "slots"
   MAN_ERRS=$(MODE="$MODE" \
              DECLARED="$(declared_env)" \
              MANIFEST_PATH="$STATE_DIR/fuzzers.json" \
@@ -426,12 +418,11 @@ if [ -f "$STATE_DIR/events.jsonl" ]; then
   fi
 fi
 
-# 3f. snapshot files
-# Schemas are the same across modes (coverage-snapshot/v2, gaps-report/v1,
-# concolic-result/v1). Multi mode additionally:
-#   - allows an optional top-level `harness` field
-#   - requires filename prefix <harness>- before <ts>
-#   - requires the `harness` field to match the prefix
+# 3f. snapshot files (coverage-snapshot/v2, gaps-report/v1, concolic-result/v1).
+# Each per-harness snapshot additionally:
+#   - carries a top-level `harness` field
+#   - has filename prefix <harness>- before <ts>
+#   - the `harness` field must match the prefix (enforced by snapshot-multi)
 if [ -d "$SNAPSHOTS_DIR" ]; then
   # Snapshot files are immutable historical artifacts written by varying
   # agent versions. The schema has expanded over time (e.g. coverage-analyst
@@ -529,20 +520,28 @@ if [ -d "$SNAPSHOTS_DIR" ]; then
     validate_json "$f" \
       "code-review/v1" \
       "ts,target,scope,tiers_run,findings,focus_areas" \
-      "ts,target,scope,tiers_run,findings,focus_areas,model_costs" \
+      "ts,target,scope,tiers_run,findings,focus_areas,model_costs,revisit_passes" \
       lenient
-  done
-
-  if [ "$MODE" = "multi" ]; then
-    SNAP_ERRS=$(SNAPS_DIR="$SNAPSHOTS_DIR" \
-                DECLARED="$(declared_env)" \
-                python3 "$CHECKS" snapshot-multi 2>&1)
-    if [ -n "$SNAP_ERRS" ]; then
+    # Per-finding validation (audit gap G2): the top-level check is lenient and
+    # stops at the snapshot fields; this enforces each finding's required set +
+    # enum membership (status/pattern/confidence/oracle_kind) against enums.py.
+    CR_ERRS=$(FILE="$f" python3 "$CHECKS" code-review 2>&1)
+    if [ -n "$CR_ERRS" ]; then
       while IFS= read -r line; do
         [ -z "$line" ] && continue
         err "$line"
-      done <<< "$SNAP_ERRS"
+      done <<< "$CR_ERRS"
     fi
+  done
+
+  SNAP_ERRS=$(SNAPS_DIR="$SNAPSHOTS_DIR" \
+              DECLARED="$(declared_env)" \
+              python3 "$CHECKS" snapshot-multi 2>&1)
+  if [ -n "$SNAP_ERRS" ]; then
+    while IFS= read -r line; do
+      [ -z "$line" ] && continue
+      err "$line"
+    done <<< "$SNAP_ERRS"
   fi
 fi
 
@@ -550,15 +549,8 @@ fi
 # Step 4: Cross-reference checks
 #------------------------------------------------------------------------------
 
-# Harness binary executable
-if [ "$MODE" = "singular" ] && [ -f "$STATE_DIR/harness-built.json" ]; then
-  HBIN=$(python3 "$CHECKS" field "$STATE_DIR/harness-built.json" harness_binary 2>/dev/null)
-  if [ -n "$HBIN" ] && [ ! -x "$HBIN" ]; then
-    warn "harness binary referenced but not executable: $HBIN"
-  fi
-fi
-
-if [ "$MODE" = "multi" ] && [ -f "$STATE_DIR/harnesses.json" ]; then
+# Harness binaries executable (each declared harness, from harnesses.json)
+if [ -f "$STATE_DIR/harnesses.json" ]; then
   BIN_REPORT=$(HS_PATH="$STATE_DIR/harnesses.json" python3 "$CHECKS" harness-bins 2>&1)
   if [ -n "$BIN_REPORT" ]; then
     while IFS= read -r line; do
@@ -568,21 +560,21 @@ if [ "$MODE" = "multi" ] && [ -f "$STATE_DIR/harnesses.json" ]; then
   fi
 fi
 
-# crashes/known/<id>/ subdirs should each have a repro.bin (and harnesses.txt in multi mode)
+# crashes/known/<id>/ subdirs should each have a repro.bin and harnesses.txt
 if [ -d "$CRASHES_DIR/known" ]; then
   for d in "$CRASHES_DIR/known"/*/; do
     [ -d "$d" ] || continue
     if [ ! -f "$d/repro.bin" ]; then
       err "missing canonical reproducer: $d/repro.bin"
     fi
-    if [ "$MODE" = "multi" ] && [ ! -f "${d%/}/harnesses.txt" ]; then
-      err "multi mode: missing ${d%/}/harnesses.txt (one harness name per line, must mirror finding.harnesses[])"
+    if [ ! -f "${d%/}/harnesses.txt" ]; then
+      err "missing ${d%/}/harnesses.txt (one harness name per line, must mirror finding.harnesses[])"
     fi
   done
 fi
 
-# Multi mode: crashes/new/* filenames must be <harness>__<sha256>.bin with a known harness prefix
-if [ "$MODE" = "multi" ] && [ -d "$CRASHES_DIR/new" ]; then
+# crashes/new/* filenames must be <harness>__<sha256>.bin with a known harness prefix
+if [ -d "$CRASHES_DIR/new" ]; then
   for f in "$CRASHES_DIR/new"/*; do
     [ -f "$f" ] || continue
     base=$(basename "$f")
@@ -598,7 +590,7 @@ if [ "$MODE" = "multi" ] && [ -d "$CRASHES_DIR/new" ]; then
 fi
 
 #------------------------------------------------------------------------------
-# Nix environment issues (schema v10)
+# Nix environment issues (schema v12)
 # nix-environment-issues.json is written by nix-env-reconcile.sh at session
 # start. severity=error issues on nix-committed harnesses are hard errors here
 # so the orchestrator's preflight gate also catches them during validate.
@@ -650,8 +642,7 @@ if [ "${#ERRORS[@]}" -gt 0 ]; then
   for e in "${ERRORS[@]}"; do echo "  $e"; done
   echo ""
   echo "FAIL: state validation failed. See errors above."
-  echo "  - Run 'scripts/migrate-state.sh' if this is a schema version mismatch"
-  echo "  - Run '/cc-fuzzer:reset' to wipe state and start over"
+  echo "  - Run '/fuzz-reset' to wipe state and start over (v0.30 requires schema v12; older state cannot be migrated)"
   echo "  - Or fix individual issues manually"
   exit 1
 fi

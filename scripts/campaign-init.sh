@@ -40,7 +40,31 @@ USAGE
 SRC="${CCFUZZER_SRC:?CCFUZZER_SRC not set (run via 'nix run <cc-fuzzer>#init')}"
 SYS="${CCFUZZER_SYSTEM:-x86_64-linux}"
 CAP="${CCFUZZER_INIT_CAP:-10}"
-PROJECT_ROOT="$PWD"
+
+# ---------------------------------------------------------------------------
+# Refuse to run from inside a fuzz/ tree.
+#
+# `#init` writes ./flake.nix and ./fuzz/nix-deps.nix relative to PROJECT_ROOT
+# (= $PWD). If the user runs `#init` from inside an existing fuzz/ (or one of
+# its subdirs), PROJECT_ROOT lands on the wrong dir and the helper produces
+# nested fuzz/fuzz/nix-deps.nix — the exact corruption /doctor flags as
+# "recursive fuzz/fuzz/". Catch it here instead of writing garbage.
+# ---------------------------------------------------------------------------
+PROJECT_ROOT="$(pwd -P)"
+case "/$PROJECT_ROOT/" in
+  */fuzz/*|*/fuzz/)
+    echo "ERROR: cwd '$PROJECT_ROOT' is inside a fuzz/ tree." >&2
+    echo "       Run 'nix run <cc-fuzzer>#init' from your PROJECT ROOT — the" >&2
+    echo "       directory that should CONTAIN fuzz/, not fuzz/ itself." >&2
+    echo "       (running here would create fuzz/fuzz/nix-deps.nix.)" >&2
+    exit 2
+    ;;
+esac
+if [ "$(basename "$PROJECT_ROOT")" = "fuzz" ]; then
+  echo "ERROR: cwd '$PROJECT_ROOT' is itself named 'fuzz'." >&2
+  echo "       Run 'nix run <cc-fuzzer>#init' from the parent directory." >&2
+  exit 2
+fi
 
 DEPS=()
 DO_SCAN=true
@@ -75,6 +99,13 @@ deps_nonempty() {
 # re-run after a plugin update repairs an old project flake). Resolved deps in
 # fuzz/nix-deps.nix are PRESERVED unless --force.
 mkdir -p "$PROJECT_ROOT/fuzz"
+
+# fuzz/.gitignore — keep findings/ TRACKED by default (PLUGIN_ISSUES friction
+# item 4). Emit it on a fresh init; don't overwrite a user-customized one.
+if [ ! -f "$PROJECT_ROOT/fuzz/.gitignore" ] && [ -f "$SRC/templates/fuzz.gitignore" ]; then
+  cp "$SRC/templates/fuzz.gitignore" "$PROJECT_ROOT/fuzz/.gitignore"
+  echo "wrote $PROJECT_ROOT/fuzz/.gitignore (keeps findings/ tracked by default)"
+fi
 
 sed -e "s|@CCFUZZER_SRC@|$SRC|g" -e "s|@SYSTEM@|$SYS|g" \
   "$SRC/templates/project-flake.nix" > "$FLAKE"
@@ -117,13 +148,16 @@ fi
 if [ "$WANT_SCAN" = true ] && command -v claude >/dev/null 2>&1; then
   echo ""
   echo "Resolving target build deps headlessly (cap ${CAP} attempts)…"
-  PROMPT="You are configuring a Nix dev shell for fuzzing a C/C++ target in the
-current directory. The shell composes cc-fuzzer's toolchain with this target's
-BUILD dependencies, which you declare in ./fuzz/nix-deps.nix — a function
-'pkgs: with pkgs; [ ... ]'.
+  PROMPT="You are configuring a Nix dev shell for fuzzing a C/C++ target in
+the project root '$PROJECT_ROOT'. The shell composes cc-fuzzer's toolchain
+with this target's BUILD dependencies, which you declare in the ONE file
+'$DEPS_FILE' — a function 'pkgs: with pkgs; [ ... ]'.
 
-GOAL: edit ./fuzz/nix-deps.nix so the dev shell evaluates. SUCCESS is this
-command exiting 0:
+GOAL: edit '$DEPS_FILE' so the dev shell evaluates. Always reference that file
+by its ABSOLUTE path '$DEPS_FILE' — never as './fuzz/nix-deps.nix' (relative
+paths drift if you change directories during inspection).
+
+SUCCESS is this command exiting 0 (run from '$PROJECT_ROOT'):
     ${GATE}
 Run it after each edit. Do NOT run a full 'nix develop' or 'nix build' — eval
 is the gate (much faster; it still resolves every attr).
@@ -140,7 +174,7 @@ STEPS:
        nix eval --raw nixpkgs#<attr>.outPath      (errors if the attr is wrong)
    Use 'nix search nixpkgs <keyword>' to discover the right attr when unsure.
    Prefer '<lib>.dev' for header/compile needs, the plain attr for runtime libs.
-3. Write the verified attrs into ./fuzz/nix-deps.nix as 'pkgs: with pkgs; [ ... ]'.
+3. Write the verified attrs into '$DEPS_FILE' as 'pkgs: with pkgs; [ ... ]'.
    Keep the list MINIMAL — only what the build needs.
 4. Run the gate. On 'attribute X missing' / eval error, fix that attr (re-verify
    with nix eval nixpkgs#...) and retry. At most ${CAP} edit→gate attempts;
@@ -150,21 +184,27 @@ An EMPTY list is a valid result ONLY for a genuinely self-contained target (no
 external libraries) — say so explicitly if you conclude that. Otherwise do not
 finish with an empty list while real dependencies remain unresolved.
 
-CONSTRAINTS: only edit ./fuzz/nix-deps.nix and read/inspect project files; do NOT
-edit ./flake.nix. If after ${CAP} attempts the gate still fails, leave your
-best-effort ./fuzz/nix-deps.nix and end with one line naming what's unresolved."
+CONSTRAINTS: only edit '$DEPS_FILE' and read/inspect project files; do NOT
+edit '$FLAKE'. If after ${CAP} attempts the gate still fails, leave your
+best-effort '$DEPS_FILE' and end with one line naming what's unresolved."
 
   set +e
   # Least-privilege, NOT --dangerously-skip-permissions: the scan may only read
   # the project (Read/Glob/Grep), run nix (Bash(nix *)), and write the ONE file
-  # ./fuzz/nix-deps.nix — nothing else. `--permission-mode dontAsk` auto-denies
-  # any other tool call and CONTINUES (no hang in headless -p), so even running
+  # at $DEPS_FILE — nothing else. `--permission-mode dontAsk` auto-denies any
+  # other tool call and CONTINUES (no hang in headless -p), so even running
   # unattended the scan can't touch other files or run arbitrary commands.
-  # (`--allowedTools` accepts comma/space-separated rules; Edit(path) also grants
-  # read of that path. `dontAsk` is a real --permission-mode in Claude Code v2.1+.)
-  claude -p "$PROMPT" \
+  # (`--allowedTools` accepts comma/space-separated rules; Edit(path) also
+  # grants read of that path. `dontAsk` is a real --permission-mode in Claude
+  # Code v2.1+.)
+  #
+  # Use the ABSOLUTE path of $DEPS_FILE in the permission rules and pin the
+  # agent's cwd to $PROJECT_ROOT — if the agent drifts cwd (e.g. `cd fuzz` to
+  # poke around) a relative './fuzz/nix-deps.nix' allow-rule would resolve to
+  # fuzz/fuzz/nix-deps.nix in the filesystem. Absolute paths neutralize that.
+  ( cd "$PROJECT_ROOT" && claude -p "$PROMPT" \
     --permission-mode dontAsk \
-    --allowedTools "Read,Glob,Grep,Bash(nix *),Edit(./fuzz/nix-deps.nix),Write(./fuzz/nix-deps.nix)"
+    --allowedTools "Read,Glob,Grep,Bash(nix *),Edit($DEPS_FILE),Write($DEPS_FILE)" )
   SCAN_RC=$?
   set -e
   # re-stage in case the scan rewrote the (possibly gitignored) deps file
@@ -188,7 +228,27 @@ elif [ "$WANT_SCAN" = true ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 3. Validate + lock + print next steps (NO launch)
+# 3. Defensive backstop — no recursive fuzz/fuzz/ may exist.
+#
+# If anything above (scaffold, headless scan with a drifted cwd, a future
+# helper) accidentally produced $PROJECT_ROOT/fuzz/fuzz/, abort loudly so the
+# user sees the bug at init time instead of meeting it later via /doctor.
+# Do NOT auto-correct — surfacing the bug is the point.
+# ---------------------------------------------------------------------------
+if [ -d "$PROJECT_ROOT/fuzz/fuzz" ]; then
+  echo "" >&2
+  echo "ERROR: recursive fuzz/fuzz/ exists at $PROJECT_ROOT/fuzz/fuzz/." >&2
+  echo "       This is a path-computation bug in init — something computed a" >&2
+  echo "       fuzz/ path relative to a cwd that was already inside fuzz/." >&2
+  echo "       Move the nested files up one level and remove fuzz/fuzz/:" >&2
+  echo "         mv $PROJECT_ROOT/fuzz/fuzz/* $PROJECT_ROOT/fuzz/ 2>/dev/null" >&2
+  echo "         rmdir $PROJECT_ROOT/fuzz/fuzz/" >&2
+  echo "       Then re-run 'nix run <cc-fuzzer>#init' from $PROJECT_ROOT." >&2
+  exit 2
+fi
+
+# ---------------------------------------------------------------------------
+# 4. Validate + lock + print next steps (NO launch)
 # ---------------------------------------------------------------------------
 echo ""
 echo "Validating the dev shell evaluates…"

@@ -1,21 +1,15 @@
 #!/usr/bin/env bash
 # run-fuzzer.sh
 #
-# Launches the campaign's fuzzer(s). In v0.17+ this script is a dispatcher
-# that reads fuzz/state/fuzz-config.json (schema fuzz-config/v2) and, for
-# each entry in `fuzzer_slots`, invokes scripts/launch-fuzzer-slot.sh.
-#
-# Backward-compat:
-#   - When `fuzzer_slots` is missing or empty, a single slot named "main"
-#     is launched with engine auto-detected from the binary. This matches
-#     v0.15/v0.16 single-fuzzer behavior exactly.
-#   - The legacy CLI `run-fuzzer.sh <binary> [corpus]` still works and
-#     forces single-slot mode using the given binary.
+# Launches the campaign's fuzzer(s). This script is a dispatcher that reads
+# fuzz/state/fuzz-config.json (schema fuzz-config/v3) and, for each entry in
+# `fuzzer_slots`, invokes scripts/launch-fuzzer-slot.sh. Every campaign is
+# multi-harness (schema v12); each slot binds to a declared harness and the
+# launcher resolves the slot's binary/corpus per-harness.
 #
 # Usage:
-#   run-fuzzer.sh                          # use harness-built.json + config slots
-#   run-fuzzer.sh <binary> [corpus-dir]    # legacy single-binary form (slot=main)
-#   run-fuzzer.sh --slot <name> --binary <path> [--corpus <dir>]
+#   run-fuzzer.sh                          # launch every slot in fuzz-config.json
+#   run-fuzzer.sh --slot <name> --harness <h> [--corpus <dir>] [--binary <path>]
 #                                          # explicit per-slot form (does NOT
 #                                          # touch other slots — safe for
 #                                          # running two harnesses side by side)
@@ -43,88 +37,60 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STATE_DIR="${FUZZ_STATE_DIR:-$FUZZ_ROOT/state}"
 mkdir -p "$STATE_DIR"
 
-# Parse args. Supports the legacy positional form `<binary> [corpus]` as well
-# as the explicit `--slot N --binary P --corpus C` form. The slot flag is the
-# escape hatch that lets a caller launch a second harness without killing the
-# first one (see commit history / v0.17.0 release notes).
+# Parse args. The explicit `--slot N --harness H [--corpus C] [--binary P]`
+# form is the escape hatch that lets a caller launch a single harness without
+# killing the others. With no args, every slot in fuzz-config.json is launched.
 CLI_BIN=""
 CLI_CORPUS=""
 CLI_SLOT=""
+CLI_HARNESS=""
 EXPLICIT_SLOT=false
 while [ $# -gt 0 ]; do
   case "$1" in
-    --slot)    CLI_SLOT="${2:-}";   EXPLICIT_SLOT=true; shift 2 ;;
-    --binary)  CLI_BIN="${2:-}";    shift 2 ;;
-    --corpus)  CLI_CORPUS="${2:-}"; shift 2 ;;
+    --slot)    CLI_SLOT="${2:-}";    EXPLICIT_SLOT=true; shift 2 ;;
+    --harness) CLI_HARNESS="${2:-}"; shift 2 ;;
+    --binary)  CLI_BIN="${2:-}";     shift 2 ;;
+    --corpus)  CLI_CORPUS="${2:-}";  shift 2 ;;
     --help|-h)
       sed -n '2,/^$/p' "$0" | sed 's/^# \?//'
       exit 0
       ;;
-    --*)
-      echo "ERROR: unknown flag '$1' (expected --slot|--binary|--corpus)" >&2
-      exit 2
-      ;;
     *)
-      # Legacy positional: first positional is binary, second is corpus.
-      if [ -z "$CLI_BIN" ]; then CLI_BIN="$1"
-      elif [ -z "$CLI_CORPUS" ]; then CLI_CORPUS="$1"
-      else echo "ERROR: unexpected positional arg '$1'" >&2; exit 2
-      fi
-      shift
+      echo "ERROR: unknown arg '$1' (expected --slot|--harness|--binary|--corpus)" >&2
+      exit 2
       ;;
   esac
 done
-# Do NOT default the corpus to the singular fuzz/corpus here. In multi mode each
-# slot's corpus is per-harness and is resolved by launch-fuzzer-slot.sh from
-# --harness; forcing a corpus at this level pointed every multi slot at the
-# legacy fuzz/corpus (bypassing fuzz/harnesses/<name>/corpus). Forward --corpus
-# downstream ONLY when the caller explicitly set one.
+# Do NOT default the corpus here. Each slot's corpus is per-harness and is
+# resolved by launch-fuzzer-slot.sh from --harness; forcing a corpus at this
+# level would bypass fuzz/harnesses/<name>/corpus. Forward --corpus downstream
+# ONLY when the caller explicitly set one.
 EXPLICIT_CORPUS=false
 [ -n "$CLI_CORPUS" ] && EXPLICIT_CORPUS=true
 
 # Stop existing slots before launching.
-#   - Explicit per-slot form (--slot or legacy positional with single binary):
-#     stop ONLY that slot, leaving other running slots intact. This is what
-#     makes side-by-side multi-binary campaigns work.
-#   - No CLI binary (config-driven reload): wipe everything and rebuild from
-#     fuzz-config.json. This preserves the v0.16 kill-all semantics for the
-#     config-replacement code path.
+#   - Explicit per-slot form (--slot): stop ONLY that slot, leaving other
+#     running slots intact. This is what makes side-by-side multi-harness
+#     campaigns work.
+#   - No --slot (config-driven reload): wipe everything and rebuild from
+#     fuzz-config.json (kill-all semantics for the config-replacement path).
 TARGET_SLOT="${CLI_SLOT:-main}"
-if [ -n "$CLI_BIN" ]; then
+if [ "$EXPLICIT_SLOT" = true ]; then
   # Single-slot stop. stop-fuzzer.sh --slot handles "no such slot" cleanly.
   if [ -x "$SCRIPT_DIR/stop-fuzzer.sh" ]; then
     bash "$SCRIPT_DIR/stop-fuzzer.sh" --slot "$TARGET_SLOT" >/dev/null 2>&1 || true
   fi
 elif [ -f "$STATE_DIR/fuzzers.json" ] || ls "$STATE_DIR"/fuzzer-*.pid >/dev/null 2>&1 \
-     || [ -f "$STATE_DIR/fuzzer.pid" ] || [ -f "$STATE_DIR/harness-built.json" ]; then
+     || [ -f "$STATE_DIR/harness-built.json" ]; then
   bash "$SCRIPT_DIR/kill-harness-processes.sh" --quiet >/dev/null 2>&1 || true
 fi
 
-# Resolve harness binary. In singular mode (or legacy CLI form), this is a
-# single campaign-wide binary. In multi mode, each slot binds to its own
-# harness and resolves its own binary — so we don't compute one here.
-HARNESS_BIN=""
-if [ -n "$CLI_BIN" ]; then
-  HARNESS_BIN="$CLI_BIN"
-elif ! is_multi; then
-  if [ -f "$STATE_DIR/harness-built.json" ]; then
-    HARNESS_BIN=$(python3 -c "
-import json
-try: print(json.load(open('$STATE_DIR/harness-built.json')).get('harness_binary',''))
-except: pass" 2>/dev/null)
-  fi
-  if [ -z "$HARNESS_BIN" ] || [ ! -x "$HARNESS_BIN" ]; then
-    echo "ERROR: harness binary missing or not executable: '$HARNESS_BIN'" >&2
-    echo "       run /fuzz:harness first, or pass a binary as the first arg" >&2
-    exit 1
-  fi
-fi
+# Each slot binds to a declared harness; launch-fuzzer-slot.sh resolves the
+# slot's binary and corpus per-harness. We never compute a campaign-wide binary.
 
-CORPUS="$CLI_CORPUS"
-
-# Resolve slot list. If CLI arg was passed, force single-slot mode.
+# Resolve slot list. With an explicit --slot, launch only that one slot.
 SLOTS_JSON=""
-if [ -z "$CLI_BIN" ] && [ -f "$STATE_DIR/fuzz-config.json" ]; then
+if [ "$EXPLICIT_SLOT" != true ] && [ -f "$STATE_DIR/fuzz-config.json" ]; then
   SLOTS_JSON=$(python3 -c "
 import json
 try:
@@ -136,27 +102,22 @@ except Exception:
 " 2>/dev/null)
 fi
 
-# Default to single 'main' slot if no slot config
 NUM_SLOTS=$(python3 -c "import json,sys; print(len(json.loads(sys.argv[1] or '[]')))" "${SLOTS_JSON:-[]}" 2>/dev/null || echo 0)
-if [ "$NUM_SLOTS" -eq 0 ]; then
-  # No fuzzer_slots[] declared → single 'main' slot.
-  # In multi mode this branch shouldn't usually fire (fuzz-config.json:
-  # fuzzer_slots[] should be populated for any multi-harness campaign), but
-  # if it does, default to launching on the first declared harness.
-  args=(--slot "$TARGET_SLOT" --engine auto)
-  if is_multi; then
-    fallback=$(default_harness)
-    if [ -z "$fallback" ]; then
-      echo "ERROR: multi mode but no slots declared and no default harness resolvable" >&2
-      exit 1
-    fi
-    args+=(--harness "$fallback")
-  else
-    args+=(--binary "$HARNESS_BIN")
+if [ "$EXPLICIT_SLOT" = true ] || [ "$NUM_SLOTS" -eq 0 ]; then
+  # Explicit single-slot launch (or no fuzzer_slots[] declared). Bind to the
+  # given harness, else the first declared harness.
+  HARNESS_TO_USE="$CLI_HARNESS"
+  [ -z "$HARNESS_TO_USE" ] && HARNESS_TO_USE=$(default_harness)
+  if [ -z "$HARNESS_TO_USE" ]; then
+    echo "ERROR: no --harness given and no declared harness resolvable" >&2
+    echo "       run 'harness-set.sh init --entry <fn>' + harness-writer first" >&2
+    exit 1
   fi
+  args=(--slot "$TARGET_SLOT" --engine auto --harness "$HARNESS_TO_USE")
   # Per-harness corpus is resolved by launch-fuzzer-slot.sh from --harness; only
-  # forward an explicitly-requested corpus (override).
+  # forward an explicitly-requested corpus/binary (overrides).
   $EXPLICIT_CORPUS && args+=(--corpus "$CLI_CORPUS")
+  [ -n "$CLI_BIN" ] && args+=(--binary "$CLI_BIN")
   bash "$SCRIPT_DIR/launch-fuzzer-slot.sh" "${args[@]}"
   RC=$?
 else
@@ -176,22 +137,16 @@ for entry in data:
     ]))
 " | while IFS='|' read -r slot engine role schedule lf_forks slot_harness timeout_ms; do
     args=(--slot "$slot" --engine "$engine")
-    # In multi mode the slot's binary AND corpus are per-harness; pass --harness
-    # and let launch-fuzzer-slot.sh resolve both. In singular mode pass --binary.
-    # Do NOT pass --corpus here: forcing it pointed every multi slot at the
-    # legacy singular fuzz/corpus instead of fuzz/harnesses/<name>/corpus.
-    if is_multi; then
-      if [ -z "$slot_harness" ]; then
-        echo "ERROR: slot=$slot has no harness binding in multi mode" >&2
-        RC=1
-        continue
-      fi
-      args+=(--harness "$slot_harness")
-    else
-      args+=(--binary "$HARNESS_BIN")
+    # The slot's binary AND corpus are per-harness; pass --harness and let
+    # launch-fuzzer-slot.sh resolve both. Do NOT pass --corpus here.
+    if [ -z "$slot_harness" ]; then
+      echo "ERROR: slot=$slot has no harness binding" >&2
+      RC=1
+      continue
     fi
+    args+=(--harness "$slot_harness")
     # Only forward an explicitly-requested corpus (override); otherwise the
-    # launcher resolves per-harness (multi) or fuzz/corpus (singular).
+    # launcher resolves the per-harness corpus.
     $EXPLICIT_CORPUS && args+=(--corpus "$CLI_CORPUS")
     [ -n "$role" ]      && args+=(--role "$role")
     [ -n "$schedule" ]  && args+=(--power-schedule "$schedule")

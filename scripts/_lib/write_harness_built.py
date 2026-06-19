@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""write_harness_built.py — emit harness-built.json (and, in multi mode,
-update harnesses.json) from the environment prepared by write-harness-built.sh.
+"""write_harness_built.py — upsert the harness record into harnesses.json and
+mirror harnesses[0] into harness-built.json, from the environment prepared by
+write-harness-built.sh.
 
 The bash wrapper does all argument parsing, validation, and hash computation,
 then exports the resolved values and calls this with one positional argument:
-the temp path to write the (singular file | multi-mode mirror) into.
+the temp path to write the harness-built.json mirror into.
 
-Singular: write the harness-built/v5 doc straight to argv[1].
-Multi:    upsert the harness-built/v7 doc (adds `name`, `build_backend`) into
-          harnesses.json by name, atomically, then mirror harnesses[0] into
-          argv[1] so legacy readers of harness-built.json keep working.
+Every campaign is multi-harness since v0.30. This upserts the harness-built/v7
+doc (with `name`, `build_backend`) into harnesses.json by name, atomically, then
+mirrors harnesses[0] into argv[1] so readers of harness-built.json keep working.
 """
 import json
 import os
@@ -28,11 +28,10 @@ def build_doc():
     df_raw = os.environ.get("DICT_FILES_PY", "")
     dict_files = [line for line in df_raw.splitlines() if line] if df_raw else []
     sanitizers = [s for s in os.environ["SANITIZERS_PY"].split(",") if s]
-    is_multi = os.environ.get("IS_MULTI_WRITE", "0") == "1"
 
     build_backend = os.environ.get("BUILD_BACKEND", "legacy") or "legacy"
     doc = {
-        "schema": "harness-built/v7" if is_multi else "harness-built/v5",
+        "schema": "harness-built/v7",
         "harness_source": os.environ["HARNESS_SOURCE"],
         "harness_binary": os.environ["HARNESS_BINARY"],
         "coverage_binary": opt(os.environ.get("COVERAGE_BIN_JSON", "")),
@@ -54,12 +53,11 @@ def build_doc():
         "built_at": os.environ["BUILT_AT"],
     }
 
-    if is_multi:
-        doc["name"] = os.environ["HARNESS_NAME"]
-        doc["build_backend"] = build_backend
-        import datetime as _dt
-        doc["build_backend_decided_at"] = _dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-        doc["build_backend_decided_by"] = "write-harness-built"
+    doc["name"] = os.environ["HARNESS_NAME"]
+    doc["build_backend"] = build_backend
+    import datetime as _dt
+    doc["build_backend_decided_at"] = _dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    doc["build_backend_decided_by"] = "write-harness-built"
 
     # Instrumented shared objects whose coverage mapping llvm-cov must also read
     # (a monolithic / Nix-DSO-linked harness has its coverage data in the .so,
@@ -92,7 +90,7 @@ def build_doc():
         except Exception:
             doc["oracle"] = {"type": "crash", "_parse_error": True, "_raw": oracle_raw}
 
-    return doc, is_multi
+    return doc
 
 
 def main(argv):
@@ -100,15 +98,9 @@ def main(argv):
         print("usage: write_harness_built.py <tmp-out-path>", file=sys.stderr)
         return 2
     out_path = argv[0]
-    doc, is_multi = build_doc()
+    doc = build_doc()
 
-    # Singular path: write doc straight to the harness-built.json TMP.
-    if not is_multi:
-        with open(out_path, "w") as f:
-            json.dump(doc, f, indent=2)
-        return 0
-
-    # Multi path: upsert into harnesses.json, then mirror harnesses[0].
+    # Upsert into harnesses.json, then mirror harnesses[0].
     hs_path = os.path.join(os.environ["STATE_DIR"], "harnesses.json")
     try:
         hset = json.load(open(hs_path))
@@ -130,7 +122,8 @@ def main(argv):
         json.dump(hset, f, indent=2)
     os.replace(hs_tmp, hs_path)
 
-    # Mirror harnesses[0] into harness-built.json so v8-era readers keep working.
+    # Mirror harnesses[0] into harness-built.json so readers of the flat
+    # harness-built.json (the read-only mirror) keep working.
     with open(out_path, "w") as f:
         json.dump(hs[0], f, indent=2)
     return 0

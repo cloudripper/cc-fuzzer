@@ -2,12 +2,10 @@
 """derive-tick-state.py — compute the mode-agnostic derived state blocks and
 merge them into an already-written current.json.
 
-`update-current.sh` writes current.json in one of two mode-specific paths
-(multi-harness or singular). The three derived blocks below depend only on
-files on disk plus the tick number already in current.json, so they are
-identical regardless of mode. Computing them here once — as a post-pass over
-the written current.json — removes the ~195-line duplication that previously
-lived in both code paths.
+`update-current.sh` writes current.json via build_current_multi.py. The three
+derived blocks below depend only on files on disk plus the tick number already
+in current.json, so they are computed here once as a post-pass over the written
+current.json.
 
 Blocks merged in:
   - tick_coverage : the latest tick-coverage-<ts>.json roundup, inlined

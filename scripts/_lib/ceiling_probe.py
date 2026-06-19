@@ -39,6 +39,16 @@ from __future__ import annotations
 import glob
 import json
 import os
+import sys
+from pathlib import Path
+
+# SSOT for all state enums. Same sibling-import pattern as cve-context-builder.py.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import enums  # type: ignore  # noqa: E402
+
+# Non-default engines whose appearance in an event reason signals an engine-swap
+# attempt (libFuzzer is the default, so a swap is toward any other ENGINES member).
+_NON_DEFAULT_ENGINES = enums.ENGINES - {"libfuzzer"}
 
 
 # Gap reasons that mean "a harness reshape can reach this" (not a seed/concolic move).
@@ -230,7 +240,8 @@ def compute(state_dir, snaps_dir, doc, events, enabled_at_ts, gain_ts,
             harness_writer_dispatches += 1
         if agent in ("planner-consult", "campaign-planner"):
             consult_since_plateau = True
-        if branch in ("slot_engine", "restart_fuzzer") and "aflpp" in reason.lower():
+        if branch in ("slot_engine", "restart_fuzzer") and \
+                any(eng in reason.lower() for eng in _NON_DEFAULT_ENGINES):
             engine_attempts += 1
         # Precise attempt tags: reason="structural:<action>:<entry>".
         if reason.startswith("structural:"):

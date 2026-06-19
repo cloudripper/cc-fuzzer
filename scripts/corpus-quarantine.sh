@@ -40,23 +40,21 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# In multi mode, resolve target harness from --harness (or current.json's
-# active_harness as fallback). In singular mode, ignore the arg.
-if is_multi; then
-  if [ -z "$HARNESS_NAME" ] && [ -f "$STATE_DIR/current.json" ]; then
-    HARNESS_NAME=$(python3 -c "
+# Resolve target harness from --harness (or current.json's active_harness as
+# fallback).
+if [ -z "$HARNESS_NAME" ] && [ -f "$STATE_DIR/current.json" ]; then
+  HARNESS_NAME=$(python3 -c "
 import json
 try: print(json.load(open('$STATE_DIR/current.json')).get('active_harness',''))
 except: pass" 2>/dev/null)
-  fi
-  if [ -z "$HARNESS_NAME" ]; then
-    echo "ERROR: multi mode but --harness <name> not provided and current.json has no active_harness" >&2
-    exit 1
-  fi
-  if ! is_known_harness "$HARNESS_NAME"; then
-    echo "ERROR: harness '$HARNESS_NAME' is not declared in fuzz-config.json:harnesses[]" >&2
-    exit 1
-  fi
+fi
+if [ -z "$HARNESS_NAME" ]; then
+  echo "ERROR: --harness <name> not provided and current.json has no active_harness" >&2
+  exit 1
+fi
+if ! is_known_harness "$HARNESS_NAME"; then
+  echo "ERROR: harness '$HARNESS_NAME' is not declared in fuzz-config.json:harnesses[]" >&2
+  exit 1
 fi
 
 CORPUS_DIR=$(corpus_dir   "$HARNESS_NAME")
@@ -65,21 +63,8 @@ REJECTED_DIR="$QUAR_DIR/rejected"
 
 mkdir -p "$CORPUS_DIR" "$QUAR_DIR" "$REJECTED_DIR" "$CRASHES_NEW" "$FLAKY"
 
-# Resolve the harness binary — per-harness in multi mode
-if is_multi; then
-  HARNESS=$(harness_binary "$HARNESS_NAME")
-else
-  HARNESS_INFO="$STATE_DIR/harness-built.json"
-  if [ ! -f "$HARNESS_INFO" ]; then
-    echo "ERROR: $HARNESS_INFO not found - no campaign" >&2
-    exit 1
-  fi
-  HARNESS=$(python3 -c "
-import json
-try: print(json.load(open('$HARNESS_INFO')).get('harness_binary', ''))
-except: pass
-" 2>/dev/null)
-fi
+# Resolve the per-harness harness binary
+HARNESS=$(harness_binary "$HARNESS_NAME")
 if [ -z "$HARNESS" ] || [ ! -x "$HARNESS" ]; then
   echo "ERROR: harness binary missing or not executable: $HARNESS" >&2
   exit 1
@@ -158,9 +143,9 @@ for f in "${inputs[@]}"; do
       HUNG=$((HUNG + 1))
       ;;
     *)
-      # Crashed - hard-link content-addressable into crashes/new/. In multi
-      # mode the filename carries the harness prefix so the triager attributes
-      # the crash to the right harness (matches detect-crashes.sh's shape).
+      # Crashed - hard-link content-addressable into crashes/new/. The filename
+      # carries the harness prefix so the triager attributes the crash to the
+      # right harness (matches detect-crashes.sh's shape).
       base=$(basename "$f")
       hash=$(sha256sum "$f" | cut -c1-16)
       stage_name=$(crash_filename "$HARNESS_NAME" "$hash")

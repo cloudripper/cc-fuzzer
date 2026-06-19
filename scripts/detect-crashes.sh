@@ -41,8 +41,8 @@ NEW_DIR="$FUZZ_ROOT/crashes/new"
 KNOWN_DIR="$FUZZ_ROOT/crashes/known"
 FLAKY_DIR="$FUZZ_ROOT/crashes/flaky"
 
-# Only act when at least one fuzzer slot is alive. In singular mode we check
-# the legacy fuzzer.pid; in multi mode we check fuzzers.json for any live slot.
+# Only act when at least one fuzzer slot is alive. We check fuzzers.json for any
+# live slot, falling back to the legacy fuzzer.pid if no manifest exists.
 any_slot_alive() {
   if [ -f "$STATE_DIR/fuzzers.json" ]; then
     MF="$STATE_DIR/fuzzers.json" python3 - <<'PY' 2>/dev/null
@@ -75,7 +75,7 @@ any_slot_alive || exit 0
 
 mkdir -p "$NEW_DIR"
 
-# Map a found crash file path to its source harness (multi mode only). The
+# Map a found crash file path to its source harness. The
 # launcher arranges per-harness output paths so the harness name is recoverable
 # from the path's components:
 #   fuzz/harnesses/<harness>/.libfuzzer-cwd/crash-*
@@ -106,23 +106,17 @@ while IFS= read -r f; do
     "$FLAKY_DIR"/*) continue;;
   esac
 
-  # Compute content hash and the staged filename. In multi mode prepend the
-  # source harness so the triager can attribute the crash; in singular mode
-  # the filename is just <hash>.bin.
+  # Compute content hash and the staged filename. Prepend the source harness so
+  # the triager can attribute the crash.
   HASH=$(sha256sum "$f" | cut -c1-16)
-  STAGE_NAME=""
-  if is_multi; then
-    H=$(path_to_harness "$f")
-    if [ -z "$H" ]; then
-      # We can't attribute the crash. In multi mode, an unattributable crash
-      # is an evidentiary problem — stage it anyway under a sentinel harness
-      # name "unknown" so it isn't dropped, and let the triager flag it.
-      H="unknown"
-    fi
-    STAGE_NAME=$(crash_filename "$H" "$HASH")
-  else
-    STAGE_NAME="$HASH.bin"
+  H=$(path_to_harness "$f")
+  if [ -z "$H" ]; then
+    # We can't attribute the crash. An unattributable crash is an evidentiary
+    # problem — stage it anyway under a sentinel harness name "unknown" so it
+    # isn't dropped, and let the triager flag it.
+    H="unknown"
   fi
+  STAGE_NAME=$(crash_filename "$H" "$HASH")
   TARGET="$NEW_DIR/$STAGE_NAME"
 
   if [ -f "$TARGET" ]; then

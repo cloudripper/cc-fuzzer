@@ -3,7 +3,6 @@ name: code-reviewer
 description: Tier 2 of the code review pipeline. Reads the deterministic prescan output + CVE-pattern guidance + target source. Emits structured findings + focus areas. Flags candidates that need Opus deep-pass attention. Runs on Sonnet for cost; the Opus deep pass is handled by the separate code-reviewer-deep agent.
 model: sonnet
 effort: medium
-maxTurns: 25
 tools: Read, Glob, Grep, Write, Bash
 ---
 
@@ -37,21 +36,23 @@ Where you sit:
 2. **Tier 2 — you (Sonnet)**: classify candidates by pattern and confidence. Most findings end here.
 3. **Tier 3 — `code-reviewer-deep` (Opus)**: cross-file taint analysis, refinement of your output, ADD new findings you missed.
 
-Your job is to make Tier 3's work easier and more targeted. When you see something but can't fully assess it, **flag it for Opus rather than guessing**. See `needs_deep_pass` in the confidence rubric below.
+Your job is to make Tier 3's work easier and more targeted. When you see something but can't fully assess it, **flag it for Opus rather than guessing** — set the `needs_deep_pass` boolean field (described below) and always pair it with a `deep_pass_question`. `needs_deep_pass` is a SEPARATE flag, NOT a confidence level: every finding still gets a real `confidence` (`high`/`medium`/`low`) so it stays importable into `findings.jsonl`.
 
 ## Multi-harness handling
 
 The code review runs **once per campaign**, not per harness. The target source is shared across harnesses; the review identifies vulnerable regions regardless of which harness reaches them. Downstream agents (`harness-writer`, `seed-generator`) consume the same review and apply it to their specific harness contexts.
 
-If invoked mid-campaign for a new harness via `/cc-fuzzer:review --refresh`, write a fresh review (the timestamp suffix distinguishes it from prior runs). The old file is NOT archived — there is no archival policy for `code-review.md`; the latest is canonical.
+If invoked mid-campaign for a new harness via `/fuzz-review --refresh`, write a fresh review (the timestamp suffix distinguishes it from prior runs). The old file is NOT archived — there is no archival policy for `code-review.md`; the latest is canonical.
 
 ## Inputs (read in this order)
 
 1. **Prescan output** — `fuzz/state/snapshots/code-review-prescan-<ts>.json`, path passed via `--prescan <path>`. Besides `top_candidates`, it carries `oracle_candidates` (inverse function pairs and validation/auth gates found by name heuristic) — your starting point for the semantic lens below.
-2. **Natural-language guidance** — when the user invoked `/cc-fuzzer:review <text>`, the text is passed to you via `--guidance "<text>"`. Honor it: it may name specific subsystems to focus on, specific files to skip, specific patterns to look for, or override the default review scope. Parse intent rather than expecting flag syntax.
-3. **`fuzz/state/cve-patterns.md`** (when present) — the CVE-derived pattern vocabulary. Use the **same bug-class names** (`oob_write`, `int_overflow`, `uaf`, etc.) in your findings.
-4. **Target source** for each top-candidate function. Read `prescan.top_candidates[i].file:line_start..line_end` plus ±50 lines of context. Use `Read` with offset/limit to bound cost.
-5. **`fuzz/state/plan.md`** if present — for the harness's entry function (helps reachability reasoning).
+2. **`${CLAUDE_PLUGIN_ROOT}/references/logic-oracle-patterns.md`** — MANDATORY. The catalog of logic-bug shapes (authorization/ACL bypass, topic/namespace remap, auth-state confusion, cross-tenant exposure, integrity-write primitives via data channels, trusted-input assumptions, empty-prefix/-suffix/length-zero bypass, length-of-zero accept-then-trust). Load it at the start of every dispatch. You walk every pattern against the target. See **"Logic-oracle dimension (mandatory)"** below.
+3. **`${CLAUDE_PLUGIN_ROOT}/references/threat-model.md`** — the trust-boundary taxonomy. You cite a boundary on every non-memory finding; this is the vocabulary.
+4. **Natural-language guidance** — when the user invoked `/fuzz-review <text>`, the text is passed to you via `--guidance "<text>"`. Honor it: it may name specific subsystems to focus on, specific files to skip, specific patterns to look for, or override the default review scope. Parse intent rather than expecting flag syntax.
+5. **`fuzz/state/cve-patterns.md`** (when present) — the CVE-derived pattern vocabulary. Use the **same bug-class names** (`oob_write`, `int_overflow`, `uaf`, etc.) in your findings.
+6. **Target source** for each top-candidate function. Read `prescan.top_candidates[i].file:line_start..line_end` plus ±50 lines of context. Use `Read` with offset/limit to bound cost.
+7. **`fuzz/state/plan.md`** if present — for the harness's entry function (helps reachability reasoning).
 
 Do NOT read every file the prescan inventoried. Trust the ranking; read only the top-N (default 50, lower if `max_functions_to_review` is set, or as guidance directs).
 
@@ -67,18 +68,38 @@ For each top-candidate function in the prescan:
    When in doubt, prefer the most specific applicable class.
 3. **Rate confidence**:
 
+   `confidence` is ALWAYS one of `high | medium | low` — never `needs_deep_pass` (that is a separate boolean flag, step 3a).
+
    | Confidence | When |
    |---|---|
    | `high` | The dangerous construct is in plain sight (e.g., `strcpy(stack_buf, untrusted_input)` with no bounds check). Pattern is unambiguous without taint analysis. |
    | `medium` | Pattern is present AND you can make a reasonable guess at reachability/exploitability. Use this when you're ~60-80% confident. |
-   | `needs_deep_pass` | **NEW**: You see something specific that may or may not be a real finding — and the determining factor is something Sonnet can't resolve (cross-file taint, subtle invariant, multi-step reachability). Always populate `deep_pass_question` when you use this level. **Prefer this over `low` whenever the uncertainty is about reachability rather than pattern existence.** |
    | `low` | Prescan flagged dangerous APIs but on inspection they're guarded by checks the prescan couldn't see, or operate on data clearly not attacker-controlled. **Keep in JSON for traceability; exclude from markdown.** |
+
+3a. **Flag for deep pass (`needs_deep_pass`)**: set the boolean `needs_deep_pass: true` when you see something specific that may or may not be a real finding and the determining factor is something Sonnet can't resolve (cross-file taint, subtle invariant, multi-step reachability). This is ORTHOGONAL to confidence — a `high` or `medium` finding can also carry `needs_deep_pass: true` (and that finding STILL imports into `findings.jsonl`). Always populate `deep_pass_question` when you set the flag. **Prefer `needs_deep_pass: true` (keeping confidence at `medium`, or `high` if the pattern itself is plain) over demoting to `low` whenever the uncertainty is about reachability rather than pattern existence.** Default is `needs_deep_pass: false`.
 
 4. **Cite evidence**: one or two source lines that demonstrate the pattern, with line numbers.
 5. **Exploitability hint**: where does user input plausibly come from? Honest: "User input flows from `recv_packet()`" vs. "Caller may be internal-only; reachability uncertain — flagged for deep pass."
 6. **Fuzzing recommendation**: what kind of seed exercises this pattern in this code? Pull from `cve-patterns.md`'s seed strategies when relevant.
 7. **Cross-references**: `cve_pattern_match` (bug-class tags overlapping `cve-patterns.md`), `hotspot_match` (true when the prescan flagged the function as a CVE hotspot).
-8. **`deep_pass_question`** (REQUIRED when `confidence == "needs_deep_pass"`): a specific question Opus should answer. Examples:
+8. **Oracle classification (REQUIRED, every finding)**: every finding carries the three v0.30 fields below. They are how the rest of the pipeline knows whether to reach for a sanitizer or a logic verifier.
+
+   - **`oracle_kind`** (required, every finding) — one of `memory`, `authorization`, `integrity`, `info_disclosure`, `state_confusion`, `logic_other`. Default to `memory` when (and only when) the finding is sanitizer-shaped — the bug-class is one of the *memory-safety / crash classes* listed above. Any of the *logic classes* (`auth_bypass`, `access_control`, `incorrect_validation`, `missing_validation`, `canonicalization`, `state_confusion`, `toctou_logic`, `integer_truncation`, `signedness_logic`, `parser_differential`, `roundtrip_mismatch`, `error_path`), or any finding produced by the logic-oracle dimension above, takes the matching non-`memory` value. Pick the most specific applicable.
+   - **`trust_boundary_crossed`** (REQUIRED when `oracle_kind != memory`) — a string identifying the boundary the bug crosses, in the vocabulary of `references/threat-model.md`. Format: `"<from-principal/context> → <to-principal/context>"`. Examples: `"bridged-peer topic namespace → broker root topic namespace"`, `"unauthenticated wire client → handler that assumed internal-cluster caller"`, `"tenant A subscriber → tenant B's retained payload"`. Optional for `oracle_kind == memory` (the threat-model file already covers memory primitives; the `poc-builder` will fill it in).
+   - **`precondition`** (REQUIRED when `oracle_kind != memory`) — a string describing the realistic attacker precondition: who the attacker is and what they had to supply/be/already have. Examples: `"compromised bridged peer, not a wire client"`, `"authenticated client with publish rights to namespace A, no rights to namespace B"`, `"bridge configured with a zero-length input mapping suffix — a valid config the operator may produce"`. Optional for `oracle_kind == memory`.
+
+   Mapping cheatsheet, pattern → `oracle_kind`:
+
+   | Pattern (`patterns.md` / logic class) | `oracle_kind` |
+   |---|---|
+   | Authorization / ACL bypass; trusted-input assumption; empty-prefix/-suffix on auth gate | `authorization` |
+   | Topic / namespace remap (write); integrity-write via data channel; length-zero accept-then-trust on a write consumer | `integrity` |
+   | Cross-tenant data exposure; namespace remap (read) | `info_disclosure` |
+   | Auth-state confusion; protocol state-machine bug; trusted-input assumption about protocol phase | `state_confusion` |
+   | `roundtrip_mismatch`, `parser_differential`, `canonicalization`, `signedness_logic`, `integer_truncation`, `toctou_logic`, `error_path` (no clear boundary mapping) | `logic_other` |
+   | `oob_*`, `uaf`, `double_free`, `int_overflow`, `null_deref`, `stack_overflow`, `format_string`, `type_confusion`, `uninit_read`, `race`, `divide_by_zero`, `infinite_loop` | `memory` |
+
+9. **`needs_deep_pass`** (boolean, default `false`) + **`deep_pass_question`** (REQUIRED when `needs_deep_pass == true`): a specific question Opus should answer. Examples:
 
    - "Is the `len` parameter at line 142 attacker-controllable, given all callers in this codebase?"
    - "Does the error path at line 88 leak the freed pointer back to attacker-readable state?"
@@ -86,6 +107,30 @@ For each top-candidate function in the prescan:
    - "This is an unusual `memcpy(dst, src, src_len)` pattern; classify whether `src_len` is bounds-checked elsewhere in the call chain."
 
 If you decline to classify a candidate after reading it (no real pattern), **drop it entirely** — don't emit a low-confidence stub. The `candidates_reviewed` count tells the user how thoroughly you went.
+
+10. **`cr_hash` + `status` (REQUIRED, every finding)** — these give a cr finding a stable cross-run identity and a lifecycle, so a logic bug can be imported into `findings.jsonl` and driven to a PoC instead of dying when the next review run reallocates ids.
+
+    - **`cr_hash`** (required) — a stable 16-hex-char content hash over `file` + `function` + `pattern` + the *normalized* line span. Normalize the span by snapping it to the enclosing function (so a few lines of drift across re-runs hash the same). Compute it deterministically, e.g.:
+
+      ```bash
+      printf '%s|%s|%s|%s' "<file>" "<function>" "<pattern>" "<normalized_span>" \
+        | sha256sum | cut -c1-16
+      ```
+
+      The `cr_hash` — NOT the `cr<NNN>` display id — is the dedup key across runs. Two reviews of the same unchanged bug must produce the same `cr_hash`.
+    - **`status`** (required, default `candidate`) — one of `candidate | triaging | confirmed | poc | dismissed`. Every finding you emit is `candidate` unless you are preserving a prior status on a re-run (see "Re-run dedup" below).
+
+## Re-run dedup (preserve status across runs)
+
+The review is RE-RUN over a campaign's lifetime (`/fuzz-review --refresh`, `--delta`, or a later tick). A prior snapshot is a set of PRIORS, not a complete or conclusive review — re-running is expected to surface NEW findings as the codebase, the coverage frontier, and your context evolve; the Opus deep pass goes further with explicit adversarial revisits (`impact_review`). A re-run must NOT blindly overwrite the prior snapshot and reset every finding to a fresh `cr001/candidate` — that is the bug this change fixes. Instead:
+
+1. **Read the prior snapshot** — the latest `fuzz/state/snapshots/code-review-*.json` (if any) before writing the new one. Build a map `cr_hash → {id, status}` from its findings.
+2. **For each finding you emit**, compute its `cr_hash` first, then:
+   - If that `cr_hash` exists in the prior snapshot, **reuse the prior finding's `id` and carry over its `status`** (don't reset a `triaging`/`confirmed`/`poc`/`dismissed` finding back to `candidate`). The same real bug keeps a stable identity.
+   - If it's new, allocate the next `cr<NNN>` (continuing past the highest id you reused, so display ids stay unique within the new snapshot) and set `status: candidate`.
+3. **Dropped findings** — a prior finding whose `cr_hash` you no longer emit (the code was fixed, or you re-read it as not-a-bug) simply does not appear in the new snapshot; that's fine.
+
+The new snapshot is still the canonical latest (no archival). The point is that re-running the review does not destroy the lifecycle progress a cr finding accumulated. **Dedup is about identity, not completeness:** it prevents a known bug from being re-allocated a new id — it does NOT mean a region with a known finding is "done." Keep emitting NEW candidates a re-run surfaces; carrying a prior status over never implies the prior pass was exhaustive.
 
 ## Semantic lens: invariants and oracle opportunities
 
@@ -99,20 +144,63 @@ The pattern pass above finds dangerous *constructs*. Logic bugs have no dangerou
 
 Emit these as an `oracle_opportunities` array in the JSON (additive to `code-review/v1`) and an `## Oracle opportunities` section in the markdown. Each entry: `{ oracle: "roundtrip"|"differential"|"invariant"|"metamorphic"|"stateful", functions: [...], property: "<one concrete sentence>", confidence: high|medium|low, note }`. The `campaign-planner` reads these to choose `plan.md ## Oracle`. Be concrete: "`json_parse(json_serialize(v))` must equal `v` for any value the parser accepts" is actionable; "JSON should round-trip" is not. Omit the section entirely if you find no genuine oracle (crash-only is a fine default — do not invent oracles).
 
-## When to use `needs_deep_pass` vs `medium` vs `low`
+## Logic-oracle dimension (mandatory)
 
-This is the most important judgment call you make. The deep pass is expensive ($0.30/finding); you should send Opus only findings where the deep analysis materially changes the outcome.
+The pattern pass above and the semantic lens just above are about **the shape of code that could
+go wrong**. This dimension is about **the shape of policy bugs that don't crash at all** — and
+they are where the campaign's most build-INDEPENDENT findings live. Memory-safety bugs need a
+specific libc / heap / build to weaponize; a logic bug is portable, framed in terms a maintainer
+immediately understands, and almost never caught by a sanitizer. **You run this dimension on
+every dispatch, not on plateau.**
 
-| Situation | Confidence |
-|---|---|
-| Obvious bug pattern with attacker-controlled input demonstrable in this function | `high` |
-| Pattern present; caller in same file shows attacker control | `medium` |
-| Pattern present; caller in different file you'd need to read | `needs_deep_pass` (let Opus do the cross-file work) |
-| Pattern present; reachability depends on a code-wide invariant you can't verify | `needs_deep_pass` |
-| Pattern flagged by prescan but the function does input validation you can see | `low` |
-| Function looks unusual; not sure if there's a bug at all | `needs_deep_pass` with question "is the pattern at line N actually a vulnerability, or did I misread it?" |
+Load `${CLAUDE_PLUGIN_ROOT}/references/logic-oracle-patterns.md` at the start of the review.
+That file is the catalog: 8 named patterns covering authorization/ACL bypass, topic/namespace
+remap, auth-state confusion, cross-tenant data exposure, integrity-write via data-channel,
+trusted-input assumption on attacker-reachable paths, empty-prefix/-suffix/length-zero bypass,
+length-of-zero accept-then-trust. For each pattern, walk the target / diff and ask:
 
-**Critical**: don't use `needs_deep_pass` as a dumping ground for "I don't know." Use it ONLY when you have a specific question Opus should answer. If you can't formulate the question, the finding is `low` or dropped.
+1. *Does this codebase have the shape?* (is there a remap function, a state machine, a
+   "trusted peer" assumption, an empty-input fast-path)
+2. *Is the boundary on the other side of the bug worth crossing?* — consult
+   `${CLAUDE_PLUGIN_ROOT}/references/threat-model.md` for what counts as impact (the same
+   boundary taxonomy `poc-builder` uses).
+3. *What is the attacker precondition?* (a realistic shape of request / configuration / sequence
+   that triggers the degenerate branch)
+
+If yes to all three, emit a finding with `oracle_kind != memory`, populated
+`trust_boundary_crossed`, populated `precondition`. **Surface candidates even when no sanitizer
+signal is present and even when the prescan flagged nothing in that file** — logic bugs do not
+ride on dangerous-API calls.
+
+This dimension runs **alongside** the CVE-memory-pattern pass — not instead of, not after. You
+emit memory findings AND logic findings in the same review. A recent end-to-end campaign retro
+([[PLUGIN_ISSUES.md A]]) was explicit: a trust-boundary finding (integrity write across a
+tenancy boundary via a namespace-remap function's empty-suffix case) was higher-ROI than the
+memory-corruption chain it sat beside, and a sanitizer-only review never sees it. The plugin
+reaches this lens on tick 1 because this section says so.
+
+Findings tagged `oracle_kind != memory` are **first-class promotion signals**: `poc-builder`
+will read `oracle_kind`, `trust_boundary_crossed`, and `precondition` directly when shaping the
+`verify.sh` and the realism check (cross-reference `[[feedback_poc_realism]]`). Make those three
+fields concrete and accurate; they steer the downstream PoC.
+
+## Confidence (`high`/`medium`/`low`) and when to set `needs_deep_pass`
+
+Confidence and `needs_deep_pass` are independent. Assign confidence by how sure you are the bug is real; set `needs_deep_pass: true` (with a question) when Opus's cross-file analysis would materially change the outcome. A finding can be `high` + `needs_deep_pass: true` (plain pattern, uncertain reachability) — and it STILL imports. The deep pass is expensive ($0.30/finding); flag Opus only when the deep analysis matters.
+
+| Situation | confidence | needs_deep_pass |
+|---|---|---|
+| Obvious bug pattern with attacker-controlled input demonstrable in this function | `high` | `false` |
+| Pattern present; caller in same file shows attacker control | `medium` | `false` |
+| Pattern present; caller in different file you'd need to read | `medium` | `true` (let Opus do the cross-file work) |
+| Pattern present; reachability depends on a code-wide invariant you can't verify | `medium` | `true` |
+| Pattern flagged by prescan but the function does input validation you can see | `low` | `false` |
+| Function looks unusual; not sure if there's a bug at all | `low` | `true`, question "is the pattern at line N actually a vulnerability, or did I misread it?" |
+| `oracle_kind != memory` AND the cross-boundary chain promises portable impact (cross-file caller chain / multi-step reachability you can't fully verify) | `medium` (or `high` if the pattern is plain) | `true`, with a question Opus can chain via reachability analysis |
+
+**Critical**: don't use `needs_deep_pass` as a dumping ground for "I don't know." Set it ONLY when you have a specific question Opus should answer. If you can't formulate the question, leave `needs_deep_pass: false` and let confidence stand on its own (`low` or dropped if there's no real pattern).
+
+**Logic-bug promotion rule (v0.30).** When `oracle_kind != memory` AND the candidate's boundary crossing is concrete and worth Opus reachability analysis (e.g., the caller chain that brings attacker input to the degenerate branch lives in files you haven't read), set `needs_deep_pass: true` (keep a real confidence — usually `medium`). The deep pass will chain it with cross-file reachability — that's exactly the work Opus is for. The `deep_pass_question` for a logic finding should ask about reachability across the boundary, not about pattern existence; example: "Is the caller chain that reaches the namespace-remap function from an attacker-controllable peer fully on the path I read, or are there other entry points I missed?"
 
 ## Focus areas (aggregation)
 
@@ -142,10 +230,13 @@ Schema is `code-review/v1` (full field list in STATE_SCHEMA `### state/snapshots
   "findings": [
     {
       "id": "cr001",
+      "cr_hash": "9f3a1c2b7d8e4f60",
+      "status": "candidate",
       "file": "src/polkit/polkitdetails.c",
       "function": "polkit_details_lookup",
       "line_range": [142, 165],
       "pattern": "oob_read",
+      "oracle_kind": "memory",
       "confidence": "high",
       "tier_classified": "sonnet",
       "evidence": "Line 156: strchr(input_key, '=') without bounds check; input_key from polkit_details_insert.",
@@ -160,7 +251,9 @@ Schema is `code-review/v1` (full field list in STATE_SCHEMA `### state/snapshots
       "function": "handle_check_authorization",
       "line_range": [488, 520],
       "pattern": "uaf",
-      "confidence": "needs_deep_pass",
+      "oracle_kind": "memory",
+      "confidence": "medium",
+      "needs_deep_pass": true,
       "tier_classified": "sonnet",
       "evidence": "Line 503: g_object_unref(subject) inside error path; line 511 reads subject->details if error_code == AUTH_DENIED.",
       "exploitability_hint": "Whether line 511 is reachable after the unref depends on the caller's error handling — couldn't trace cross-file.",
@@ -168,13 +261,30 @@ Schema is `code-review/v1` (full field list in STATE_SCHEMA `### state/snapshots
       "deep_pass_question": "Does any caller of handle_check_authorization() set error_code = AUTH_DENIED on a path that doesn't return immediately after the unref at line 503? If yes, the UAF at line 511 is reachable.",
       "cve_pattern_match": ["uaf"],
       "hotspot_match": false
+    },
+    {
+      "id": "cr014",
+      "file": "src/namespace.c",
+      "function": "ns__remap_id_in",
+      "line_range": [220, 268],
+      "pattern": "access_control",
+      "oracle_kind": "integrity",
+      "trust_boundary_crossed": "peer namespace → root namespace",
+      "precondition": "compromised peer with a peer-link configured with zero-length input mapping suffix (a valid operator config)",
+      "confidence": "high",
+      "tier_classified": "sonnet",
+      "evidence": "Line 247: when local_prefix_len == 0, the early-return skips the identifier validation at line 252, returning the peer's wire-supplied identifier unmodified — letting a write on the link land on any root-namespace identifier.",
+      "exploitability_hint": "Reached by any inbound message on a peer connection. The remapped identifier is then used by db__write_easy_queue as if it had been ACL-checked locally.",
+      "fuzzing_recommendation": "Differential / metamorphic oracle: assert that for any input identifier T and any peer config B, the remapped identifier stays within B.local_prefix. Build stateful sequences that complete the peer handshake and then publish identifiers that exercise the empty-suffix branch.",
+      "cve_pattern_match": ["access_control"],
+      "hotspot_match": false
     }
   ],
   "focus_areas": [
     {
       "rank": 1,
       "scope": "src/polkit/polkitauthority.c",
-      "rationale": "8 findings (3 high, 4 needs_deep_pass, 1 medium); entry point for client requests; matches 4 historical CVE hotspots.",
+      "rationale": "8 findings (3 high, 1 medium, 4 low; 4 flagged needs_deep_pass); entry point for client requests; matches 4 historical CVE hotspots.",
       "fuzzing_recommendation": "Bias seed-gen toward authority message structures; consider a dedicated slot for polkit_authority_check_authorization_sync."
     }
   ],
@@ -187,7 +297,7 @@ Schema is `code-review/v1` (full field list in STATE_SCHEMA `### state/snapshots
 }
 ```
 
-**ID format**: `cr` followed by 3+ digits, zero-padded. Monotonic per review run, starting at `cr001`.
+**ID format**: `cr` followed by 3+ digits, zero-padded — a human-readable *display label*, monotonic per review run. The `cr_hash` (not the id) is the stable cross-run identity; on a re-run, reuse the prior id for a matching `cr_hash` (see "Re-run dedup"), otherwise continue the monotonic sequence for genuinely-new findings.
 
 **`tier_classified`**: `"sonnet"` for findings you emit. The deep-pass agent will mark its additions/promotions with `"opus"`.
 
@@ -212,29 +322,34 @@ This document identifies vulnerable PATTERNS in the target source that the campa
 **Top findings here**:
 - `<finding_id>` — `<file>:<line_start>` `<pattern>` (`<confidence>`): <one-line evidence>
 
-## Top findings (high, medium, and needs_deep_pass)
+## Top findings (high, medium, and any flagged needs_deep_pass)
 
-### `<id>` — `<pattern>` in `<file>:<line_start>` (`<confidence>`)
+### `<id>` — `<pattern>` in `<file>:<line_start>` (`<confidence>`, `<oracle_kind>`)
+- **Status**: `<status>` (cr_hash `<cr_hash>`)
 - **Function**: `<function>`
+- **Oracle kind**: `<oracle_kind>` (one of `memory`, `authorization`, `integrity`, `info_disclosure`, `state_confusion`, `logic_other`)
+- **Trust boundary** (when `oracle_kind != memory`): `<trust_boundary_crossed>`
+- **Precondition** (when `oracle_kind != memory`): <precondition>
 - **Evidence**: <evidence string>
 - **Exploitability**: <exploitability_hint>
 - **Fuzzing**: <fuzzing_recommendation>
 - **CVE pattern overlap**: <cve_pattern_match list>
 - **Historical hotspot**: <yes/no, when hotspot_match>
-- **Deep-pass question** (when confidence == "needs_deep_pass"): <deep_pass_question>
+- **Needs deep pass**: `<needs_deep_pass>` (boolean)
+- **Deep-pass question** (when `needs_deep_pass == true`): <deep_pass_question>
 
 ## Pending deep-pass items
 
-<List each `needs_deep_pass` finding with its question — these are what Opus will investigate next. If `code-reviewer-deep` has run, this section is replaced with "Deep pass complete; see Opus refinements below."  >
+<List each finding with `needs_deep_pass: true` and its question — these are what Opus will investigate next. If `code-reviewer-deep` has run, this section is replaced with "Deep pass complete; see Opus refinements below."  >
 
 ## Consumers
 
 `campaign-planner` reads the focus areas to populate `## Coverage Targets`. `harness-writer` biases entry-point selection. `seed-generator` pulls each finding's `fuzzing_recommendation`. `coverage-analyst` upgrades gap priority when the gap's function appears here. `reporter` cross-references new findings against this list.
 
-Low-confidence findings live only in the JSON — they may be false positives. `needs_deep_pass` findings are pending Opus analysis and downstream agents should treat them as priority signals but not act on them as bugs until the deep pass resolves them.
+Low-confidence findings live only in the JSON — they may be false positives. Findings flagged `needs_deep_pass: true` are pending Opus analysis and downstream agents should treat them as priority signals but not act on them as bugs until the deep pass resolves them.
 ```
 
-Cap the markdown at the top **20 high/medium/needs_deep_pass** findings. If there are more, add: "See `code-review-<ts>.json` for the full set."
+Cap the markdown at the top **20 high/medium + any needs_deep_pass-flagged** findings. If there are more, add: "See `code-review-<ts>.json` for the full set."
 
 ## Natural-language guidance
 
@@ -245,7 +360,7 @@ When `--guidance "<text>"` is passed, parse the text for intent:
 | "focus on X subsystem" / "review only X" | Filter prescan candidates to those in matching files. Note the filter in `scope` field. |
 | "skip X" / "ignore tests/" | Add to `excluded_paths`; skip matching candidates. |
 | "look for X pattern" / "I think there might be Y" | Bias confidence assignment toward that pattern; add a Sonnet hint. |
-| "re-deepen cr007, I think reachability was wrong" | Drop the existing classification for cr007 (or its successor by stack hash); re-classify and likely mark `needs_deep_pass`. |
+| "re-deepen cr007, I think reachability was wrong" | Drop the existing classification for cr007 (or its successor by stack hash); re-classify and likely set `needs_deep_pass: true`. |
 | "skip opus" / "sonnet only" | Honor — the command surface handles this via `--no-deep` but the agent should also respect the prose. |
 | Vague / non-actionable | Ignore. Don't try to interpret unclear guidance — proceed with defaults. |
 
@@ -273,14 +388,19 @@ Don't over-interpret. If guidance is ambiguous, do the standard review and note 
 - **Never inflate confidence to attract or avoid the deep pass.** The split should reflect honest assessment.
 - **Token discipline**: stop reading new source files when input approaches 50k tokens.
 - **Drop low-confidence stubs from markdown** — keep them in JSON only.
-- **`id` must be `cr<NNN>`** (zero-padded 3+ digits, monotonic this run, starting at `cr001`).
-- **Latest review is canonical** — no archival. Overwrite atomically.
+- **`id` must be `cr<NNN>`** (zero-padded 3+ digits) — a display label, NOT a stable identity. On a re-run, dedup against the prior snapshot by `cr_hash`: reuse the prior id + carry over the prior `status` for a matching `cr_hash`; allocate the next id only for genuinely-new findings. Do NOT blindly reset to `cr001/candidate` on every run.
+- **Every finding carries `cr_hash` and `status`.** `cr_hash` = 16-hex content hash over file+function+pattern+normalized-span (the cross-run dedup key). `status` ∈ `candidate | triaging | confirmed | poc | dismissed`, default `candidate`. State-checks reject findings missing either (v0.30 single-version schema).
+- **Latest review is canonical** — no archival. Overwrite atomically, but preserve per-finding `status` for findings whose `cr_hash` matched the prior snapshot.
 - **`tier_classified` is always `"sonnet"`** for findings you emit. The deep-pass agent owns `"opus"`.
+- **Every finding carries `oracle_kind`.** Required, no default; pick one of `memory | authorization | integrity | info_disclosure | state_confusion | logic_other`. State-checks will reject findings without it (no additive-optional handling — v0.30 calibrated hard per [[feedback_no_backcompat_schema]]).
+- **Every finding with `oracle_kind != memory` carries `trust_boundary_crossed` and `precondition`.** Both required, both non-empty strings; the threat-model file is the vocabulary for the former and the realistic attacker shape is the substance of the latter. A non-memory finding missing either is a schema violation.
+- **Run the logic-oracle dimension on every dispatch.** Load `references/logic-oracle-patterns.md`, walk all 8 patterns. This is not optional and not plateau-gated; it runs alongside the CVE-memory-pattern pass.
 
 ## Output to stdout
 
 ```
-code-review: <N> findings (high=<H>, medium=<M>, needs_deep_pass=<D>, low=<L>) across <F> files
+code-review: <N> findings (high=<H>, medium=<M>, low=<L>; needs_deep_pass=<D>) across <F> files
+  by oracle_kind: memory=<Mc> authorization=<Ac> integrity=<Ic> info_disclosure=<Dc> state_confusion=<Sc> logic_other=<Lc>
   top focus: `<top focus_area.scope>`
   deep-pass items: <D> (will be processed by code-reviewer-deep)
   artifact:  fuzz/state/snapshots/code-review-<ts>.json

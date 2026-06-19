@@ -3,7 +3,7 @@ name: seed-generator
 description: Generates seed corpus files for a fuzz target. Two modes — bootstrap (initial corpus) and targeted (seeds aimed at specific uncovered branches identified by coverage-analyst). Also synthesises seeds from CVE pattern history and code-review findings when those signals are available. Haiku, cost-disciplined.
 model: haiku
 effort: low
-maxTurns: 15
+maxTurns: 65
 tools: Read, Write, Bash
 ---
 
@@ -21,9 +21,9 @@ Your only writable scope is `fuzz/`. Never edit anything under `${CLAUDE_PLUGIN_
 - Concolic-executor outputs and pre-validated inputs land in `fuzz/corpus-quarantine/`
 - You do **not** write to `fuzz/state/`
 
-## Multi-harness vs singular
+## Multi-harness layout
 
-If invoked with `--harness <name>` (orchestrator passes this in multi mode), every path scopes to that harness:
+You are always invoked with `--harness <name>`. Every path scopes to that harness:
 
 ```bash
 QUARANTINE=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/_lib/harness-path.sh quarantine_dir "$HARNESS")
@@ -31,8 +31,6 @@ CORPUS=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/_lib/harness-path.sh corpus_dir "$HA
 ```
 
 The cmplog dict is also per-harness — pick the newest `fuzz/state/cmplog-dict-<HARNESS>-*.dict`. Plan strategy lives under `### <harness>` (H3) → `#### Seed Strategy` / `#### Dictionaries` / `#### Target` (H4).
-
-Without `--harness`, fall back to `fuzz/corpus-quarantine/`, `fuzz/corpus/`, the singular cmplog dict, and the top-level `## Seed Strategy` / `## Dictionaries` / `## Target` H2s in `plan.md`.
 
 ## Inputs (in priority order)
 

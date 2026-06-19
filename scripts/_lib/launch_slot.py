@@ -11,12 +11,17 @@ Subcommands:
   parse-dict-json   env DJ                 -> each dict-file path, one per line
   update-manifest   env MANIFEST SLOT ENGINE BIN PID PGID STARTED_AT
                         LOG_FILE PID_FILE ENGINE_FILE ROLE POWER_SCHEDULE
-                        RESTART_OF HARNESS IS_MULTI
-                    upsert this slot's entry into fuzzers.json (atomic)
+                        RESTART_OF HARNESS
+                    upsert this slot's entry into fuzzers.json (fuzzers/v2, atomic)
 """
 import json
 import os
 import sys
+from pathlib import Path
+
+# SSOT for all state enums. Same sibling-import pattern as cve-context-builder.py.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import enums  # type: ignore  # noqa: E402
 
 
 def cmd_parse_dict_json():
@@ -36,9 +41,19 @@ def cmd_update_manifest():
     mf = os.environ["MANIFEST"]
     slot = os.environ["SLOT"]
     restart_of = os.environ.get("RESTART_OF", "")
-    is_multi = os.environ.get("IS_MULTI", "0") == "1"
-    harness = os.environ.get("HARNESS", "") if is_multi else ""
-    expected_schema = "fuzzers/v2" if is_multi else "fuzzers/v1"
+    # Engine is validated against the SSOT here (writer of record); the bash
+    # launcher also validates before reaching this point.
+    engine = os.environ["ENGINE"]
+    if engine not in enums.ENGINES:
+        sys.stderr.write(
+            "launch_slot: invalid engine '%s' (expected one of: %s)\n"
+            % (engine, ", ".join(sorted(enums.ENGINES)))
+        )
+        sys.exit(2)
+    # Multi-harness is the only mode (schema v12): every slot carries a harness
+    # binding and fuzzers.json is fuzzers/v2.
+    harness = os.environ.get("HARNESS", "")
+    expected_schema = "fuzzers/v2"
 
     try:
         doc = json.load(open(mf))
@@ -62,7 +77,7 @@ def cmd_update_manifest():
 
     entry = {
         "slot":           slot,
-        "engine":         os.environ["ENGINE"],
+        "engine":         engine,
         "binary":         os.environ["BIN"],
         "pid":            os.environ["PID"],
         "pgid":           os.environ["PGID"],
@@ -75,8 +90,7 @@ def cmd_update_manifest():
         "restart_count":  restart_count,
         "last_restart_at": last_restart_at,
     }
-    if is_multi:
-        entry["harness"] = harness
+    entry["harness"] = harness
 
     if idx is None:
         doc["slots"].append(entry)

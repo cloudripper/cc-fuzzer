@@ -2,15 +2,12 @@
 # harness-set.sh
 #
 # Declares the campaign's harness set in fuzz/state/fuzz-config.json. This is
-# the config-patching step that activates schema-v9 multi-harness mode — every
-# plugin script and agent keys "multi vs singular" off a non-empty harnesses[]
-# in fuzz-config.json (see _lib/harness-path.sh:is_multi).
+# the config step that establishes the multi-harness layout (schema v12) — every
+# campaign declares a non-empty harnesses[] in fuzz-config.json.
 #
-# Since v0.19.2 every NEW campaign runs in multi-harness mode from COLD, with a
-# single harness as the degenerate case (bundle under fuzz/harnesses/<name>/).
-# This means the on-disk schema never has to migrate when a second harness is
-# added later — `add` just appends. Existing singular campaigns are left as-is
-# and keep working on the legacy flat layout.
+# Every campaign runs in multi-harness mode from COLD, with a single harness as
+# the degenerate case (bundle under fuzz/harnesses/<name>/). The on-disk schema
+# never has to migrate when a second harness is added later — `add` just appends.
 #
 # Subcommands:
 #   harness-set.sh init --entry <fn> [--name <name>] [--engine libfuzzer|aflpp]
@@ -24,9 +21,9 @@
 #
 #   harness-set.sh add  --entry <fn> [--name <name>] [--engine libfuzzer|aflpp]
 #                       [--slot <slot>]
-#       Append a harness + slot to an ALREADY-multi campaign. Refuses on a
-#       singular campaign (those need the documented singular->multi upgrade).
-#       After this, build the harness with `harness-writer --harness <name>`.
+#       Append a harness + slot to a campaign that already declares a harness
+#       set. Run `init` first if no harnesses[] exist yet. After this, build the
+#       harness with `harness-writer --harness <name>`.
 #
 #   harness-set.sh fallback-backend <name> --reason <enum> --evidence <text>
 #       Demote a nix-committed harness to legacy build_backend. Writes a
@@ -181,9 +178,9 @@ if not SLOT_RE.match(slot):
 
 if action == "add":
     if not harnesses:
-        fail("not a multi-harness campaign (no harnesses[] in fuzz-config.json). "
-             "`add` appends to an already-multi campaign; a singular campaign "
-             "needs the documented singular->multi upgrade.")
+        fail("no harnesses[] in fuzz-config.json. Run `harness-set.sh init "
+             "--entry <fn>` first to declare the harness set, then `add` appends "
+             "additional harnesses.")
     if name in existing_names:
         fail(f"harness {name!r} already declared")
     # Disambiguate a colliding slot name.
@@ -229,11 +226,9 @@ case "$RESULT" in
   HARNESS_SET*)
     hp_invalidate_cache   # so a sourcing caller sees multi mode immediately
     if [ "$ACTION" = "init" ]; then
-      # Stamp the schema version so a fresh multi campaign is never later
-      # misdetected as v0 — migrate_v0_to_v1 would recreate the singular
-      # fuzz/harness/ + fuzz/corpus/ dirs and violate multi-mode's
-      # mutual-exclusion rule. Declaring harnesses[] IS adopting schema v9.
-      echo "v10" > "$STATE_DIR/schema-version"
+      # Stamp the schema version. v0.30 calibrates to v12 — there is no
+      # migration path from older versions; older campaigns must start fresh.
+      echo "v12" > "$STATE_DIR/schema-version"
     fi
     echo "wrote $CFG_FILE ($ACTION: $RESULT)" >&2
     echo "$RESULT"

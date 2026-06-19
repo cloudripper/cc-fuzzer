@@ -394,7 +394,8 @@ build_variant() {
 # ---------------------------------------------------------------------------
 # Monolithic build mode
 #
-# For whole-library targets (e.g. systemd's libsystemd-shared.so) that can't be
+# For whole-library targets (e.g. a large shared library produced by the
+# project's own meson/cmake build) that can't be
 # expressed as `clang src/*`. The project's OWN derivation builds the
 # instrumented library + harness binaries with cc-fuzzer's pinned toolchain
 # (see flake.nix lib exports + references/nix-monolithic.md). The manifest
@@ -404,7 +405,7 @@ build_variant() {
 #   { "harness": "<name>", "build_mode": "monolithic",
 #     "derivation": { "flake_attr": ".#fuzz-cov" }        // OR {"file":"x.nix","attr":"cov"}
 #     "outputs": { "fuzzer": "bin/fuzz-x", "coverage": "bin/fuzz-x", "verify": "bin/fuzz-x" },
-#     "coverage_dso": [ "lib/libsystemd-shared-260.so" ] }
+#     "coverage_dso": [ "lib/libproject-shared.so" ] }
 #
 # We build the derivation ONCE, symlink each declared output into the bundle
 # under the conventional name, and UPDATE the (pre-existing) harnesses.json
@@ -527,7 +528,7 @@ rec["nix"] = {"mode": "monolithic", "derivation": deriv, "store_path": os.enviro
 rec["built_at"] = now
 tmp = hs_path + ".tmp"
 json.dump(hset, open(tmp, "w"), indent=2); open(tmp, "a").write("\n"); os.replace(tmp, hs_path)
-if hs:  # keep the singular mirror in sync (always harnesses[0], per convention)
+if hs:  # keep the harness-built.json mirror in sync (always harnesses[0])
     hb = os.path.join(state, "harness-built.json")
     try:
         json.dump(hs[0], open(hb + ".tmp", "w"), indent=2); open(hb + ".tmp", "a").write("\n"); os.replace(hb + ".tmp", hb)

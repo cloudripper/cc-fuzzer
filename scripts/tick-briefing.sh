@@ -207,6 +207,42 @@ if _toolbox:
         ],
     }
 
+# --- impact_review board state (v0.30, recommendation C) ---
+# Specifically surface eligibility + last-run-tick for the impact_review lever
+# so the consult's pre-halt rubric can call it cleanly. The consult looks here
+# (and at the same lever in eligible_levers[]) before approving an honest halt.
+impact_review_brief = {
+    "eligible": False,
+    "last_run_tick": None,
+    "evidence": None,
+}
+if _toolbox:
+    for l in (_toolbox.get("eligible_levers") or []):
+        if l.get("lever") == "impact_review":
+            impact_review_brief["eligible"] = True
+            impact_review_brief["evidence"] = l.get("evidence")
+            break
+# Find last impact_review tick from events.jsonl
+if os.path.exists(events_path):
+    try:
+        with open(events_path) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    e = json.loads(line)
+                except Exception:
+                    continue
+                agent = e.get("agent_called") or e.get("agent") or ""
+                reason = e.get("reason") or ""
+                if (agent == "code-reviewer-deep"
+                        and (reason.startswith("structural:impact_review")
+                             or "impact_review" in reason)):
+                    impact_review_brief["last_run_tick"] = e.get("tick")
+    except Exception:
+        pass
+
 # --- Ceiling probe (self_loop only): the pre-halt consult's most important input.
 # When ladder_stage == 2 the campaign plateaued, exhausted its structural reshapes,
 # and this consult is the last gate before it parks. Surface what was tried + what
@@ -256,6 +292,7 @@ briefing = {
     "sonnet_recommendation": sonnet_rec,
     "toolbox": toolbox_brief,
     "ceiling": ceiling_brief,
+    "impact_review": impact_review_brief,
 }
 
 with open(out_file, "w") as f:

@@ -1,0 +1,14 @@
+.gitignore
+.git
+.claude
+
+flake.lock
+rw.sh
+
+# Python bytecode (cve_*.py / code_review_prescan.py imports)
+__pycache__/
+*.pyc
+
+# Campaign workspace + build artifacts
+fuzz/
+*.tar.gz

@@ -9,7 +9,7 @@ Dispatches the **nix-builder** subagent to (re)build harness binaries via nix de
 This is **not** a universal build button — it has two modes, chosen by the harness's `manifest.json:build_mode`:
 
 - **per-harness** (default) — compiles `target_source` + the harness with the FHS clang (`clang src/*`). Right for leaf targets (a parser, a codec). **Requires `CC_FUZZER_FHS=1`** (run inside `nix run ${CLAUDE_PLUGIN_ROOT}#claude` or `nix develop`).
-- **monolithic** — for a whole **instrumented library** (e.g. systemd's `libsystemd-shared.so`) that only the project's OWN build system can produce. The manifest declares the derivation + a variant→output mapping + instrumented `.so`s for coverage; the build delegates to `nix build` (so **FHS is not required**). Full recipe + the mandatory toolchain-pin contract: `${CLAUDE_PLUGIN_ROOT}/references/nix-monolithic.md`.
+- **monolithic** — for a whole **instrumented library** (e.g. a large shared library produced by the project's own meson/cmake build) that only the project's OWN build system can produce. The manifest declares the derivation + a variant→output mapping + instrumented `.so`s for coverage; the build delegates to `nix build` (so **FHS is not required**). Full recipe + the mandatory toolchain-pin contract: `${CLAUDE_PLUGIN_ROOT}/references/nix-monolithic.md`.
 
 Flags:
 - `--harness <name>`: target harness (defaults to the primary harness from harnesses.json)

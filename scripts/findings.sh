@@ -11,11 +11,12 @@
 #   findings.sh count
 #   findings.sh list
 #   findings.sh find-by-hash <stack_hash>
+#   findings.sh import-cr [snapshot-path]    # bridge code-review candidates in
 #
 # Behavior per STATE_SCHEMA.md:
 #   - APPEND-ONLY for new findings
 #   - In-place edit ONLY for dedup_count and last_seen
-#   - Strict schema (finding/v1)
+#   - Strict schema (finding/v2; every finding carries harnesses[])
 #   - Atomic write via .tmp + mv
 
 set -u
@@ -29,15 +30,45 @@ STATE_DIR="$FUZZ_ROOT/state"
 FINDINGS="$STATE_DIR/findings.jsonl"
 OPS="$SCRIPT_DIR/_lib/findings_ops.py"        # jsonl transforms
 CHECKS="$SCRIPT_DIR/_lib/state_checks.py"     # `field` reader for harness-built.json
+ENUMS="$SCRIPT_DIR/_lib/enums.py"             # SSOT enum CLI (print/check)
 HB_JSON="$STATE_DIR/harness-built.json"
 
 mkdir -p "$STATE_DIR"
 [ -f "$FINDINGS" ] || touch "$FINDINGS"
 
-# Multi-harness context: `add` callers may set $HARNESS to attribute the
-# finding. `add-harness` takes the harness as a positional arg. In singular
-# mode $HARNESS is empty and finding/v1 is written.
+# Read a key from fuzz/state/fuzz-config.json. Dot-paths are walked.
+# Returns empty string if file missing or key absent.
+_config_get() {
+  local key="$1"
+  local cfg="$STATE_DIR/fuzz-config.json"
+  [ -f "$cfg" ] || { echo ""; return; }
+  K="$key" CFG="$cfg" python3 -c "
+import json, os, sys
+cfg = os.environ['CFG']
+key = os.environ['K']
+try:
+    d = json.load(open(cfg))
+    for part in key.split('.'):
+        if isinstance(d, dict) and part in d:
+            d = d[part]
+        else:
+            d = ''
+            break
+    sys.stdout.write('' if d in (None, '') else str(d))
+except Exception:
+    pass
+" 2>/dev/null
+}
+
+# Multi-harness context (multi is the only mode since v0.30): `add`/`dedup`
+# callers may set $HARNESS to attribute the finding to a source harness;
+# `add-harness` takes the harness as a positional arg. finding/v2 requires a
+# non-empty harnesses[], so when $HARNESS is unset we fall back to the first
+# declared harness (default_harness).
 HARNESS_CTX="${HARNESS:-}"
+if [ -z "$HARNESS_CTX" ]; then
+  HARNESS_CTX="$(default_harness 2>/dev/null | head -1)"
+fi
 
 # Helper: rewrite fuzz/crashes/known/<id>/harnesses.txt with the current
 # finding.harnesses[] (one harness per line, sorted-and-uniqued).
@@ -79,7 +110,7 @@ shift || true
 
 case "$cmd" in
   count)
-    grep -cE '"schema"[[:space:]]*:[[:space:]]*"finding/v1"' "$FINDINGS" 2>/dev/null || echo 0
+    grep -cE '"schema"[[:space:]]*:[[:space:]]*"finding/v2"' "$FINDINGS" 2>/dev/null || echo 0
     ;;
 
   list)
@@ -143,20 +174,21 @@ EOF
       exit 2
     fi
 
-    # Validate category enum. Crash classes (memory safety + sanitizer) plus the
-    # logic classes used by oracle-driven findings (see STATE_SCHEMA "Oracle-Driven
-    # Fuzzing"). Logic findings set ORACLE_TYPE != crash and carry DIVERGENCE.
+    # Validate category enum against the SSOT (full set: crash classes + logic
+    # classes used by oracle-driven findings — see STATE_SCHEMA "Oracle-Driven
+    # Fuzzing"). ubsan-<kind> is validated by prefix, not membership. Single
+    # enums.py call (the `add` path has no per-finding loop).
     case "$CATEGORY" in
-      heap-buffer-overflow|heap-use-after-free|stack-buffer-overflow|global-buffer-overflow|stack-overflow|null-deref|assertion-failure|oom|timeout|harness-artifact|ubsan-*) ;;
-      invariant-violation|roundtrip-mismatch|differential-divergence|parser-differential|auth-bypass|access-control|incorrect-validation|canonicalization|state-confusion|integer-truncation|logic-error) ;;
-      *) echo "ERROR: invalid category '$CATEGORY'. See 'findings.sh help'." >&2; exit 2;;
+      ubsan-*) ;;
+      *) if ! python3 "$ENUMS" check categories "$CATEGORY"; then
+           echo "ERROR: invalid category '$CATEGORY'. See 'findings.sh help'." >&2; exit 2
+         fi ;;
     esac
 
-    # Validate exploitability enum
-    case "$EXPLOITABILITY" in
-      likely|medium|unlikely|harness-artifact) ;;
-      *) echo "ERROR: invalid exploitability '$EXPLOITABILITY' (must be likely|medium|unlikely|harness-artifact)." >&2; exit 2;;
-    esac
+    # Validate exploitability enum against the SSOT.
+    if ! python3 "$ENUMS" check exploitability "$EXPLOITABILITY"; then
+      echo "ERROR: invalid exploitability '$EXPLOITABILITY' (must be likely|medium|unlikely|harness-artifact)." >&2; exit 2
+    fi
 
     # Refuse if a finding with this stack_hash already exists - caller should dedup.
     # Whitespace-tolerant grep (on-disk lines may have spaces after the colon).
@@ -182,11 +214,11 @@ EOF
         exit 2
       fi
 
-      # Find the harness binary. In multi mode with $HARNESS set, look up the
-      # per-harness record; otherwise read from the singular harness-built.json.
-      if [ -n "$HARNESS_CTX" ] && is_multi; then
-        HARNESS_BIN=$(harness_binary "$HARNESS_CTX")
-      else
+      # Find the harness binary from the source harness's per-harness record.
+      # Fall back to the harness-built.json mirror if the name didn't resolve.
+      HARNESS_BIN=$(harness_binary "$HARNESS_CTX")
+      [ "$HARNESS_BIN" = "None" ] && HARNESS_BIN=""
+      if [ -z "$HARNESS_BIN" ]; then
         HARNESS_BIN=$(python3 "$CHECKS" field "$HB_JSON" harness_binary 2>/dev/null)
       fi
 
@@ -236,10 +268,9 @@ EOF
       # as a plain main() shim. If the crash does not reproduce here, it only
       # exists inside libFuzzer's infrastructure — it is a harness artifact, not
       # a real target bug.
-      if [ -n "$HARNESS_CTX" ] && is_multi; then
-        VERIFY_BIN=$(harness_field "$HARNESS_CTX" verify_binary)
-        [ "$VERIFY_BIN" = "None" ] && VERIFY_BIN=""
-      else
+      VERIFY_BIN=$(harness_field "$HARNESS_CTX" verify_binary)
+      [ "$VERIFY_BIN" = "None" ] && VERIFY_BIN=""
+      if [ -z "$VERIFY_BIN" ]; then
         VERIFY_BIN=$(python3 "$CHECKS" field "$HB_JSON" verify_binary 2>/dev/null)
       fi
 
@@ -315,14 +346,11 @@ EOF
 
     NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-    # Build JSON line atomically with python so escaping is correct.
-    # In multi mode write finding/v2 with harnesses:[<HARNESS>]; in singular
-    # mode write finding/v1 (unchanged from v8).
-    IS_MULTI_FLAG=0
-    if is_multi && [ -n "$HARNESS_CTX" ]; then IS_MULTI_FLAG=1; fi
+    # Build the finding/v2 JSON line atomically with python so escaping is
+    # correct (every finding carries harnesses:[<HARNESS>]).
     # ORACLE_TYPE / DIVERGENCE flow through from the caller's environment
     # (set by crash-triager for logic findings; unset/"crash" for crash findings).
-    NEW_LINE=$(IS_MULTI="$IS_MULTI_FLAG" HARNESS="$HARNESS_CTX" \
+    NEW_LINE=$(HARNESS="$HARNESS_CTX" \
                NEW_ID="$NEW_ID" STACK_HASH="$STACK_HASH" CATEGORY="$CATEGORY" \
                EXPLOITABILITY="$EXPLOITABILITY" BUILD_HASH="$BUILD_HASH" NOW="$NOW" \
                ORACLE_TYPE="${ORACLE_TYPE:-}" DIVERGENCE="${DIVERGENCE:-}" \
@@ -331,12 +359,10 @@ EOF
     # Append atomically
     echo "$NEW_LINE" >> "$FINDINGS"
 
-    # In multi mode, also write the harnesses.txt sidecar so analysts see
-    # provenance without parsing JSON. (The triager calls this after mv'ing
-    # the repro file into fuzz/crashes/known/<id>/; we write the file then.)
-    if [ "$IS_MULTI_FLAG" -eq 1 ]; then
-      _write_harnesses_txt "$NEW_ID"
-    fi
+    # Write the harnesses.txt sidecar so analysts see provenance without
+    # parsing JSON. (The triager calls this after mv'ing the repro file into
+    # fuzz/crashes/known/<id>/; we write the file then.)
+    _write_harnesses_txt "$NEW_ID"
 
     echo "$NEW_ID"
     ;;
@@ -353,12 +379,9 @@ EOF
     TMP="$FINDINGS.tmp"
 
     # Read each line, update the matching one in-place, write atomically.
-    # In multi mode with $HARNESS set, append HARNESS to the finding's
-    # harnesses[] if not already present.
-    HARNESS_TO_APPEND=""
-    if is_multi && [ -n "$HARNESS_CTX" ]; then
-      HARNESS_TO_APPEND="$HARNESS_CTX"
-    fi
+    # Append the source harness to the finding's harnesses[] if not already
+    # present (HARNESS_CTX is the caller's $HARNESS, else the default harness).
+    HARNESS_TO_APPEND="$HARNESS_CTX"
     FINDINGS="$FINDINGS" STACK_HASH="$STACK_HASH" NOW="$NOW" \
       HARNESS_APPEND="$HARNESS_TO_APPEND" \
       python3 "$OPS" dedup > "$TMP" 2>/dev/null
@@ -487,6 +510,12 @@ EOF
   stale-mark)
     # Mark a finding as stale: move crashes/known/<id>/ to crashes/stale/<id>/
     # and update findings.jsonl to add status=stale and stale_against_build.
+    #
+    # v0.30 backup safety (PLUGIN_ISSUES.md friction item 4): `stale` is a
+    # rename, not a delete — the directory still lives under fuzz/. But if the
+    # destination already exists (re-run; reset; collision) we MUST NOT clobber
+    # it; stage the old destination to fuzz/.trash/<ts>/crashes/stale/<id>/
+    # first. GC sweep (7-day, planned followup) reaps .trash.
     ID="${1:?finding id required}"
     KNOWN="$FUZZ_ROOT/crashes/known/$ID"
     STALE="$FUZZ_ROOT/crashes/stale/$ID"
@@ -498,12 +527,175 @@ EOF
     CURRENT_BUILD=$(python3 "$CHECKS" field "$HB_JSON" build_command_hash 2>/dev/null)
 
     mkdir -p "$FUZZ_ROOT/crashes/stale"
+    if [ -e "$STALE" ]; then
+      TRASH_TS=$(date -u +"%Y%m%dT%H%M%SZ")
+      TRASH_DST="$FUZZ_ROOT/.trash/$TRASH_TS/crashes/stale/$ID"
+      mkdir -p "$(dirname "$TRASH_DST")"
+      mv "$STALE" "$TRASH_DST"
+      echo "stale-mark: prior $STALE staged to $TRASH_DST (not hard-deleted)" >&2
+    fi
     mv "$KNOWN" "$STALE"
     # Update findings.jsonl
     FINDINGS="$FINDINGS" ID="$ID" CURRENT_BUILD="$CURRENT_BUILD" \
       python3 "$OPS" stale-mark > "$FINDINGS.tmp"
     mv "$FINDINGS.tmp" "$FINDINGS"
     echo "$ID marked stale (was $KNOWN, now $STALE)"
+    ;;
+
+  list-candidates)
+    # Enumerate findings.jsonl entries still in `status: candidate` — i.e.
+    # NOT yet promoted by the realism gate. Output: <id>\t<category>\t
+    # <location>\t<first_seen>. Used by the orchestrator and poc-builder to
+    # pick the next candidate to characterise; used by the reporter to know
+    # what is unconfirmed.
+    FINDINGS="$FINDINGS" python3 "$OPS" list-candidates
+    ;;
+
+  promote)
+    # findings.sh promote <id> --driver <path> --verifier <path> \
+    #     --boundary <str> --precondition <str> --projected <str>
+    #
+    # The realism-gate promotion. Flip `status: candidate` -> `status: finding`
+    # and attach the realism_attestation block. The agent must supply all
+    # three gate items (PLUGIN_ISSUES.md recommendation B):
+    #   1. driver       — mechanical reproducer (fuzzer driver input + replay)
+    #   2. verifier     — CLI-style verify-*.sh against the REAL target binary
+    #                     (non-ASan / non-coverage build); exit 0 ONLY when
+    #                     the trust/privilege boundary is crossed
+    #   3. boundary/precondition/projected_vs_demonstrated strings
+    #
+    # Soft complexity check on the verifier (friction item 5 / lean PoC): if
+    # the verifier exceeds the soft line count or shells out to more distinct
+    # binaries than the threshold, WARN but don't reject. Thresholds are
+    # configurable via fuzz-config.json:
+    #   poc.verifier_complexity_soft_max_lines   (default 200)
+    #   poc.verifier_complexity_soft_max_tools   (default 6)
+    #
+    # No --promote == no finding-status entry. This is the ONLY way the
+    # findings.jsonl file gains a `status: finding` entry; schema v12 makes
+    # the attestation REQUIRED.
+    ID="${1:?usage: findings.sh promote <id> --driver P --verifier P --boundary S --precondition S --projected S}"
+    shift
+    P_DRIVER=""; P_VERIFIER=""; P_BOUNDARY=""; P_PRECOND=""; P_PROJECTED=""
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --driver)       P_DRIVER="${2:-}"; shift 2 ;;
+        --verifier)     P_VERIFIER="${2:-}"; shift 2 ;;
+        --boundary)     P_BOUNDARY="${2:-}"; shift 2 ;;
+        --precondition) P_PRECOND="${2:-}"; shift 2 ;;
+        --projected)    P_PROJECTED="${2:-}"; shift 2 ;;
+        *) echo "ERROR: promote: unknown flag '$1'" >&2; exit 2 ;;
+      esac
+    done
+
+    # Hard gate: all three realism-gate items required. Refusal is the point.
+    MISSING=""
+    [ -z "$P_DRIVER" ]    && MISSING="$MISSING --driver"
+    [ -z "$P_VERIFIER" ]  && MISSING="$MISSING --verifier"
+    [ -z "$P_BOUNDARY" ]  && MISSING="$MISSING --boundary"
+    [ -z "$P_PRECOND" ]   && MISSING="$MISSING --precondition"
+    [ -z "$P_PROJECTED" ] && MISSING="$MISSING --projected"
+    if [ -n "$MISSING" ]; then
+      echo "ERROR: promote: missing required attestation fields:$MISSING" >&2
+      echo "       schema v12 REQUIRES the 3-point realism gate — see" >&2
+      echo "       references/verifier-template.sh and poc-builder.md." >&2
+      exit 2
+    fi
+
+    # Files must exist (the verifier is what we point a maintainer at).
+    if [ ! -f "$P_DRIVER" ]; then
+      echo "ERROR: promote: --driver path does not exist: $P_DRIVER" >&2
+      exit 2
+    fi
+    if [ ! -f "$P_VERIFIER" ]; then
+      echo "ERROR: promote: --verifier path does not exist: $P_VERIFIER" >&2
+      exit 2
+    fi
+
+    # Entry must already be a candidate.
+    EXISTING=$(grep -E "\"id\"[[:space:]]*:[[:space:]]*\"$ID\"" "$FINDINGS" 2>/dev/null || true)
+    if [ -z "$EXISTING" ]; then
+      echo "ERROR: promote: no finding with id $ID" >&2
+      exit 1
+    fi
+    CUR_STATUS=$(printf '%s' "$EXISTING" | python3 "$OPS" field-stdin status 2>/dev/null)
+    if [ "$CUR_STATUS" = "finding" ]; then
+      echo "WARN: promote: $ID is already status=finding; re-attesting (overwriting realism_attestation)" >&2
+    elif [ -n "$CUR_STATUS" ] && [ "$CUR_STATUS" != "candidate" ]; then
+      echo "ERROR: promote: $ID has status=$CUR_STATUS — promotion refused" >&2
+      exit 1
+    fi
+
+    # Soft complexity check on the verifier (warn-only).
+    SOFT_MAX_LINES=$(_config_get poc.verifier_complexity_soft_max_lines 2>/dev/null)
+    SOFT_MAX_TOOLS=$(_config_get poc.verifier_complexity_soft_max_tools 2>/dev/null)
+    [ -z "$SOFT_MAX_LINES" ] && SOFT_MAX_LINES=200
+    [ -z "$SOFT_MAX_TOOLS" ] && SOFT_MAX_TOOLS=6
+    V_LINES=$(wc -l < "$P_VERIFIER" 2>/dev/null | tr -d ' ')
+    # Distinct command-like tokens — line start or after `|`/`;`/`&&`/`||`/`$(`.
+    # Best-effort heuristic; the threshold is soft, so false positives are fine.
+    V_TOOLS=$(grep -oE '(^|[|;&]|\$\()[[:space:]]*[A-Za-z_][A-Za-z0-9_.-]*' "$P_VERIFIER" 2>/dev/null \
+              | sed -E 's/^[^A-Za-z_]*//' \
+              | grep -vE '^(if|then|else|elif|fi|for|while|do|done|case|esac|in|set|local|export|function|return|true|false|exit|echo|test|cd|trap|read|shift|break|continue)$' \
+              | sort -u | wc -l)
+    if [ "${V_LINES:-0}" -gt "$SOFT_MAX_LINES" ] 2>/dev/null; then
+      echo "WARN: promote: verifier is $V_LINES lines (> soft cap $SOFT_MAX_LINES). The disclosure PoC should be lean (PLUGIN_ISSUES friction 5); split research tooling out under poc-bundle/research/." >&2
+    fi
+    if [ "${V_TOOLS:-0}" -gt "$SOFT_MAX_TOOLS" ] 2>/dev/null; then
+      echo "WARN: promote: verifier shells out to ~$V_TOOLS distinct binaries (> soft cap $SOFT_MAX_TOOLS). Consider trimming non-essential tools from the reference verifier." >&2
+    fi
+
+    NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    TMP="$FINDINGS.tmp"
+    FINDINGS="$FINDINGS" PROMOTE_ID="$ID" NOW="$NOW" \
+      ATTEST_DRIVER="$P_DRIVER" ATTEST_VERIFIER="$P_VERIFIER" \
+      ATTEST_BOUNDARY="$P_BOUNDARY" ATTEST_PRECONDITION="$P_PRECOND" \
+      ATTEST_PROJECTED="$P_PROJECTED" \
+      ATTEST_VERIFIER_LINES="${V_LINES:-0}" ATTEST_VERIFIER_TOOLS="${V_TOOLS:-0}" \
+      python3 "$OPS" promote > "$TMP" 2>/dev/null
+
+    if [ -s "$TMP" ]; then
+      mv "$TMP" "$FINDINGS"
+      echo "$ID promoted to status=finding (verifier=$P_VERIFIER, lines=$V_LINES, tools=$V_TOOLS)"
+    else
+      rm -f "$TMP"
+      echo "ERROR: promote produced empty file - aborted" >&2
+      exit 1
+    fi
+    ;;
+
+  remove)
+    # findings.sh remove <id>
+    #
+    # Backup-safe removal (PLUGIN_ISSUES friction item 4). Instead of
+    # rm -rf fuzz/findings/<id>/ + sed -i out of findings.jsonl, this stages
+    # both the directory and the JSONL line to fuzz/.trash/<ts>/. A 7-day GC
+    # sweep policy (planned followup) reaps .trash.
+    ID="${1:?usage: findings.sh remove <id>}"
+    EXISTING=$(grep -E "\"id\"[[:space:]]*:[[:space:]]*\"$ID\"" "$FINDINGS" 2>/dev/null || true)
+    if [ -z "$EXISTING" ]; then
+      echo "ERROR: remove: no finding with id $ID" >&2
+      exit 1
+    fi
+    TRASH_TS=$(date -u +"%Y%m%dT%H%M%SZ")
+    TRASH_BASE="$FUZZ_ROOT/.trash/$TRASH_TS"
+    mkdir -p "$TRASH_BASE/state"
+    # Stage the JSONL line.
+    printf '%s\n' "$EXISTING" >> "$TRASH_BASE/state/findings.jsonl"
+    # Stage the bundle dirs if present.
+    for sub in findings/$ID crashes/known/$ID; do
+      SRC="$FUZZ_ROOT/$sub"
+      if [ -d "$SRC" ]; then
+        DST="$TRASH_BASE/$sub"
+        mkdir -p "$(dirname "$DST")"
+        mv "$SRC" "$DST"
+        echo "remove: staged $SRC -> $DST" >&2
+      fi
+    done
+    # Rewrite findings.jsonl without the removed line.
+    grep -vE "\"id\"[[:space:]]*:[[:space:]]*\"$ID\"" "$FINDINGS" > "$FINDINGS.tmp" 2>/dev/null || true
+    mv "$FINDINGS.tmp" "$FINDINGS"
+    echo "$ID removed (staged to $TRASH_BASE, NOT hard-deleted)"
     ;;
 
   drop)
@@ -571,6 +763,61 @@ EOF
     echo "dropped: $DROP_CRASH_FILE (stage=$DROP_STAGE${DROP_PRINCIPLE:+, principle=$DROP_PRINCIPLE})"
     ;;
 
+  import-cr)
+    # findings.sh import-cr [snapshot-path]
+    #
+    # Bridge code-review findings into the single candidate ledger. Ingests the
+    # high/medium-confidence findings from a code-review/v1 snapshot into
+    # findings.jsonl as status:candidate, source:code_review, cr_ref:<cr_hash>.
+    # Dedups on cr_ref so re-imports don't duplicate. A code_review candidate
+    # then flows through the same list-candidates -> promote realism gate as a
+    # crash candidate — giving a logic bug a real discovery->triage->PoC
+    # lifecycle instead of dying in the immutable per-run snapshot.
+    #
+    # Default snapshot: the latest fuzz/state/snapshots/code-review-*.json.
+    SNAPSHOT="${1:-}"
+    if [ -z "$SNAPSHOT" ]; then
+      SNAPSHOT=$(ls -1t "$STATE_DIR"/snapshots/code-review-*.json 2>/dev/null | head -1)
+      if [ -z "$SNAPSHOT" ]; then
+        echo "ERROR: import-cr: no code-review snapshot found in $STATE_DIR/snapshots/" >&2
+        echo "       run /cc-fuzzer:fuzz-review first, or pass a snapshot path." >&2
+        exit 2
+      fi
+    fi
+    if [ ! -f "$SNAPSHOT" ]; then
+      echo "ERROR: import-cr: snapshot not found: $SNAPSHOT" >&2
+      exit 2
+    fi
+
+    # Allocate the starting f<NNN> number (same convention as `add`). The python
+    # helper increments from here per imported finding. 10# forces base-10.
+    LAST_NUM=$(grep -oE '"id"[[:space:]]*:[[:space:]]*"f[0-9]+"' "$FINDINGS" 2>/dev/null \
+                 | grep -oE 'f[0-9]+' \
+                 | grep -oE '[0-9]+' \
+                 | sort -n | tail -1)
+    NEXT_NUM=$(( 10#${LAST_NUM:-0} + 1 ))
+
+    # A code-review candidate is harness-independent (it has no reproducer
+    # yet), but finding/v2 requires a non-empty harnesses[]. Attribute to the
+    # caller's $HARNESS when set, else the first declared harness (HARNESS_CTX
+    # already encodes that fallback).
+    HARNESS_FOR_IMPORT="$HARNESS_CTX"
+
+    NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    TMP="$FINDINGS.tmp"
+    cp "$FINDINGS" "$TMP" 2>/dev/null || : > "$TMP"
+    FINDINGS="$FINDINGS" SNAPSHOT="$SNAPSHOT" NOW="$NOW" NEXT_NUM="$NEXT_NUM" \
+      HARNESS="$HARNESS_FOR_IMPORT" \
+      python3 "$OPS" import-cr >> "$TMP"
+    RC=$?
+    if [ "$RC" -ne 0 ]; then
+      rm -f "$TMP"
+      echo "ERROR: import-cr: helper failed (rc=$RC)" >&2
+      exit 1
+    fi
+    mv "$TMP" "$FINDINGS"
+    ;;
+
   help|*)
     cat <<EOF
 findings.sh - the canonical writer for $FINDINGS
@@ -596,6 +843,34 @@ Commands:
                      missing        = reproducer file missing
   stale-mark <id>    Move a finding's crashes/known/<id>/ tree to crashes/stale/<id>/
                      and add status=stale + stale_against_build to findings.jsonl.
+                     If the destination already exists, it is STAGED to
+                     fuzz/.trash/<ts>/ rather than hard-deleted (backup safety).
+  import-cr [SNAP]   Bridge code-review findings into the candidate ledger.
+                     Ingests high/medium-confidence findings from a code-review
+                     snapshot (default: latest fuzz/state/snapshots/code-review-*.json)
+                     into findings.jsonl as status=candidate, source=code_review,
+                     cr_ref=<cr_hash>. Dedups on cr_ref. The imported candidates
+                     flow through the same list-candidates -> promote realism gate.
+  list-candidates    Print one line per status=candidate entry. Output:
+                     <id><TAB><category><TAB><location><TAB><first_seen>
+  promote <id> --driver P --verifier P --boundary S --precondition S --projected S
+                     Flip status=candidate -> status=finding, attaching the
+                     realism_attestation block. REQUIRED on every promotion
+                     (schema v12 / PLUGIN_ISSUES.md recommendation B):
+                       --driver       mechanical reproducer path
+                       --verifier     CLI-style verify-*.sh against the REAL
+                                      target binary (non-ASan, non-coverage);
+                                      exit 0 ONLY when the boundary is crossed
+                       --boundary     trust/privilege boundary crossed (string)
+                       --precondition attacker precondition (string)
+                       --projected    projected_vs_demonstrated narrative (string)
+                     Soft complexity check on the verifier (WARN not reject):
+                       poc.verifier_complexity_soft_max_lines (default 200)
+                       poc.verifier_complexity_soft_max_tools (default 6)
+                     in fuzz/state/fuzz-config.json.
+  remove <id>        Backup-safe finding removal. Stages fuzz/findings/<id>/,
+                     fuzz/crashes/known/<id>/, and the JSONL line to
+                     fuzz/.trash/<ts>/ instead of hard-deleting.
   dedup H            Increment dedup_count and update last_seen for finding with stack_hash H.
                      Prints the matching finding's id.
   drop CRASH_FILE STAGE REASON [--principle P] [--evidence E]

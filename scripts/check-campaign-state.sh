@@ -20,7 +20,9 @@ FUZZ_ROOT="${FUZZ_ROOT:-fuzz}"
 STATE_DIR="$FUZZ_ROOT/state"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# 1. No state at all
+# 1. No state at all. A campaign exists once a harness has been built — the
+# harness-built.json mirror (of harnesses.json[0]) is present. fuzz-config.json
+# alone (declared but not yet built) is still a cold start.
 if [ ! -d "$STATE_DIR" ] || [ ! -f "$STATE_DIR/harness-built.json" ]; then
   echo "none"
   exit 0
@@ -60,10 +62,9 @@ if [ -n "$TARGET_SOURCE" ] && [ -f "$TARGET_SOURCE" ] && [ -n "$RECORDED_HASH" ]
 fi
 
 # 4. Check if any fuzzer slot is running.
-# v0.17 multi-fuzzer: walk fuzzer-*.pid; campaign is "running" if at least
-# one declared slot is alive. Dead-but-declared slots get relaunched by
-# check-slot-liveness.sh, so a partial-alive state is just "running".
-# Pre-v0.17 fallback: single fuzzer.pid.
+# Walk fuzzer-*.pid; campaign is "running" if at least one declared slot is
+# alive. Dead-but-declared slots get relaunched by check-slot-liveness.sh, so a
+# partial-alive state is just "running".
 ANY_ALIVE=0
 for pidf in "$STATE_DIR"/fuzzer-*.pid; do
   [ -f "$pidf" ] || continue
@@ -73,13 +74,6 @@ for pidf in "$STATE_DIR"/fuzzer-*.pid; do
     break
   fi
 done
-if [ "$ANY_ALIVE" -eq 0 ] && [ -f "$STATE_DIR/fuzzer.pid" ]; then
-  # Pre-v0.17 single-fuzzer layout
-  PID=$(cat "$STATE_DIR/fuzzer.pid" 2>/dev/null | tr -d ' \n')
-  if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
-    ANY_ALIVE=1
-  fi
-fi
 
 if [ "$ANY_ALIVE" -eq 1 ]; then
   echo "running"

@@ -74,7 +74,7 @@ ok() {
 #------------------------------------------------------------------------------
 # Check 1: Recursive fuzz/fuzz/ directories
 #------------------------------------------------------------------------------
-echo "[1/10] Checking for recursive fuzz/ directories..."
+echo "[1/12] Checking for recursive fuzz/ directories..."
 if [ -d "$FUZZ_ROOT/fuzz" ]; then
   issue "recursive fuzz/fuzz/ exists at $FUZZ_ROOT/fuzz/"
   echo "       This is the 'cwd inside fuzz/' bug - a script ran with cwd"
@@ -96,7 +96,7 @@ echo ""
 #------------------------------------------------------------------------------
 # Check 2: Multiple running fuzzers
 #------------------------------------------------------------------------------
-echo "[2/10] Checking for multiple fuzzer processes..."
+echo "[2/12] Checking for multiple fuzzer processes..."
 PARENTS=()
 for pid in $(pgrep -f fuzz_find_parser 2>/dev/null) $(pgrep -f LLVMFuzzer 2>/dev/null); do
   PARENT=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
@@ -121,7 +121,7 @@ echo ""
 #------------------------------------------------------------------------------
 # Check 3: Plugin file integrity
 #------------------------------------------------------------------------------
-echo "[3/10] Checking plugin file integrity..."
+echo "[3/12] Checking plugin file integrity..."
 if [ -f "$PLUGIN_ROOT/MANIFEST.md5" ]; then
   DRIFT=$(bash "$PLUGIN_ROOT/scripts/integrity-check.sh" 2>&1 | grep -c '^  - ' || true)
   DRIFT=${DRIFT:-0}
@@ -139,9 +139,27 @@ fi
 echo ""
 
 #------------------------------------------------------------------------------
+# Check 3a: STATE_SCHEMA.md <-> enums.py drift (human doc vs machine SSOT)
+#------------------------------------------------------------------------------
+echo "Checking STATE_SCHEMA.md enum lists against enums.py (SSOT)..."
+if [ -f "$PLUGIN_ROOT/scripts/_lib/enums.py" ] && [ -f "$PLUGIN_ROOT/STATE_SCHEMA.md" ]; then
+  DRIFT_OUT=$(python3 "$PLUGIN_ROOT/scripts/_lib/enums.py" doc-drift "$PLUGIN_ROOT/STATE_SCHEMA.md" 2>&1)
+  if [ $? -eq 0 ]; then
+    ok "documented enum lists match enums.py"
+  else
+    issue "STATE_SCHEMA.md enum list(s) disagree with enums.py (the machine SSOT)"
+    while IFS= read -r line; do [ -n "$line" ] && echo "       $line"; done <<< "$DRIFT_OUT"
+    echo "       Fix: edit the enum in scripts/_lib/enums.py AND its mirror list in STATE_SCHEMA.md."
+  fi
+else
+  warn "enums.py or STATE_SCHEMA.md missing - cannot check enum drift"
+fi
+echo ""
+
+#------------------------------------------------------------------------------
 # Check 3b: Plugin file permissions (read-only enforcement)
 #------------------------------------------------------------------------------
-echo "[4/10] Checking plugin file permissions..."
+echo "[4/12] Checking plugin file permissions..."
 if [ -f "$PLUGIN_ROOT/MANIFEST.md5" ]; then
   if [ -w "$PLUGIN_ROOT/MANIFEST.md5" ]; then
     if [ "${CC_FUZZER_DISABLE_READONLY_LOCK:-0}" = "1" ]; then
@@ -160,7 +178,7 @@ echo ""
 #------------------------------------------------------------------------------
 # Check 4: Dangerous flags in active fuzzer command line
 #------------------------------------------------------------------------------
-echo "[5/10] Checking active fuzzer flags..."
+echo "[5/12] Checking active fuzzer flags..."
 DANGER_FOUND=0
 for pid in $(pgrep -f fuzz_find_parser 2>/dev/null); do
   CMDLINE=$(tr '\0' ' ' < /proc/$pid/cmdline 2>/dev/null)
@@ -179,7 +197,7 @@ echo ""
 #------------------------------------------------------------------------------
 # Check 5: Multiple state/findings.jsonl
 #------------------------------------------------------------------------------
-echo "[6/10] Checking for duplicate findings.jsonl..."
+echo "[6/12] Checking for duplicate findings.jsonl..."
 COUNT=$(find "$FUZZ_ROOT" -maxdepth 5 -name 'findings.jsonl' 2>/dev/null | wc -l)
 if [ "$COUNT" -le 1 ]; then
   ok "single findings.jsonl"
@@ -197,7 +215,7 @@ echo ""
 #------------------------------------------------------------------------------
 # Check 6: Stale fuzzer.pid
 #------------------------------------------------------------------------------
-echo "[7/10] Checking for stale fuzzer.pid..."
+echo "[7/12] Checking for stale fuzzer.pid..."
 if [ -f "$STATE_DIR/fuzzer.pid" ]; then
   PID=$(cat "$STATE_DIR/fuzzer.pid" 2>/dev/null)
   if [ -n "$PID" ] && ! kill -0 "$PID" 2>/dev/null; then
@@ -214,7 +232,7 @@ echo ""
 #------------------------------------------------------------------------------
 # Check 7: Stray timestamped files in state/ root
 #------------------------------------------------------------------------------
-echo "[8/10] Checking for stray snapshot files..."
+echo "[8/12] Checking for stray snapshot files..."
 STRAY=$(find "$STATE_DIR" -maxdepth 1 -type f \( -name 'coverage-*.json' -o -name 'gaps-*.json' -o -name 'concolic-*.json' \) 2>/dev/null | wc -l)
 if [ "$STRAY" -eq 0 ]; then
   ok "no stray snapshot files in state/ root"
@@ -227,7 +245,7 @@ echo ""
 #------------------------------------------------------------------------------
 # Check 8: Legacy fuzz/state/crashes/ path
 #------------------------------------------------------------------------------
-echo "[9/10] Checking for legacy crash paths..."
+echo "[9/12] Checking for legacy crash paths..."
 if [ -d "$STATE_DIR/crashes" ]; then
   warn "legacy fuzz/state/crashes/ directory exists"
   COUNT=$(ls "$STATE_DIR/crashes/" 2>/dev/null | wc -l)

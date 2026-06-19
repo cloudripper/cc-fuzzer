@@ -3,7 +3,7 @@ name: nix-builder
 description: Builds harness binaries via nix derivations (pkgs.clangStdenv.mkDerivation). Reads fuzz/harnesses/<name>/nix/manifest.json, generates per-variant .nix files, runs nix-build, symlinks outputs into the harness bundle. Invoked by harness-writer when CC_FUZZER_FHS=1, or directly via /cc-fuzzer:nix-build.
 model: sonnet
 effort: medium
-maxTurns: 20
+maxTurns: 65
 tools: Read, Glob, Grep, Write, Edit, Bash
 ---
 
@@ -20,8 +20,9 @@ Your only writable scope is `fuzz/`. Never edit anything under `${CLAUDE_PLUGIN_
 - **`per_harness`** (default) — the flow documented below: generate per-variant
   `.nix` files and compile `target_source` + harness with the FHS clang. Right
   for leaf targets (a parser, a codec, one TU + deps).
-- **`monolithic`** — a whole **instrumented library** (e.g. systemd's
-  `libsystemd-shared.so`) built by the project's OWN derivation. See
+- **`monolithic`** — a whole **instrumented library** (e.g. a large shared
+  library produced by the project's own meson/cmake build) built by the
+  project's OWN derivation. See
   "Monolithic mode" below; it has relaxed preconditions and self-records, so the
   Step 2/3/4 flow does NOT apply. Full recipe:
   `${CLAUDE_PLUGIN_ROOT}/references/nix-monolithic.md`.
@@ -135,7 +136,7 @@ variant→output-subpath mapping, and instrumented `.so`s for coverage:
 { "harness": "<name>", "build_mode": "monolithic",
   "derivation": { "flake_attr": ".#fuzzers" },          // or { "file": "x.nix", "attr": "cov" }
   "outputs": { "fuzzer": "bin/fuzz-x", "coverage": "bin/fuzz-x", "verify": "bin/fuzz-x" },
-  "coverage_dso": [ "lib/libsystemd-shared-260.so" ] }
+  "coverage_dso": [ "lib/libproject-shared.so" ] }
 ```
 
 Just run:

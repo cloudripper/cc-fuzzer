@@ -2,12 +2,16 @@
 name: doctor
 description: Diagnose cc-fuzzer state corruption and plugin file modifications. Read-only — never modifies state. Detects recursive fuzz/fuzz/, multiple fuzzers, modified plugin files, dangerous fuzzer flags, stale PIDs, stray snapshot files, and legacy paths. Suggests fixes for each.
 argument-hint: "(no arguments — read-only health check)"
-allowed-tools: Bash
 ---
 
-Run `${CLAUDE_PLUGIN_ROOT}/scripts/doctor.sh` and print the result verbatim.
+Under ctxctl the top-level thread cannot run Bash directly. Dispatch **ops-runner** to run the doctor script.
 
-The script is pure shell, runs in seconds, and never modifies anything. Use it any time you suspect state corruption or want to confirm the campaign is healthy.
+## Steps
+
+1. Dispatch `Agent(subagent_type: "ops-runner", prompt: "Run ${CLAUDE_PLUGIN_ROOT}/scripts/doctor.sh and return the full output verbatim. This is a pure-shell read-only health check; runs in seconds; never modifies state.")`.
+2. Print the Agent's return verbatim.
+
+If anything is found, the script prints the offending paths and a suggested fix. The user applies the fix manually; doctor never auto-modifies state.
 
 Categories checked:
 1. Recursive `fuzz/fuzz/` directories (cwd-inside-fuzz bug)
@@ -19,4 +23,4 @@ Categories checked:
 7. Stray snapshot files in wrong directory
 8. Legacy fuzz/state/crashes/ path
 
-If anything is found, the script prints the offending paths and a suggested fix. Apply the fix yourself; doctor never auto-modifies state.
+No header.txt refresh is needed — `doctor.sh` reads state directly.

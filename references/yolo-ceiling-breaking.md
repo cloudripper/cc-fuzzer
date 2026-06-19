@@ -9,10 +9,11 @@ doc explains the machinery that makes that happen and how to steer it.
 
 The old `no_progress` halt was blunt: it watched `weighted_pct` and parked the campaign
 after N flat ticks (default 30). It could not tell *"genuinely exhausted"* from *"the
-current harness design simply can't reach the rest."* A real sd-bus campaign hit this —
-it had ~10 gaps reachable only by changing the harness entry (e.g. the SASL **server**
-verifier instead of the **client** one), rationalized them as a "structural ceiling,"
-and disabled itself. The productive move was to reshape the harness and keep going.
+current harness design simply can't reach the rest."* A representative campaign hit this —
+it had ~10 gaps reachable only by changing the harness entry (e.g. the **server** variant
+of an auth-handshake function instead of the **client** one), rationalized them as a
+"structural ceiling," and disabled itself. The productive move was to reshape the harness
+and keep going.
 
 ## The escalation ladder
 

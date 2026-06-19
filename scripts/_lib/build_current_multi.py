@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
-"""build_current_multi.py — compose current.json (cc-fuzzer-current/v2) for a
-multi-harness campaign.
+"""build_current_multi.py — compose current.json (cc-fuzzer-current/v2).
 
-In multi mode the per-harness state collection is too tangled with the singular
-path's global variables to share code, so this runs entirely standalone: it
-walks declared harnesses, computes per-harness coverage / fuzzer_stats / gaps /
-recommendation, picks active_harness from a fixed priority table, writes
-current/v2 with back-compat shims, and prints the output path.
+Every campaign is multi-harness (schema v12). This walks declared harnesses,
+computes per-harness coverage / fuzzer_stats / gaps / recommendation, picks
+active_harness from a fixed priority table, writes current/v2 with the
+flat-mirror compatibility fields, and prints the output path.
 
 Reads from the environment:
   STATE_DIR SNAPSHOTS_DIR DECLARED (newline-list) NOW (epoch) TMP OUT
@@ -20,6 +18,11 @@ import os
 import sys
 import glob
 import re  # noqa: F401 (kept for parity with the original heredoc imports)
+from pathlib import Path
+
+# SSOT for all state enums. Same sibling-import pattern as cve-context-builder.py.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import enums  # type: ignore  # noqa: E402
 
 
 def main():
@@ -31,9 +34,13 @@ def main():
     out_path = os.environ['OUT']
 
     # Priority table (highest first). Determines which harness becomes
-    # active_harness when multiple have actionable recommendations.
+    # active_harness when multiple have actionable recommendations. This is an
+    # ORDERING of the SSOT REC_BRANCHES; the assert keeps the two in lockstep so
+    # a new branch can't be added to enums.py without being given a priority.
     PRIORITY = ['triage', 'restart_fuzzer', 'fix_instrumentation', 'analyze_gaps',
                 'reanalyze_gaps', 'concolic', 'generate_seeds', 'mutator', 'stop', 'sleep']
+    assert set(PRIORITY) == enums.REC_BRANCHES, \
+        f"PRIORITY {set(PRIORITY) ^ enums.REC_BRANCHES} out of sync with enums.REC_BRANCHES"
     PRI = {b: i for i, b in enumerate(PRIORITY)}
 
     def safe_read_json(p, default=None):
@@ -153,7 +160,7 @@ def main():
         symcc_bin = rec.get('symcc_binary') or ''
         symcc_avail = bool(symcc_bin) and os.path.isfile(symcc_bin) and os.access(symcc_bin, os.X_OK)
 
-        # Per-harness recommendation (same logic as singular)
+        # Per-harness recommendation
         if my_slots and not any_alive:
             branch, reason = 'restart_fuzzer', f'no live slot for harness {harness}'
         elif inst_tracking and not inst_ok:
@@ -280,7 +287,7 @@ def main():
             'reason':  ae['recommendation']['reason'],
             'harness': active_name,
         },
-        # Back-compat shims (mirror of harnesses[active]); removed in schema v10.
+        # Convenience mirrors of harnesses[active]; downstream readers prefer harnesses[].
         'harness': {
             'binary':          ae['harness']['binary'],
             'symcc_binary':    ae['harness']['symcc_binary'],

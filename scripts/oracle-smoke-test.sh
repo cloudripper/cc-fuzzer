@@ -51,9 +51,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# Resolve the harness name (multi mode). In singular mode the name is ignored by
-# the harness-path helpers.
-if [ -z "$HARNESS_NAME" ] && is_multi; then
+# Resolve the harness name, defaulting to the first declared harness.
+if [ -z "$HARNESS_NAME" ]; then
   HARNESS_NAME="$(default_harness)"
 fi
 

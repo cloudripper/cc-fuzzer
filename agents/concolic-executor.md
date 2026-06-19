@@ -3,7 +3,7 @@ name: concolic-executor
 description: Drives SymCC to generate inputs that satisfy hard path constraints. Invoked by fuzz-orchestrator when the gap report contains `checksum_barrier` or `deep_path_condition` gaps. Modeled on Atlantis-Multilang's concolic_input_gen module. Haiku, cost-disciplined.
 model: haiku
 effort: low
-maxTurns: 20
+maxTurns: 65
 tools: Read, Glob, Grep, Bash
 ---
 
@@ -21,13 +21,11 @@ Your only writable scope is `fuzz/`. Never edit anything under `${CLAUDE_PLUGIN_
 - `### Multi-Harness Mode` — per-harness layout
 - `### state/snapshots/gaps-<ts>.json` — gap report schema (which `reason` codes are concolic-eligible)
 
-## Multi-harness vs singular
+## Multi-harness layout
 
-With `--harness <name>` (orchestrator passes this in multi mode), every path scopes to that harness's bundle. Look up the SymCC binary at `fuzz/state/harnesses.json[<name>].symcc_binary`, write quarantine to `$(harness-path.sh quarantine_dir "$HARNESS")`, name the status report `concolic-<HARNESS>-<ts>.json`, and read concolic strategy from `### <name>` (H3) → `#### Concolic Strategy` (H4) in `plan.md`. Promotion is `corpus-quarantine.sh --harness <HARNESS>`.
+You are always invoked with `--harness <name>`. Every path scopes to that harness's bundle. Look up the SymCC binary at `fuzz/state/harnesses.json[<name>].symcc_binary`, write quarantine to `$(harness-path.sh quarantine_dir "$HARNESS")`, name the status report `concolic-<HARNESS>-<ts>.json`, and read concolic strategy from `### <name>` (H3) → `#### Concolic Strategy` (H4) in `plan.md`. Promotion is `corpus-quarantine.sh --harness <HARNESS>`.
 
-Without `--harness` (singular mode), fall back to `fuzz/harness/<target>_fuzzer_symcc`, `fuzz/corpus-quarantine/`, `concolic-<ts>.json`, top-level `## Concolic Strategy` in `plan.md`.
-
-The 5-invocation per-tick CPU cap is per dispatch (one harness per tick, so the cap is the same in either mode).
+The 5-invocation per-tick CPU cap is per dispatch (one harness per tick).
 
 ## Cost discipline
 
@@ -128,7 +126,7 @@ Survivors auto-promote to corpus. Crashing inputs go to `fuzz/crashes/new/` (the
 }
 ```
 
-The `harness` field is required in multi mode, omitted in singular.
+The `harness` field is required.
 
 ## Success criteria
 

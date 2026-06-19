@@ -1,5 +1,5 @@
 ---
-name: plan
+name: fuzz-plan
 description: "Write or revise fuzz/state/plan.md, the campaign strategy document. In fresh mode (no prior plan), composes from source + guidance + CVE intelligence. In revise mode (mid-campaign), folds in live coverage / findings / gap data and archives the prior plan. — usage: <target-source-or-header> [entry-function] [--mode fresh|revise]"
 argument-hint: "<target-source-or-header> [entry-function] [--mode fresh|revise]"
 ---

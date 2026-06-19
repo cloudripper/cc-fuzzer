@@ -5,8 +5,9 @@
 - **per-harness** (default) — the manifest lists a few source files and they're
   compiled with the FHS shell's clang (`clang src/*`). Right for a leaf target:
   a parser, a codec, one translation unit + its dependencies.
-- **monolithic** — for a whole **instrumented library** (e.g. systemd's
-  `libsystemd-shared.so`) that can only be produced by the project's OWN build
+- **monolithic** — for a whole **instrumented library** (e.g. a large shared
+  library produced by the project's own build) that can only be produced by
+  the project's OWN build
   system (meson/cmake/autotools), yielding many harness binaries linked against
   one shared lib. You can't express that as `clang src/*`.
 
@@ -69,13 +70,13 @@ For each harness, write `fuzz/harnesses/<name>/nix/manifest.json`:
   "schema": "nix-build-manifest/v1",
   "harness": "<name>",
   "build_mode": "monolithic",
-  "derivation": { "flake_attr": ".#fuzzers" },   // OR { "file": "systemd-fuzz.nix", "attr": "cov" }
+  "derivation": { "flake_attr": ".#fuzzers" },   // OR { "file": "project-fuzz.nix", "attr": "cov" }
   "outputs": {                                    // out-subpaths within the build result
     "fuzzer":   "bin/fuzz-<name>",
     "coverage": "bin/fuzz-<name>",                // same binary if the derivation is cov-instrumented
     "verify":   "bin/fuzz-<name>"
   },
-  "coverage_dso": [ "lib/libsystemd-shared-260.so" ]   // instrumented .so to register for coverage
+  "coverage_dso": [ "lib/libproject-shared.so" ]   // instrumented .so to register for coverage
 }
 ```
 

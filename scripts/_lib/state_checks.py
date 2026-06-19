@@ -26,6 +26,7 @@ Subcommands:
   slots                  MODE DECLARED CFG
   fuzzers-manifest       MODE DECLARED MANIFEST_PATH
   findings               MODE DECLARED FINDINGS
+  code-review            FILE                            -> per-finding code-review/v1 problems
   jsonl-corrections      HCS
   jsonl-dropped          DROPS
   jsonl-events           EVENTS
@@ -38,6 +39,11 @@ import json
 import os
 import re
 import sys
+from pathlib import Path
+
+# SSOT for all state enums. Same sibling-import pattern as cve-context-builder.py.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import enums  # type: ignore  # noqa: E402
 
 
 def _env_set(name):
@@ -223,7 +229,7 @@ def cmd_harnesses_mirror():
 # fuzz-config.json: fuzzer_slots[] + (multi) harnesses[]
 # ---------------------------------------------------------------------------
 def cmd_slots():
-    mode = os.environ.get("MODE", "singular")
+    mode = os.environ.get("MODE", "multi")
     declared = _env_set("DECLARED")
     try:
         d = json.load(open(os.environ["CFG"]))
@@ -286,7 +292,7 @@ def cmd_slots():
 # fuzzers.json live manifest
 # ---------------------------------------------------------------------------
 def cmd_fuzzers_manifest():
-    mode = os.environ.get("MODE", "singular")
+    mode = os.environ.get("MODE", "multi")
     declared = _env_set("DECLARED")
     required_base = {"slot", "engine", "binary", "pid", "pgid", "started_at", "log_file", "pid_file", "engine_file", "restart_count"}
     required = required_base | ({"harness"} if mode == "multi" else set())
@@ -314,7 +320,7 @@ def cmd_fuzzers_manifest():
 # findings.jsonl per-line validation
 # ---------------------------------------------------------------------------
 def cmd_findings():
-    mode = os.environ.get("MODE", "singular")
+    mode = os.environ.get("MODE", "multi")
     declared = _env_set("DECLARED")
 
     # v0.18 additive fields (verification pipeline + maintainer-facing report).
@@ -332,19 +338,26 @@ def cmd_findings():
     # finding. See STATE_SCHEMA "Oracle-Driven Fuzzing".
     ORACLE_OPTIONAL = {"oracle_type", "divergence"}
 
-    if mode == "singular":
-        expected_schema = "finding/v1"
-        required = {"schema", "id", "stack_hash", "category", "location", "exploitability", "root_cause", "reproducer", "first_seen", "last_seen", "dedup_count"}
-        allowed = required | {"subcategory", "sanitizer_report_excerpt", "verified_against_build", "status", "stale_against_build"} | V018_OPTIONAL | ORACLE_OPTIONAL
-    else:
-        expected_schema = "finding/v2"
-        required = {"schema", "id", "stack_hash", "category", "location", "exploitability", "root_cause", "reproducer", "first_seen", "last_seen", "dedup_count", "harnesses"}
-        allowed = required | {"subcategory", "sanitizer_report_excerpt", "verified_against_build", "status", "stale_against_build"} | V018_OPTIONAL | ORACLE_OPTIONAL
+    # Code-review-sourced candidates (findings.sh import-cr) carry provenance
+    # (source/cr_ref) and the cr framing, but have NO stack_hash/reproducer
+    # until a poc-builder run produces them. See STATE_SCHEMA finding/v2
+    # "source + cr_ref". These fields are always allowed; required-set is
+    # narrowed per-line below when source == "code_review".
+    CR_SOURCE_FIELDS = {"source", "cr_ref", "oracle_kind", "trust_boundary_crossed",
+                        "precondition", "code_review_evidence", "realism_attestation"}
+
+    # finding/v2 is the only finding schema (multi-harness only since v0.30).
+    expected_schema = "finding/v2"
+    crash_required = {"schema", "id", "stack_hash", "category", "location", "exploitability", "root_cause", "reproducer", "first_seen", "last_seen", "dedup_count", "harnesses"}
+    allowed = crash_required | {"subcategory", "sanitizer_report_excerpt", "verified_against_build", "status", "stale_against_build"} | V018_OPTIONAL | ORACLE_OPTIONAL | CR_SOURCE_FIELDS
+
+    # A code_review candidate has no stack_hash/reproducer; it requires the
+    # provenance fields instead.
+    cr_required = (crash_required - {"stack_hash", "reproducer"}) | {"source", "cr_ref"}
 
     # Crash classes + logic classes (oracle-driven). ubsan-<kind> handled separately below.
-    allowed_categories = {"heap-buffer-overflow", "heap-use-after-free", "stack-buffer-overflow", "global-buffer-overflow", "stack-overflow", "null-deref", "assertion-failure", "oom", "timeout", "flaky", "harness-artifact",
-                          "invariant-violation", "roundtrip-mismatch", "differential-divergence", "parser-differential", "auth-bypass", "access-control", "incorrect-validation", "canonicalization", "state-confusion", "integer-truncation", "logic-error"}
-    allowed_exploitability = {"likely", "medium", "unlikely", "harness-artifact"}
+    allowed_categories = enums.CATEGORIES
+    allowed_exploitability = enums.EXPLOITABILITY
     ID_RE = re.compile(r"^f[0-9]{3,}$")
 
     seen_hashes = {}
@@ -364,6 +377,8 @@ def cmd_findings():
                 print(f"findings.jsonl line {ln}: wrong schema '{d.get('schema')}' (expected {expected_schema})")
                 continue
             keys = set(d.keys())
+            is_cr = d.get("source") == "code_review"
+            required = cr_required if is_cr else crash_required
             missing = required - keys
             unrec = keys - allowed
             if missing:
@@ -394,6 +409,11 @@ def cmd_findings():
 
             rep = d.get("reproducer", "")
             status = d.get("status", "")
+            # A promoted (status==finding) record MUST carry its promotion
+            # receipt. Not required for candidate/stale. See STATE_SCHEMA
+            # "realism_attestation (required when status == 'finding')".
+            if status == "finding" and "realism_attestation" not in keys:
+                print(f"findings.jsonl line {ln}: status 'finding' requires field 'realism_attestation'")
             if rep and fid:
                 if status == "stale":
                     expected = f"fuzz/crashes/stale/{fid}/repro.bin"
@@ -404,14 +424,88 @@ def cmd_findings():
             if rep and not os.path.isfile(rep):
                 print(f"findings.jsonl line {ln}: reproducer file does not exist: {rep}")
 
-            if mode == "multi":
-                hs = d.get("harnesses")
-                if not isinstance(hs, list) or not hs:
-                    print(f"findings.jsonl line {ln}: harnesses[] is empty (multi mode requires >=1 source harness)")
-                else:
-                    for h in hs:
-                        if h not in declared:
-                            print(f"findings.jsonl line {ln}: harnesses[] contains undeclared harness '{h}'")
+            hs = d.get("harnesses")
+            if not isinstance(hs, list) or not hs:
+                print(f"findings.jsonl line {ln}: harnesses[] is empty (finding/v2 requires >=1 source harness)")
+            else:
+                for h in hs:
+                    if h not in declared:
+                        print(f"findings.jsonl line {ln}: harnesses[] contains undeclared harness '{h}'")
+
+
+# ---------------------------------------------------------------------------
+# code-review/v1 per-finding validation (audit gap G2). The top-level
+# validate-json check is lenient and stops at the snapshot fields; this walks
+# each finding in findings[] and enforces the per-finding required set + enum
+# membership, importing the vocabularies from enums.py (the SSOT). Optional
+# fields (revisit-era + cr framing) are allowed without warning.
+# ---------------------------------------------------------------------------
+def cmd_code_review():
+    file = os.environ["FILE"]
+    try:
+        doc = json.load(open(file))
+    except Exception as e:
+        print(f"{os.path.basename(file)}: parse error: {e}")
+        return
+
+    findings = doc.get("findings")
+    if findings is None:
+        # top-level validate-json already flags a missing required field
+        return
+    if not isinstance(findings, list):
+        print(f"{os.path.basename(file)}: findings must be a list")
+        return
+
+    required = {"id", "cr_hash", "status", "file", "function", "line_range",
+                "pattern", "confidence", "tier_classified", "evidence"}
+    # Optional fields are allowed silently; anything outside required|optional
+    # is NOT an error here (the snapshot is lenient/forward-compat), so we only
+    # check required presence + enum membership.
+    HEX16 = re.compile(r"^[0-9a-f]{16}$")
+    ID_RE = re.compile(r"^cr[0-9]{3,}$")
+    base = os.path.basename(file)
+
+    for i, f in enumerate(findings):
+        if not isinstance(f, dict):
+            print(f"{base}: findings[{i}] is not an object")
+            continue
+        keys = set(f.keys())
+        missing = required - keys
+        if missing:
+            fid = f.get("id", "?")
+            print(f"{base}: findings[{i}] ({fid!r}) missing fields {sorted(missing)}")
+
+        fid = f.get("id", "")
+        if fid and not ID_RE.match(fid):
+            print(f"{base}: findings[{i}] invalid id '{fid}' (must match ^cr[0-9]{{3,}}$)")
+
+        crh = f.get("cr_hash", "")
+        if crh and not HEX16.match(crh):
+            print(f"{base}: findings[{i}] ({fid!r}) cr_hash '{crh}' is not 16-char lowercase hex")
+
+        status = f.get("status")
+        if status is not None and status not in enums.CR_STATUS:
+            print(f"{base}: findings[{i}] ({fid!r}) invalid status '{status}' (expected one of {sorted(enums.CR_STATUS)})")
+
+        pattern = f.get("pattern")
+        if pattern is not None and pattern not in enums.CR_PATTERN_CLASSES:
+            print(f"{base}: findings[{i}] ({fid!r}) invalid pattern '{pattern}'")
+
+        conf = f.get("confidence")
+        if conf is not None and conf not in enums.CONFIDENCE:
+            print(f"{base}: findings[{i}] ({fid!r}) invalid confidence '{conf}' (expected one of {sorted(enums.CONFIDENCE)})")
+
+        ok = f.get("oracle_kind")
+        if ok is not None and ok not in enums.ORACLE_KIND:
+            print(f"{base}: findings[{i}] ({fid!r}) invalid oracle_kind '{ok}' (expected one of {sorted(enums.ORACLE_KIND)})")
+
+        tier = f.get("tier_classified")
+        if tier is not None and tier not in ("sonnet", "opus"):
+            print(f"{base}: findings[{i}] ({fid!r}) invalid tier_classified '{tier}' (expected sonnet or opus)")
+
+        ndp = f.get("needs_deep_pass")
+        if ndp is not None and not isinstance(ndp, bool):
+            print(f"{base}: findings[{i}] ({fid!r}) needs_deep_pass must be a boolean, got {type(ndp).__name__}")
 
 
 # ---------------------------------------------------------------------------
@@ -506,7 +600,8 @@ def cmd_snapshot_multi():
         ("gaps", re.compile(r"^gaps-([a-z0-9][a-z0-9_-]{0,31})-(\d+)\.json$")),
         ("concolic", re.compile(r"^concolic-([a-z0-9][a-z0-9_-]{0,31})-(\d+)\.json$")),
     ]
-    singular_re = re.compile(r"^(coverage|gaps|concolic)-\d+\.json$")
+    # A snapshot without a <harness> prefix is a retired singular-layout name.
+    legacy_singular_re = re.compile(r"^(coverage|gaps|concolic)-\d+\.json$")
     for path in sorted(glob.glob(os.path.join(os.environ["SNAPS_DIR"], "*.json"))):
         base = os.path.basename(path)
         if base.startswith("plan-") or base.startswith("delta-"):
@@ -531,8 +626,8 @@ def cmd_snapshot_multi():
             elif h_field != harness:
                 print(f'snapshots/{base}: harness field "{h_field}" disagrees with filename prefix "{harness}"')
             break
-        if not matched and singular_re.match(base):
-            print(f"snapshots/{base}: singular-mode filename in multi mode (the upgrade should have renamed it to include a harness prefix)")
+        if not matched and legacy_singular_re.match(base):
+            print(f"snapshots/{base}: retired singular-layout snapshot name (no <harness> prefix). v0.30 is multi-harness only; remove the stray file or rename it with a harness prefix.")
 
 
 # ---------------------------------------------------------------------------
@@ -557,6 +652,7 @@ DISPATCH = {
     "slots": cmd_slots,
     "fuzzers-manifest": cmd_fuzzers_manifest,
     "findings": cmd_findings,
+    "code-review": cmd_code_review,
     "jsonl-corrections": cmd_jsonl_corrections,
     "jsonl-dropped": cmd_jsonl_dropped,
     "jsonl-events": cmd_jsonl_events,

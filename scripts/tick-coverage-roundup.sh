@@ -7,8 +7,7 @@
 # from individual snapshots.
 #
 # Inputs:
-#   fuzz/state/snapshots/coverage-*.json    (singular mode)
-#   fuzz/state/snapshots/coverage-<harness>-<ts>.json  (multi mode)
+#   fuzz/state/snapshots/coverage-<harness>-<ts>.json
 #
 # Output:
 #   fuzz/state/snapshots/tick-coverage-<ts>.json
@@ -39,19 +38,9 @@ STALE_THRESHOLD_SECONDS="${STALE_THRESHOLD_SECONDS:-600}"
 TS=$(date +%s)
 OUT_FILE="$SNAPSHOTS_DIR/tick-coverage-${TS}.json"
 
-# Resolve mode + declared harnesses. In singular mode the harness list is a
-# single synthetic entry derived from harness-built.json:entry_function.
-MODE="singular"
-if is_multi; then
-  MODE="multi"
-fi
-
-DECLARED_LIST=""
-if [ "$MODE" = "multi" ]; then
-  DECLARED_LIST=$(declared_harnesses | tr '\n' '|' | sed 's/|$//')
-else
-  DECLARED_LIST=$(default_harness)
-fi
+# Resolve declared harnesses (multi-harness is the only mode).
+MODE="multi"
+DECLARED_LIST=$(declared_harnesses | tr '\n' '|' | sed 's/|$//')
 
 # Hand off to Python — JSON aggregation in bash is a hazard.
 MODE="$MODE" \
@@ -87,8 +76,8 @@ for path in glob.glob(os.path.join(snaps_dir, "coverage-*.json")):
 
 def harness_of(path, doc):
     """Return the harness name a coverage snapshot belongs to.
-    Multi mode uses filename prefix `coverage-<harness>-<ts>.json` or an
-    explicit top-level `harness` field. Singular mode has no harness label."""
+    Uses filename prefix `coverage-<harness>-<ts>.json` or an explicit
+    top-level `harness` field."""
     base = os.path.basename(path)
     m = re.match(r'^coverage-([a-z0-9][a-z0-9_-]{0,31})-\d+\.json$', base)
     if m:
@@ -96,24 +85,19 @@ def harness_of(path, doc):
     explicit = doc.get("harness")
     if explicit:
         return explicit
-    return None  # singular-shaped filename
+    return None  # no harness segment
 
 # Select newest snapshot per harness.
 per_harness_newest = {}
 for path, doc in all_cov:
     h = harness_of(path, doc)
-    if mode == "singular":
-        # Treat all singular-shaped files as belonging to the lone harness
-        # (use empty string as the key; we re-tag later).
-        h = ""
-    else:
-        if h is None:
-            # Multi mode but filename has no harness segment — legacy or
-            # orphaned snapshot. Skip; the validator surfaces these.
-            continue
-        if declared and h not in declared:
-            # Snapshot belongs to a harness that's no longer declared. Skip.
-            continue
+    if h is None:
+        # Filename has no harness segment — legacy or orphaned snapshot.
+        # Skip; the validator surfaces these.
+        continue
+    if declared and h not in declared:
+        # Snapshot belongs to a harness that's no longer declared. Skip.
+        continue
     cur = per_harness_newest.get(h)
     snap_ts = int(doc.get("timestamp", 0))
     if cur is None or snap_ts > cur[2]:
@@ -144,17 +128,9 @@ overall_covered = 0
 overall_total = 0
 stale_harnesses = []
 
-# Iterate declared order (multi) or the lone singular harness.
-if mode == "multi":
-    iter_list = declared
-else:
-    # Use the default harness name (entry_function) as the singular row label.
-    singular_name = declared[0] if declared else "main"
-    iter_list = [singular_name]
-
-for name in iter_list:
-    key = "" if mode == "singular" else name
-    triple = per_harness_newest.get(key)
+# Iterate declared order.
+for name in declared:
+    triple = per_harness_newest.get(name)
     if triple is None:
         # No snapshot for this declared harness yet.
         harness_rows.append({

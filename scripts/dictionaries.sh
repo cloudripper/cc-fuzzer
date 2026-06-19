@@ -132,7 +132,7 @@ json.dump(d, open('$TMP', 'w'), indent=2)
     echo "  $PATH_RESOLVED"
     echo ""
     echo "NOTE: the running fuzzer must be restarted to pick up the new dictionary."
-    echo "      run /cc-fuzzer:stop then /cc-fuzzer:resume-campaign"
+    echo "      run /fuzz-stop then /cc-fuzzer:resume-campaign"
     ;;
 
   remove)
@@ -193,7 +193,7 @@ Project-local dictionaries (yours, edit freely):
 Active dictionaries are recorded in:
   $HARNESS_INFO  (dict_files array)
 
-The fuzzer must be restarted (/cc-fuzzer:stop then /cc-fuzzer:resume-campaign) for
+The fuzzer must be restarted (/fuzz-stop then /cc-fuzzer:resume-campaign) for
 dictionary changes to take effect.
 EOF
     ;;

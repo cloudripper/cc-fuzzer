@@ -42,26 +42,12 @@ if [ ! -f "$MANIFEST" ]; then
   exit 0
 fi
 
-# In singular mode the harness binary is fixed campaign-wide; resolve it once.
-# In multi mode each slot binds to its own harness, so we resolve per-slot below.
-HARNESS_BIN_SINGULAR=""
-if ! is_multi; then
-  if [ -f "$STATE_DIR/harness-built.json" ]; then
-    HARNESS_BIN_SINGULAR=$(python3 -c "
-import json
-try: print(json.load(open('$STATE_DIR/harness-built.json')).get('harness_binary',''))
-except: pass" 2>/dev/null)
-  fi
-  if [ -z "$HARNESS_BIN_SINGULAR" ] || [ ! -x "$HARNESS_BIN_SINGULAR" ]; then
-    echo "ERROR: harness binary unavailable; cannot restart slots" >&2
-    exit 1
-  fi
-fi
+# Each slot binds to its own harness, so we resolve the binary per-slot below.
 
 # Build the union of declared + live slot names. Anything declared in
 # fuzz-config.json but missing from fuzzers.json is treated as "should be
 # running" and will be launched. Each row includes the slot's harness binding
-# (empty in singular mode) so per-slot launches resolve the right binary.
+# so per-slot launches resolve the right binary.
 SLOT_PLAN=$(python3 - <<PY
 import json
 config_path = '$CONFIG'
@@ -156,20 +142,15 @@ except:
     continue
   fi
 
-  # Resolve the per-slot binary. In multi mode, look up the slot's harness's
-  # binary; in singular mode, use the campaign-wide binary computed at top.
-  if is_multi; then
-    if [ -z "$slot_harness" ]; then
-      echo "slot=$slot engine=$engine state=dead launch_failed=no-harness-binding (multi mode but slot has no harness)"
-      continue
-    fi
-    slot_bin=$(harness_binary "$slot_harness")
-    if [ -z "$slot_bin" ] || [ ! -x "$slot_bin" ]; then
-      echo "slot=$slot engine=$engine harness=$slot_harness state=dead launch_failed=no-binary-for-harness"
-      continue
-    fi
-  else
-    slot_bin="$HARNESS_BIN_SINGULAR"
+  # Resolve the per-slot binary by looking up the slot's harness's binary.
+  if [ -z "$slot_harness" ]; then
+    echo "slot=$slot engine=$engine state=dead launch_failed=no-harness-binding (slot has no harness)"
+    continue
+  fi
+  slot_bin=$(harness_binary "$slot_harness")
+  if [ -z "$slot_bin" ] || [ ! -x "$slot_bin" ]; then
+    echo "slot=$slot engine=$engine harness=$slot_harness state=dead launch_failed=no-binary-for-harness"
+    continue
   fi
 
   # Restart

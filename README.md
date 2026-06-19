@@ -13,6 +13,35 @@ Install the plugin once, inside Claude Code:
 /plugin install cc-fuzzer
 ```
 
+### Recommended companion plugin: ctxctl
+
+For unattended campaigns pair cc-fuzzer with [**ctxctl**](https://github.com/cloudripper/ctxctl): it blocks the main thread from running Bash/Read/Write/etc., so real work lives in subagents whose context dies with them and the orchestrator stays at planning altitude across long runs. cc-fuzzer's v0.30 main-thread skills dispatch a Haiku `ops-runner` subagent for every Bash call when ctxctl is enforcing.
+
+Set the allowlist to exactly:
+
+```
+Agent,Skill,TodoWrite,AskUserQuestion,ExitPlanMode,ScheduleWakeup
+```
+
+`ScheduleWakeup` is non-negotiable — the YOLO tick chain calls it on the main thread, and a subagent's `ScheduleWakeup` is a no-op. Drop it and the chain dies after the first tick.
+
+Without ctxctl everything still works; main-thread context just bloats with script outputs. Fine for short or interactive sessions, not for unattended `--mode self_loop` runs over many ticks.
+
+### v0.30 slash-command renames
+
+Plugins no longer namespace their slash commands, so v0.23's `/stop`, `/status`, `/reset`, `/run` collided with built-ins. v0.30 renamed six commands with a `fuzz-` prefix. **No aliases — the old names are gone.**
+
+| v0.23 (gone) | v0.30 (use this) |
+|---|---|
+| `/stop` | `/fuzz-stop` |
+| `/status` | `/fuzz-status` |
+| `/reset` | `/fuzz-reset` |
+| `/run` | `/fuzz-run` |
+| `/plan` | `/cc-fuzzer:fuzz-plan` |
+| `/review` | `/cc-fuzzer:fuzz-review` |
+
+Other skills (`/cc-fuzzer:campaign`, `/cc-fuzzer:tick`, `/cc-fuzzer:yolo`, etc.) didn't collide and stayed as they were.
+
 ### With nix (recommended): clone → bootstrap → set-and-forget
 
 ```bash
@@ -29,7 +58,7 @@ nix run github:cloudripper/cc-fuzzer#init
 #    auto-selects a target, builds the harness, and self-drives ticks unattended
 #    (each schedules the next via ScheduleWakeup) until a hard halt or yolo off.
 nix run .#claude -- --dangerously-skip-permissions "/cc-fuzzer:yolo on --mode self_loop --no-cap"
-#    Then walk away. Check in any time with /cc-fuzzer:status or /cc-fuzzer:report.
+#    Then walk away. Check in any time with /fuzz-status or /cc-fuzzer:report.
 ```
 
 `#init` flags: `--dep <nixpkgs-attr>` (seed a build dep, repeatable — suppresses the scan), `--no-scan` (skip dep auto-detect), `--force` (regenerate the flake and re-scan deps). It writes a project `flake.nix` + `fuzz/nix-deps.nix`; if a build later needs another system library, the harness-writer appends it and you re-run `#init`. An empty `nix-deps.nix` is fine for a self-contained target; re-run with `--force` to re-scan, or hand-edit it.
@@ -67,16 +96,16 @@ Prefer to approve each step over full autonomy? Skip YOLO and run the loop by ha
 ```bash
 /cc-fuzzer:campaign src/parser.c parse_message   # COLD: plan → harness (3 binaries) → seed → launch
 /cc-fuzzer:tick                                   # one LLM decision; repeat, or wrap in: /loop 10m /cc-fuzzer:tick
-/cc-fuzzer:status      # progress — pure shell, no LLM call
+/fuzz-status           # progress — pure shell, no LLM call
 /cc-fuzzer:report      # re-verify reproducers → fuzz/state/FINDINGS-REPORT-<target>.md
-/cc-fuzzer:stop        # stop the fuzzer (also disables YOLO)
+/fuzz-stop             # stop the fuzzer (also disables YOLO)
 ```
 
 `/cc-fuzzer:campaign` runs COLD setup once (analyze → harness → 3 binaries → seed corpus → launch). To pick a stopped campaign back up without re-analyzing: `/cc-fuzzer:resume-campaign`. The full self-driving model is in [YOLO](#yolo-self-looping).
 
 ## How it works
 
-The campaign splits into a one-time **COLD** setup and a steady-state **WARM** tick. The fuzzer runs continuously in the background; each WARM tick the orchestrator reads one file (`fuzz/state/current.json`) and either sleeps or dispatches **one** specialist. On a manual tick (and YOLO `guided` mode) the dispatch branch is computed **deterministically** by `update-current.sh` and the orchestrator just executes it; YOLO's `hybrid`/`self_loop` modes let the orchestrator reason over cost/redundancy/progress signals to decide instead.
+The campaign splits into a one-time **COLD** setup and a steady-state **WARM** tick. The fuzzer runs continuously in the background; each WARM tick the orchestrator reads one file (`fuzz/state/current.json`) and either decides to wait or emits a directive selecting **one** specialist — the main thread owns the loop and performs the dispatch (see the decision-agent note below). On a manual tick (and YOLO `guided` mode) the branch is computed **deterministically** by `update-current.sh` and the orchestrator just emits its directive; YOLO's `hybrid`/`self_loop` modes let the orchestrator reason over cost/redundancy/progress signals to decide instead.
 
 ```
 COLD (once)
@@ -120,7 +149,7 @@ Every orchestrator invocation begins with `check-campaign-state.sh`:
 | `none` | **COLD** | Full setup: analyze, harness, build 3 binaries (+ opt cmplog), bootstrap corpus, launch. |
 | `stopped` | **RESUME** | Relaunch with the existing harness and corpus, then one tick. |
 | `running` | **WARM** | Read `current.json`, decide, optionally dispatch one specialist. |
-| `stale` | **REFUSE** | Target source changed since the harness was built → `/cc-fuzzer:reset` or `--reset`. |
+| `stale` | **REFUSE** | Target source changed since the harness was built → `/fuzz-reset` or `--reset`. |
 | `corrupted` | **REFUSE** | Schema validation failed → fix or reset. |
 
 ## Components
@@ -129,7 +158,7 @@ Every orchestrator invocation begins with `check-campaign-state.sh`:
 
 | Subagent | Model | Role |
 |---|---|---|
-| `fuzz-orchestrator` | sonnet | Owns the loop. Dispatches COLD/RESUME/WARM; on warm ticks reads only `current.json`. |
+| `fuzz-orchestrator` | sonnet | The decision agent for COLD/RESUME/WARM: decides the next action and emits a directive; the main thread owns the loop and performs the dispatch. On warm ticks reads only `current.json`. |
 | `campaign-planner` | **opus** | Writes `plan.md` (target, harness layout, seed/dict/concolic strategy, coverage targets). Fresh at COLD, revise mid-campaign. |
 | `planner-consult` | **opus** | Per-tick strategic check-in: reads a small briefing, returns `stay_course` or `redirect` + tactic. Opus-in-the-loop without paying Opus on every tick. |
 | `harness-writer` | sonnet | Writes the harness, builds **three** binaries (+ optional cmplog), iteratively repairs build failures (OSS-Fuzz-Gen pattern). |
@@ -146,19 +175,19 @@ Every orchestrator invocation begins with `check-campaign-state.sh`:
 
 ### Skills (`/cc-fuzzer:<name>`)
 
-Claude may model-invoke **every** skill except **`reset`**, which alone carries `disable-model-invocation: true` because it destroys campaign state and must be a deliberate human action. (`reset` is still available to you as a typed `/cc-fuzzer:reset`.)
+Claude may model-invoke **every** skill except **`fuzz-reset`**, which alone carries `disable-model-invocation: true` because it destroys campaign state and must be a deliberate human action. (`fuzz-reset` is still available to you as a typed `/fuzz-reset`.)
 
-The gate is about **slash-command auto-invocation**, not subagents: once a campaign is running, the orchestrator dispatches the underlying agents — including Opus ones like `crash-triager` and `planner-consult` — directly via the Task tool regardless. Each skill is a thin wrapper that dispatches the same agent for one-off manual or model-driven use. Cost is bounded by `--budget` and, under YOLO, the cost/redundancy ledger — not by skill gating. Only the irreversible `reset` stays human-gated.
+The gate is about **slash-command auto-invocation**, not subagents. **The orchestrator does not dispatch other agents.** Under the recommended ctxctl configuration the top-level thread is the only context with the `Agent` tool, and no cc-fuzzer agent carries it — so no subagent can spawn another subagent. The orchestrator is a **decision agent**: it reads state, runs the deterministic evaluators, and returns a single `YOLO_NEXT:` next-action directive (its last line); the **main-thread skill** parses that directive and performs the action — dispatch a specialist (`crash-triager`, `planner-consult`, …) via `Agent`, run a bash lever via `ops-runner`, `ScheduleWakeup` to chain a tick, or stop — then re-enters the loop for the next decision. So COLD is a main-thread-driven chain (planner → harness-writer → seed-generator → launch), one decision-then-dispatch step at a time. The directive vocabulary lives in `STATE_SCHEMA.md` ("The `YOLO_NEXT:` next-action directive"). Each skill is a thin wrapper around this decide→dispatch loop, also usable for one-off manual or model-driven dispatches. Cost is bounded by `--budget` and, under YOLO, the cost/redundancy ledger — not by skill gating. Only the irreversible `reset` stays human-gated.
 
-- **Campaign loop** — `campaign` (headline; auto-detects COLD/RESUME/WARM), `tick`, `resume-campaign`, `run`, `stop`, `yolo`, `reset`
-- **Analysis & corpus** — `plan`, `harness`, `seed`, `coverage`, `concolic`, `review`, `delta`, `dictionaries`
+- **Campaign loop** — `campaign` (headline; auto-detects COLD/RESUME/WARM), `tick`, `resume-campaign`, `fuzz-run`, `fuzz-stop`, `yolo`, `fuzz-reset`
+- **Analysis & corpus** — `fuzz-plan`, `harness`, `seed`, `coverage`, `concolic`, `fuzz-review`, `delta`, `dictionaries`
 - **Findings** — `triage`, `poc`, `report`
 - **Nix build** — `nix-build` (rebuild harness binaries via nix derivations; `--harness`, `--variant`, `--force`, `--fallback`), `nix-cleanup` (remove GC roots after campaign; `--gc`, `--dry-run`)
-- **Read-only** — `status`, `doctor`, `validate`
+- **Read-only** — `fuzz-status`, `doctor`, `validate`
 
 ### State
 
-All campaign state lives under `fuzz/state/`. The authoritative spec is **`STATE_SCHEMA.md`** at the plugin root (current schema **v10**). The orchestrator reads only `current.json` on warm ticks. Findings are written exclusively by `scripts/findings.sh` (which runs the verification pipeline); the report only by `reporting-agent`. Plugin scripts are read-only — your only writable scope is `fuzz/`.
+All campaign state lives under `fuzz/state/`. The authoritative spec is **`STATE_SCHEMA.md`** at the plugin root (current schema **v12**, v0.30+). The orchestrator reads only `current.json` on warm ticks. Findings are written exclusively by `scripts/findings.sh` (which runs the verification pipeline); the report only by `reporting-agent`. Plugin scripts are read-only — your only writable scope is `fuzz/`.
 
 ## Key mechanisms
 
@@ -226,7 +255,7 @@ One libFuzzer slot is the default (`main`, bound to the campaign's single harnes
 
 Each slot gets its own `fuzzer-<slot>.{pid,engine,log}`; the live manifest is `fuzzers.json`. The orchestrator treats all slots as one shared-corpus campaign (one recommendation, one triage pass, one coverage view). At the top of each tick, `check-slot-liveness.sh` silently relaunches any dead slot (anti-flap throttle: 3 restarts in 60s → marked deadlocked); `restart_fuzzer` only surfaces when *every* slot is dead.
 
-**Multiple harnesses.** Since v0.19.2 every new campaign uses the schema-v9 multi-harness layout from COLD — each harness gets its own corpus/coverage/binaries under `fuzz/harnesses/<name>/`, declared in `fuzz-config.json:harnesses[]`. A single-harness campaign is just the one-entry degenerate case, so adding a second harness later (`/cc-fuzzer:campaign --add-harness <name> --entry <fn>`) only appends — the on-disk layout never has to migrate. Campaigns created before v0.19.2 keep the legacy flat singular layout (`fuzz/harness/`, `fuzz/corpus/`) and continue to run unchanged.
+**Multiple harnesses.** Every campaign uses the multi-harness layout from COLD — each harness gets its own corpus/coverage/binaries under `fuzz/harnesses/<name>/`, declared in `fuzz-config.json:harnesses[]`. A single-harness campaign is just the one-entry degenerate case, so adding a second harness later (`/cc-fuzzer:campaign --add-harness <name> --entry <fn>`) only appends. The singular layout from earlier versions is no longer supported (v0.30+ requires schema v12).
 
 > **AFL++ on `process_based` harnesses:** the launcher auto-bumps the per-input timeout to 5000 ms and passes `-t <ms>+` (skip-on-timeout) so a fork-exec'ing CLI target can clear AFL's dry-run. Override per-slot with `"timeout_ms": <ms>`.
 
@@ -234,7 +263,7 @@ Each slot gets its own `fuzzer-<slot>.{pid,engine,log}`; the live manifest is `f
 
 `/cc-fuzzer:yolo on [--mode guided|hybrid|self_loop] [--aggressiveness conservative|balanced|aggressive]` opts into a **self-driving loop** (off by default). All modes share hard halt caps (tick / cost / no-progress / crash-storm) and a deterministic per-tick **evaluation** block — cost posture (throttles Opus agents past a soft fraction of the cost cap), a per-agent **redundancy ledger** (suppresses an agent that loops without producing results), and a self-climbing signal.
 
-**Set-and-forget, one command.** `/cc-fuzzer:yolo on` runs a tick immediately and then chains: each tick, the orchestrator recommends the next delay (a `YOLO_NEXT:` line), and the main-thread `/cc-fuzzer:tick` skill calls `ScheduleWakeup` to fire the next one. The chain re-invokes the conversation while it's idle — no `/loop`, no cron, no babysitting — and runs until a hard halt or `/cc-fuzzer:yolo off` / `/cc-fuzzer:stop`. (The orchestrator runs as a subagent and can't self-schedule, so the main-thread skill owns the `ScheduleWakeup`; a hard halt simply doesn't reschedule, ending the chain.) If you'd rather drive it yourself, `/loop /cc-fuzzer:tick` works too — but YOLO doesn't need it.
+**Set-and-forget, one command.** `/cc-fuzzer:yolo on` runs a tick immediately and then chains: each tick, the orchestrator recommends the next delay (a `YOLO_NEXT:` line), and the main-thread `/cc-fuzzer:tick` skill calls `ScheduleWakeup` to fire the next one. The chain re-invokes the conversation while it's idle — no `/loop`, no cron, no babysitting — and runs until a hard halt or `/cc-fuzzer:yolo off` / `/fuzz-stop`. (The orchestrator runs as a subagent and can't self-schedule, so the main-thread skill owns the `ScheduleWakeup`; a hard halt simply doesn't reschedule, ending the chain.) If you'd rather drive it yourself, `/loop /cc-fuzzer:tick` works too — but YOLO doesn't need it.
 
 | Mode | Default posture | Per-tick decision |
 |---|---|---|
@@ -244,7 +273,7 @@ Each slot gets its own `fuzzer-<slot>.{pid,engine,log}`; the live manifest is `f
 
 **Aggressiveness** decouples "how hard a tick pushes to act" from the mode and defaults from it (override with `--aggressiveness`). `aggressive` never idles on a self-climbing fuzzer, treats an empty gap-branch as "pursue the strategic toolbox", keeps the wait-backoff from compounding (so priorities never go stale), and raises the Opus-throttle point to 0.8 of the cost cap.
 
-`/cc-fuzzer:stop` always disables YOLO.
+`/fuzz-stop` always disables YOLO.
 
 ## Steering with `fuzz/guidance.md`
 

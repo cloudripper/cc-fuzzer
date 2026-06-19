@@ -3,7 +3,7 @@ name: reporting-agent
 description: Generates fuzz/state/FINDINGS-REPORT-<target>.md (target derived from harness name) by re-running every recorded reproducer through both the harness sanity check and the maintainer-facing PoC bundle, classifying findings as confirmed or false-positive, and rendering the report at the appropriate disclosure mode. Opus.
 model: opus
 effort: high
-maxTurns: 30
+maxTurns: 65
 tools: Read, Glob, Grep, Write, Bash
 ---
 
@@ -17,7 +17,7 @@ Your only writable scope is `fuzz/`. Never edit anything under `${CLAUDE_PLUGIN_
 
 `${CLAUDE_PLUGIN_ROOT}/STATE_SCHEMA.md` is the source of truth for:
 
-- `### state/findings.jsonl` — finding schemas (`finding/v1` singular, `finding/v2` multi-harness) and the lifecycle of finding records
+- `### state/findings.jsonl` — the `finding/v2` schema and the lifecycle of finding records
 - `### state/FINDINGS-REPORT-<target>.md` — required H2 headings the validator checks for
 - `### state/dropped_crashes.jsonl` — the transparency log of crashes the triager filtered
 
@@ -30,8 +30,6 @@ In multi-harness campaigns (`current.json` schema `cc-fuzzer-current/v2`), `find
 **Report structure** (committed, no agent choice): one H3 per finding, with a `**Reproduced by:**` line listing each harness from `finding.harnesses[]`. Stack hash remains the dedup unit; a bug that hits three harnesses is one H3, not three. The Executive Summary's count tables include a "by harness" breakdown sourced from `current.json:findings.by_harness`.
 
 For 3a (internal sanity-check), re-run against the harness named **first** in `finding.harnesses[]`, looking up its binary in `fuzz/state/harnesses.json[<name>].harness_binary`. The legacy `harness-built.json` is a read-only mirror of `harnesses.json[0]` and may be the wrong harness.
-
-In singular mode (`current.json` schema `/v1`, finding/v1), the `harnesses[]` field is absent and the `**Reproduced by:**` line is omitted from each H3.
 
 ## Disclosure modes
 
@@ -76,8 +74,8 @@ What appears in each per-finding H3 by mode:
 
 ## Inputs (read these, nothing else)
 
-- `fuzz/state/findings.jsonl` — every line; both `finding/v1` and `finding/v2` are valid. A finding with `oracle_type != "crash"` is a logic finding — render per "Logic findings (oracle-driven)" below.
-- `fuzz/state/harness-built.json` (singular) or `fuzz/state/harnesses.json` (multi) — used ONLY for the 3a internal sanity-check; never named in the rendered report
+- `fuzz/state/findings.jsonl` — every line; `finding/v2`. A finding with `oracle_type != "crash"` is a logic finding — render per "Logic findings (oracle-driven)" below.
+- `fuzz/state/harnesses.json` (per-harness; `harness-built.json` is its read-only mirror) — used ONLY for the 3a internal sanity-check; never named in the rendered report
 - `fuzz/findings/<id>/repro/` — per-finding maintainer-facing PoC bundle (the triager's deliverable; read-only here)
 - `fuzz/state/dropped_crashes.jsonl` — transparency log, surfaced as an appendix when non-empty
 - Latest `fuzz/state/snapshots/cve-context-*.json` — for the CVE cross-reference (optional)
@@ -98,7 +96,7 @@ Never write to `findings.jsonl`, `events.jsonl`, or any crash file.
 
 Example: `name = "libxml2_parse"` → target = `libxml2_parse` → file = `fuzz/state/FINDINGS-REPORT-libxml2_parse.md`.
 
-Parse `findings.jsonl`. For each line, capture all fields per STATE_SCHEMA `finding/v1`/`finding/v2`. Determine the effective mode per finding (from `--mode` arg or `disclosure_state`).
+Parse `findings.jsonl`. For each line, capture all fields per STATE_SCHEMA `finding/v2`. Determine the effective mode per finding (from `--mode` arg or `disclosure_state`).
 
 If `findings.jsonl` is empty or absent, write a minimal "no findings" report and exit.
 
@@ -151,7 +149,7 @@ Composite classification per finding (when not realism-disputed):
 | `false_positive` | no crash | no crash | Excluded from Findings; goes into False-Positive Analysis. |
 | `false_positive` (disputed) | any | n/a | `exploit_tier_reason == "realism_dispute"` — see above. |
 
-If `finding.poc_path` is null (legacy `finding/v1` from a pre-bundle campaign), treat 3a as the sole verification and mark the H3 with "Internal verification only — no maintainer-facing bundle. Re-triage to generate one: `/cc-fuzzer:triage`."
+If `finding.poc_path` is null (no maintainer-facing bundle yet), treat 3a as the sole verification and mark the H3 with "Internal verification only — no maintainer-facing bundle. Re-triage to generate one: `/cc-fuzzer:triage`."
 
 Capture per finding for rendering:
 - `live_exit_code`, `live_output` (first 60 lines from 3a)
@@ -391,7 +389,7 @@ If `chained_findings` is non-empty AND `chain_dependencies_valid: false` (an ups
 
 **Code review predicted this region**
 
-*maintainer/public:* "The code review run at COLD predicted this region as carrying the pattern `<pattern>` with `<confidence>` confidence. **Reviewer's evidence**: `<evidence>`. **Reviewer's fuzzing recommendation**: `<fuzzing_recommendation>`. The live crash confirms the reviewer's hypothesis. Consider running `/cc-fuzzer:review --deep` for related findings in adjacent code."
+*maintainer/public:* "The code review run at COLD predicted this region as carrying the pattern `<pattern>` with `<confidence>` confidence. **Reviewer's evidence**: `<evidence>`. **Reviewer's fuzzing recommendation**: `<fuzzing_recommendation>`. The live crash confirms the reviewer's hypothesis. Consider running `/fuzz-review --deep` for related findings in adjacent code."
 
 *pre-contact:* a single line — "Code-review at COLD predicted this region (`<cr-id>`, `<pattern>`, `<confidence>`)."
 

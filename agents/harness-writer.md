@@ -3,7 +3,6 @@ name: harness-writer
 description: Writes libFuzzer or AFL++ harnesses for C/C++ targets. Builds three binaries by default (fuzzing + coverage + verify), plus an optional cmplog binary when AFL++ is available. Iteratively repairs build failures (OSS-Fuzz-Gen pattern). Invoked by fuzz-orchestrator during COLD start, or directly via /cc-fuzzer:harness.
 model: sonnet
 effort: medium
-maxTurns: 25
 tools: Read, Glob, Grep, Write, Edit, Bash
 ---
 
@@ -18,21 +17,19 @@ Your only writable scope is `fuzz/`. Never edit anything under `${CLAUDE_PLUGIN_
 `${CLAUDE_PLUGIN_ROOT}/STATE_SCHEMA.md` is the source of truth, specifically:
 
 - `### state/harness-built.json` — the full JSON schema, field meanings, and validation rules
-- `### Multi-Harness Mode` — the multi-harness filesystem layout and `harness-built/v6` schema
+- `### Multi-Harness Mode` — the multi-harness filesystem layout and `harness-built/v7` schema
 
 Do not duplicate schema details in your output; the wrapper script writes the JSON for you.
 
-## Multi-harness vs singular
+## Multi-harness layout
 
-**New campaigns are always multi-harness (since v0.19.2).** At COLD the orchestrator declares the harness set (`harness-set.sh init`) before delegating to you, so you are **always invoked with `--harness <name>`** — even for a single harness (the degenerate one-harness case). This is why the on-disk schema never has to migrate when a second harness is added later.
+**Every campaign is multi-harness.** At COLD the orchestrator declares the harness set (`harness-set.sh init --entry <fn>`) before delegating to you, so you are **always invoked with `--harness <name>`** — even for a single harness (the degenerate one-harness case). This is why the on-disk schema never has to migrate when a second harness is added later.
 
-When invoked with `--harness <name>`, every path you write scopes to that harness's bundle:
+With `--harness <name>`, every path you write scopes to that harness's bundle:
 
 - Sources/binaries/build.sh/cov_main.c → `fuzz/harnesses/<name>/harness/`
-- The per-harness record lives in `fuzz/state/harnesses.json` — pass `--harness <name>` to `write-harness-built.sh` so it upserts there (and keeps the mirror in sync)
-- The legacy `fuzz/state/harness-built.json` becomes a read-only mirror of `harnesses.json[0]` — do NOT write to it directly. The wrapper script keeps the mirror in sync.
-
-`--harness` is omitted only on **legacy singular campaigns** created before v0.19.2 (no `harnesses[]` in `fuzz-config.json`). There, write to `fuzz/harness/` and `fuzz/state/harness-built.json` as usual. Never create the singular `fuzz/harness/` layout in a campaign that already declares a `harnesses[]` array — the validator flags the mixed layout.
+- The per-harness record lives in `fuzz/state/harnesses.json` — `write-harness-built.sh --harness <name>` upserts it there (and keeps the mirror in sync). The wrapper **hard-refuses** a `--harness`-less invocation; there is no other write path.
+- `fuzz/state/harness-built.json` is a read-only mirror of `harnesses.json[0]` — do NOT write to it directly. The wrapper script keeps the mirror in sync.
 
 ## Read the campaign plan first
 
@@ -53,7 +50,7 @@ When `fuzz/state/snapshots/code-review-*.json` exists, read its `focus_areas` an
 Both feed the same decision: bias entry-point selection toward functions/files where past failures *and* current code patterns suggest bug density.
 
 1. **Prefer hotspot functions when the planner offers peers**: if `## Harness` lists two candidate entries and one appears in either source (with high/medium confidence), pick the hotspot. Note the rationale in `harness_attempts[]`.
-2. **Warn when the chosen entry covers zero hotspots**: if either source has 5+ entries but the chosen entry's file is not among top focus areas AND not in `hotspots.by_file`, surface a warning: "Entry `<fn>@<file>:<line>` does not cover any historical CVE hotspot or code-review focus area. Top focus: `<top 3>`. Continuing per plan; campaign may miss bug-dense code." Do NOT override the plan unilaterally — that's the planner's call via `/cc-fuzzer:plan`.
+2. **Warn when the chosen entry covers zero hotspots**: if either source has 5+ entries but the chosen entry's file is not among top focus areas AND not in `hotspots.by_file`, surface a warning: "Entry `<fn>@<file>:<line>` does not cover any historical CVE hotspot or code-review focus area. Top focus: `<top 3>`. Continuing per plan; campaign may miss bug-dense code." Do NOT override the plan unilaterally — that's the planner's call via `/fuzz-plan`.
 
 The harness binary itself never references CVE or code-review data; this is purely a planning-time signal.
 
@@ -76,11 +73,12 @@ Under autonomous YOLO, a coverage plateau is not a stopping point — the orches
 dispatches you to **reshape the harness so it reaches surface the current design can't.**
 The directive arrives in your prompt naming the action and target (derived from a gap's
 `harness_action` / `proposed_entry` / `mock_target` and the ceiling-probe), e.g.
-*"structural reshape: entry_swap → `bus_socket_auth_verify_server`"*. Pick the workflow:
+*"structural reshape: entry_swap → `auth_verify_server`"*. Pick the workflow:
 
 - **`entry_swap`** — rebuild **this** harness against a **different entry function**
   (the `proposed_entry`). The current entry covers one role/leaf; the swap points it at
-  the uncovered one (e.g. the SASL *server* verifier instead of the *client*). Update the
+  the uncovered one (e.g. the *server* variant of an auth-handshake function instead of
+  the *client*). Update the
   entry function and rebuild all three binaries (+ cmplog if AFL++). Record the new entry
   in `harness_attempts[]` with the rationale.
 - **`new_harness`** — leave the existing harness alone; **register and build a brand-new
@@ -108,23 +106,23 @@ harness to make a known crash "go away"; reshaping is for reaching *new* surface
 
 Every COLD start produces THREE binaries plus one optional:
 
-### 1. Fuzzing binary — `fuzz/harness/<target>_fuzzer`
+### 1. Fuzzing binary — `fuzz/harnesses/<name>/harness/<name>_fuzzer`
 
 ```
 clang++ -g -O1 -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer ...
 ```
 
-### 2. Coverage binary — `fuzz/harness/<target>_fuzzer_cov`
+### 2. Coverage binary — `fuzz/harnesses/<name>/harness/<name>_fuzzer_cov`
 
 ```
 clang++ -g -O0 -fprofile-instr-generate -fcoverage-mapping ...
 ```
 
 - **No** `-fsanitize=fuzzer`. The coverage binary runs as a normal program, one input at a time, called by `snapshot-coverage.sh`.
-- Uses `fuzz/harness/cov_main.c` shim (reads stdin or `argv[1]`, calls `LLVMFuzzerTestOneInput`).
+- Uses `fuzz/harnesses/<name>/harness/cov_main.c` shim (reads stdin or `argv[1]`, calls `LLVMFuzzerTestOneInput`).
 - `-O0` for accurate line numbers.
 
-### 3. Verification binary — `fuzz/harness/<target>_fuzzer_verify`
+### 3. Verification binary — `fuzz/harnesses/<name>/harness/<name>_fuzzer_verify`
 
 ```
 clang++ -g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer ...
@@ -135,7 +133,7 @@ clang++ -g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer ...
 - Used by `crash-triager` for Stage 2 cross-verification. A crash that reproduces in the fuzzer harness but NOT here is a harness artifact and must NOT be recorded as a finding.
 - If the verify build fails: one repair attempt, then write `fuzz/state/verify-build-failed.log` and use `--no-verify` on the wrapper script. **Do not fail the campaign** — the orchestrator continues with findings marked as potentially unverified.
 
-### 4. Cmplog binary (optional) — `fuzz/harness/<target>_fuzzer_cmplog`
+### 4. Cmplog binary (optional) — `fuzz/harnesses/<name>/harness/<name>_fuzzer_cmplog`
 
 **Only when AFL++ is the engine AND `afl-clang-fast` is installed.**
 
@@ -401,16 +399,15 @@ except Exception:
 
 **If the result is `nix` (campaign already promoted to nix backend):** skip Mode A/B entirely and proceed directly to the **Nix build path** below. `build_backend=nix` is sticky — once set by `harness-set.sh promote-to-nix`, it stays nix until an explicit `harness-set.sh fallback-backend` call.
 
-**If the result is `legacy` (the default for all pre-v10 and non-FHS campaigns):** proceed with the standard Mode A/B workflow below.
-
-**If `harnesses.json` does not exist** (singular-mode campaign): no nix backend; proceed with Mode A/B.
+**If the result is `legacy` (the default for all non-FHS campaigns):** proceed with the standard Mode A/B workflow below.
 
 ### Nix build path (CC_FUZZER_FHS=1 + build_backend=nix)
 
 > **Whole-library targets:** the per-harness nix path below compiles a handful
 > of source files (`clang src/*`). If the target is a whole **instrumented
-> library** that only the project's own build system can produce (e.g. systemd's
-> `libsystemd-shared.so`), use **monolithic mode** instead: write a
+> library** that only the project's own build system can produce (e.g. a large
+> shared library produced by the project's own meson/cmake/autotools build),
+> use **monolithic mode** instead: write a
 > `build_mode: "monolithic"` manifest that points at the project's own
 > derivation (built with cc-fuzzer's pinned toolchain — `ccfuzzer.lib.${system}.clangStdenv`
 > — or coverage breaks). Full recipe + the toolchain-pin contract:
@@ -482,37 +479,38 @@ This path applies when:
 ### Mode A: First-pass generation
 
 1. Read `fuzz/state/plan.md` (`## Target` + `## Harness`). Verify the entry function exists in the target source and confirm its signature.
-2. Write `fuzz/harness/<target>_fuzzer.cc`.
-3. Write `fuzz/harness/build.sh` containing build commands for all required binaries plus a guarded cmplog build:
+2. Write `fuzz/harnesses/<name>/harness/<name>_fuzzer.cc`.
+3. Write `fuzz/harnesses/<name>/harness/build.sh` containing build commands for all required binaries plus a guarded cmplog build:
 
    ```bash
    #!/usr/bin/env bash
    set -e
+   H=fuzz/harnesses/<name>/harness
    # 1. Fuzzing
    clang++ -g -O1 -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer \
-     fuzz/harness/<target>_fuzzer.cc <objects> -o fuzz/harness/<target>_fuzzer
+     $H/<name>_fuzzer.cc <objects> -o $H/<name>_fuzzer
 
    # 2. Coverage
    clang++ -g -O0 -fprofile-instr-generate -fcoverage-mapping \
-     fuzz/harness/<target>_fuzzer.cc fuzz/harness/cov_main.c <objects> \
-     -o fuzz/harness/<target>_fuzzer_cov
+     $H/<name>_fuzzer.cc $H/cov_main.c <objects> \
+     -o $H/<name>_fuzzer_cov
 
    # 3. Verify (ASan-only standalone)
    clang++ -g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer \
-     fuzz/harness/<target>_fuzzer.cc fuzz/harness/cov_main.c <objects> \
-     -o fuzz/harness/<target>_fuzzer_verify
+     $H/<name>_fuzzer.cc $H/cov_main.c <objects> \
+     -o $H/<name>_fuzzer_verify
 
    # 4. Cmplog (optional)
    if command -v afl-clang-fast++ >/dev/null 2>&1; then
      AFL_LLVM_CMPLOG=1 afl-clang-fast++ -g -O1 \
-       fuzz/harness/<target>_fuzzer.cc <objects> \
-       -o fuzz/harness/<target>_fuzzer_cmplog
+       $H/<name>_fuzzer.cc <objects> \
+       -o $H/<name>_fuzzer_cmplog
    else
      echo "WARNING: afl-clang-fast++ not found; skipping cmplog build." >&2
    fi
    ```
 
-4. Write `fuzz/harness/cov_main.c`:
+4. Write `fuzz/harnesses/<name>/harness/cov_main.c`:
 
    ```c
    #include <stdio.h>
@@ -535,7 +533,7 @@ This path applies when:
    }
    ```
 
-5. Run `bash fuzz/harness/build.sh`. Capture exit code, stdout, stderr.
+5. Run `bash fuzz/harnesses/<name>/harness/build.sh`. Capture exit code, stdout, stderr.
 6. If anything fails → Mode B repair.
 7. On full success, call the wrapper script (see below).
 
@@ -559,24 +557,23 @@ Up to 5 attempts total. Categorize the error, apply minimal fix, rerun.
 
 **Do not hand-write the JSON.** Past agents pasted literal placeholder strings like `"00000000<...>"` for hashes, making every subsequent `check-campaign-state.sh` return `stale` forever. The wrapper exists specifically to remove that opportunity.
 
-Call:
+Call (always with `--harness <name>` — the wrapper hard-refuses a `--harness`-less invocation):
 
 ```bash
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/write-harness-built.sh \
+  --harness <name> \
   --target-source <path/to/target_source.c> \
-  --build-script fuzz/harness/build.sh \
-  --harness-source fuzz/harness/<name>_fuzzer.cc \
-  --harness-binary fuzz/harness/<name>_fuzzer \
+  --build-script fuzz/harnesses/<name>/harness/build.sh \
+  --harness-source fuzz/harnesses/<name>/harness/<name>_fuzzer.cc \
+  --harness-binary fuzz/harnesses/<name>/harness/<name>_fuzzer \
   --entry-function <function_name> \
   --fuzzing-mode in_process \
-  --coverage-binary fuzz/harness/<name>_fuzzer_cov \
-  --verify-binary fuzz/harness/<name>_fuzzer_verify \
-  --cmplog-binary fuzz/harness/<name>_fuzzer_cmplog
+  --coverage-binary fuzz/harnesses/<name>/harness/<name>_fuzzer_cov \
+  --verify-binary fuzz/harnesses/<name>/harness/<name>_fuzzer_verify \
+  --cmplog-binary fuzz/harnesses/<name>/harness/<name>_fuzzer_cmplog
 ```
 
-The wrapper computes real SHA-256 hashes from disk, sets `built_at`, validates every required binary is executable, and writes atomically.
-
-**Multi-harness (the default for new campaigns)**: add `--harness <name>` and replace every `fuzz/harness/...` path above with the bundle path `fuzz/harnesses/<name>/harness/...`. With `--harness`, the wrapper upserts the `harness-built/v7` record into `fuzz/state/harnesses.json` and refreshes the `harness-built.json` mirror. Omit `--harness` only on legacy singular campaigns. Add `--build-backend nix` when using the nix build path, otherwise the default is `legacy`.
+The wrapper computes real SHA-256 hashes from disk, sets `built_at`, validates every required binary is executable, and writes atomically. With `--harness`, it upserts the `harness-built/v7` record into `fuzz/state/harnesses.json` and refreshes the read-only `harness-built.json` mirror. Add `--build-backend nix` when using the nix build path, otherwise the default is `legacy`.
 
 **Variants**:
 - `--no-coverage --coverage-disabled-reason "..."` when coverage was skipped
@@ -592,7 +589,7 @@ Run `write-harness-built.sh --help` for the full reference. For the resulting JS
 
 ## Pre-rebuild cleanup
 
-Before re-running `bash fuzz/harness/build.sh` — whether Mode B repair or a re-COLD when a stale harness binary exists — you **MUST** run:
+Before re-running `bash fuzz/harnesses/<name>/harness/build.sh` — whether Mode B repair or a re-COLD when a stale harness binary exists — you **MUST** run:
 
 ```bash
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/kill-harness-processes.sh
@@ -601,7 +598,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/kill-harness-processes.sh
 This kills:
 - The master fuzzer PID in `fuzz/state/fuzzer.pid`
 - Every process in its process group (catches bash-forked children)
-- Any process whose cmdline mentions a binary in `fuzz/harness/`
+- Any process whose cmdline mentions a binary in `fuzz/harnesses/<name>/harness/`
 
 SIGTERMs first, waits 3 seconds, then SIGKILLs survivors. Emits JSON with `ok: true` when all are dead.
 

@@ -9,11 +9,10 @@
 # This is the efficiency lever. If the orchestrator can decide from this one
 # file, a tick costs 1-3k tokens instead of 30-50k.
 #
-# Structure: this script is a thin driver. The per-mode composition lives in
-# _lib/build_current_{multi,singular}.py — each reads the campaign state and
-# writes current.json (cc-fuzzer-current/v2 or /v1). The mode-agnostic derived
-# blocks (tick_coverage / consult_state / yolo_state) are merged afterward by
-# _lib/derive-tick-state.py.
+# Structure: this script is a thin driver. The composition lives in
+# _lib/build_current_multi.py, which reads the campaign state and writes
+# current.json (cc-fuzzer-current/v2). The derived blocks (tick_coverage /
+# consult_state / yolo_state) are merged afterward by _lib/derive-tick-state.py.
 
 set -u
 
@@ -37,20 +36,13 @@ fi
 
 NOW=$(date +%s)
 
-# Compose current.json. Multi mode (schema v9) walks declared harnesses and
-# writes current/v2; singular mode writes current/v1. Both modules write the
-# file atomically (via $TMP -> $OUT) and print the output path, which we
-# suppress here and re-emit once on success below.
-if is_multi; then
-  DECLARED="$(declared_harnesses)" \
-  STATE_DIR="$STATE_DIR" SNAPSHOTS_DIR="$SNAPSHOTS_DIR" NOW="$NOW" TMP="$TMP" OUT="$OUT" \
-    python3 "$SCRIPT_DIR/_lib/build_current_multi.py" >/dev/null
-  RC=$?
-else
-  STATE_DIR="$STATE_DIR" SNAPSHOTS_DIR="$SNAPSHOTS_DIR" NOW="$NOW" TMP="$TMP" OUT="$OUT" \
-    python3 "$SCRIPT_DIR/_lib/build_current_singular.py" >/dev/null
-  RC=$?
-fi
+# Compose current.json (schema v12, multi-only): walk declared harnesses and
+# write current/v2. The module writes the file atomically (via $TMP -> $OUT)
+# and prints the output path, which we suppress here and re-emit once on success.
+DECLARED="$(declared_harnesses)" \
+STATE_DIR="$STATE_DIR" SNAPSHOTS_DIR="$SNAPSHOTS_DIR" NOW="$NOW" TMP="$TMP" OUT="$OUT" \
+  python3 "$SCRIPT_DIR/_lib/build_current_multi.py" >/dev/null
+RC=$?
 
 # Merge the mode-agnostic derived blocks (best-effort; never wedges a tick).
 python3 "$SCRIPT_DIR/_lib/derive-tick-state.py" "$OUT" >/dev/null 2>&1 || true

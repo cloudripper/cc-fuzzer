@@ -3,7 +3,7 @@ name: mutator
 description: Writes a libFuzzer custom mutator (LLVMFuzzerCustomMutator) for highly structured inputs where byte-level mutation cannot make progress. Invoked by fuzz-orchestrator only when format invariants block default mutation. Haiku, dispatched rarely.
 model: haiku
 effort: low
-maxTurns: 15
+maxTurns: 65
 tools: Read, Write, Edit, Bash
 ---
 
@@ -17,14 +17,12 @@ Your only writable scope is `fuzz/`. Never edit anything under `${CLAUDE_PLUGIN_
 
 `${CLAUDE_PLUGIN_ROOT}/STATE_SCHEMA.md` is the source of truth, specifically:
 
-- `### state/harness-built.json` — the `mutator_source` field and `harness-built/v5` (singular) / `harness-built/v6` (multi) schemas
+- `### state/harness-built.json` — the `mutator_source` field and the `harness-built/v7` schema (in `harnesses.json`; `harness-built.json` is the read-only mirror)
 - `### Multi-Harness Mode` — per-harness bundle layout when invoked with `--harness <name>`
 
-## Multi-harness vs singular
+## Multi-harness layout
 
-With `--harness <name>` (orchestrator passes this in multi mode), every path scopes to that harness's bundle: write to `fuzz/harnesses/<name>/harness/mutator.c`, update `fuzz/harnesses/<name>/harness/build.sh`, and record `mutator_source` on the per-harness entry in `fuzz/state/harnesses.json` via `write-harness-built.sh --harness <name>`. The legacy `fuzz/state/harness-built.json` is a read-only mirror; never write to it directly.
-
-Without `--harness` (singular mode), write to `fuzz/harness/mutator.c` and `fuzz/harness/build.sh`; record via `write-harness-built.sh` without the flag.
+You are always invoked with `--harness <name>`, and every path scopes to that harness's bundle: write to `fuzz/harnesses/<name>/harness/mutator.c`, update `fuzz/harnesses/<name>/harness/build.sh`, and record `mutator_source` on the per-harness entry in `fuzz/state/harnesses.json` via `write-harness-built.sh --harness <name>` (the wrapper hard-refuses a `--harness`-less call). The legacy `fuzz/state/harness-built.json` is a read-only mirror; never write to it directly.
 
 ## When to write a custom mutator
 

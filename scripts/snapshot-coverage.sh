@@ -25,9 +25,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/_lib/harness-path.sh"
 . "$SCRIPT_DIR/_lib/nix-tools.sh"
 
-# Multi-harness dispatch: with no --harness argument in multi mode, recurse
-# once per declared harness so the orchestrator gets a fresh per-harness
-# snapshot in a single call.
+# Multi-harness dispatch: with no --harness argument, recurse once per
+# declared harness so the orchestrator gets a fresh per-harness snapshot in a
+# single call.
 HARNESS=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -37,7 +37,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-if is_multi && [ -z "$HARNESS" ]; then
+if [ -z "$HARNESS" ]; then
   RC=0
   while IFS= read -r h; do
     [ -n "$h" ] || continue
@@ -46,9 +46,7 @@ if is_multi && [ -z "$HARNESS" ]; then
   exit "$RC"
 fi
 
-# Resolve the per-harness paths. In singular mode the helpers ignore $HARNESS
-# and return the canonical singular paths; in multi mode they return paths
-# under fuzz/harnesses/<harness>/.
+# Resolve the per-harness paths under fuzz/harnesses/<harness>/.
 if [ -z "$HARNESS" ]; then
   HARNESS=$(default_harness)
 fi
@@ -86,7 +84,7 @@ LLVM_COV_AVAILABLE=false
 [ -n "$LLVM_COV_BIN" ] && [ -n "$LLVM_PROFDATA_BIN" ] && LLVM_COV_AVAILABLE=true
 
 #------------------------------------------------------------------------------
-# 2. Read per-harness record (multi) or harness-built.json (singular) for paths
+# 2. Read per-harness record for paths
 #------------------------------------------------------------------------------
 COVERAGE_BINARY=$(harness_field "$HARNESS" coverage_binary)
 [ "$COVERAGE_BINARY" = "None" ] && COVERAGE_BINARY=""
@@ -127,16 +125,10 @@ EXEC_RATE=0
 PARSED_ENGINE_LOG=false
 FORK_MODE=false
 
-# In multi mode, the AFL++ output dir and libFuzzer logs are per-harness.
-# In singular mode, fall back to the legacy locations.
-if is_multi; then
-  OUT_DIR="${FUZZ_OUT_DIR:-$FUZZ_ROOT/harnesses/$HARNESS/aflpp-out}"
-  # Pick the first libFuzzer slot whose harness matches; use its log file.
-  LIBFUZZER_LOG=$(MF="$STATE_DIR/fuzzers.json" H="$HARNESS" python3 "$SCRIPT_DIR/_lib/snapshot_helpers.py" slot-field log_file 2>/dev/null)
-else
-  OUT_DIR="${FUZZ_OUT_DIR:-out}"
-  LIBFUZZER_LOG="${LIBFUZZER_LOG:-$STATE_DIR/fuzzer.log}"
-fi
+# The AFL++ output dir and libFuzzer logs are per-harness.
+OUT_DIR="${FUZZ_OUT_DIR:-$FUZZ_ROOT/harnesses/$HARNESS/aflpp-out}"
+# Pick the first libFuzzer slot whose harness matches; use its log file.
+LIBFUZZER_LOG=$(MF="$STATE_DIR/fuzzers.json" H="$HARNESS" python3 "$SCRIPT_DIR/_lib/snapshot_helpers.py" slot-field log_file 2>/dev/null)
 
 # Resolve AFL++ instance dirs (default/ for a roleless slot, <slot>/ for -M/-S)
 # and aggregate fuzzer_stats across ALL of them, so a parallel campaign reports
@@ -178,14 +170,10 @@ elif [ -n "$LIBFUZZER_LOG" ] && [ -f "$LIBFUZZER_LOG" ]; then
     FORK_MODE=true
   fi
 
-  # In multi mode, the relevant pid is the matched slot's pid_file (resolved
-  # at LIBFUZZER_LOG selection time). In singular mode, fall back to the
-  # legacy fuzzer.pid.
+  # The relevant pid is the matched slot's pid_file (resolved at LIBFUZZER_LOG
+  # selection time).
   FUZZER_PID=""
-  PID_FILE_TO_READ=""
-  if is_multi; then
-    PID_FILE_TO_READ=$(MF="$STATE_DIR/fuzzers.json" H="$HARNESS" python3 "$SCRIPT_DIR/_lib/snapshot_helpers.py" slot-field pid_file 2>/dev/null)
-  fi
+  PID_FILE_TO_READ=$(MF="$STATE_DIR/fuzzers.json" H="$HARNESS" python3 "$SCRIPT_DIR/_lib/snapshot_helpers.py" slot-field pid_file 2>/dev/null)
   [ -z "$PID_FILE_TO_READ" ] && PID_FILE_TO_READ="$STATE_DIR/fuzzer.pid"
   if [ -f "$PID_FILE_TO_READ" ]; then
     FUZZER_PID=$(cat "$PID_FILE_TO_READ" 2>/dev/null)
@@ -394,16 +382,12 @@ fi
 #------------------------------------------------------------------------------
 # 5. Find new crash files since last snapshot
 #------------------------------------------------------------------------------
-# Pick the previous snapshot for THIS harness only (in multi mode), so
+# Pick the previous snapshot for THIS harness only, so
 # new_crashes_since_previous is harness-scoped.
-if is_multi; then
-  PREV=$(ls -t "$SNAPSHOTS_DIR"/coverage-"$HARNESS"-*.json 2>/dev/null | head -1)
-else
-  PREV=$(ls -t "$SNAPSHOTS_DIR"/coverage-*.json 2>/dev/null | head -1)
-fi
+PREV=$(ls -t "$SNAPSHOTS_DIR"/coverage-"$HARNESS"-*.json 2>/dev/null | head -1)
 PREV_TS=0
 if [ -n "$PREV" ]; then
-  # Filenames are coverage-<ts>.json (singular) or coverage-<harness>-<ts>.json (multi)
+  # Filenames are coverage-<harness>-<ts>.json
   PREV_TS=$(basename "$PREV" | sed -E "s/^coverage-(${HARNESS}-)?//;s/.json$//")
   # Defend against parse failure
   case "$PREV_TS" in
@@ -412,15 +396,10 @@ if [ -n "$PREV" ]; then
 fi
 
 NEW_CRASHES_JSON="[]"
-# In multi mode, only count crashes whose filename prefix attributes them to
-# this harness (i.e. <harness>__<hash>.bin). In singular mode keep current.
-if is_multi; then
-  NEW_CRASH_LIST=$(find "${FUZZ_CRASHES_DIR:-fuzz/crashes}/new" -name "${HARNESS}__*.bin" \
-                     -newermt "@$PREV_TS" -type f 2>/dev/null | head -50)
-else
-  NEW_CRASH_LIST=$(find "${FUZZ_CRASHES_DIR:-fuzz/crashes}/new" -name '*.bin' \
-                     -newermt "@$PREV_TS" -type f 2>/dev/null | head -50)
-fi
+# Only count crashes whose filename prefix attributes them to this harness
+# (i.e. <harness>__<hash>.bin).
+NEW_CRASH_LIST=$(find "${FUZZ_CRASHES_DIR:-fuzz/crashes}/new" -name "${HARNESS}__*.bin" \
+                   -newermt "@$PREV_TS" -type f 2>/dev/null | head -50)
 if [ -n "$NEW_CRASH_LIST" ]; then
   NEW_CRASHES_JSON=$(echo "$NEW_CRASH_LIST" | python3 "$SCRIPT_DIR/_lib/snapshot_helpers.py" lines-to-json)
 fi
@@ -469,13 +448,9 @@ fi
 #------------------------------------------------------------------------------
 # 8. Write the snapshot
 #------------------------------------------------------------------------------
-# In multi mode, include the harness field at the top level so the validator
-# can cross-check it against the filename prefix. In singular mode the field
-# is omitted to keep the snapshot's shape identical to v8.
-HARNESS_JSON_LINE=""
-if is_multi; then
-  HARNESS_JSON_LINE="\"harness\": \"$HARNESS\","
-fi
+# Include the harness field at the top level so the validator can cross-check
+# it against the filename prefix.
+HARNESS_JSON_LINE="\"harness\": \"$HARNESS\","
 
 cat > "$OUT_FILE" <<EOF
 {

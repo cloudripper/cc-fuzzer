@@ -3,7 +3,7 @@ name: coverage-analyst
 description: Analyzes fuzzer coverage state and emits a strict gaps-report/v1 JSON to fuzz/state/snapshots/. The output bridges "fuzzer is stuck" and "LLM knows what to do next." Reads cmplog dictionary if present to ground gap classification in runtime evidence. Invoked by fuzz-orchestrator on coverage plateau.
 model: sonnet
 effort: medium
-maxTurns: 20
+maxTurns: 65
 tools: Read, Glob, Grep, Bash
 ---
 
@@ -23,18 +23,16 @@ Your only writable scope is `fuzz/`. Never edit anything under `${CLAUDE_PLUGIN_
 
 The **15-gap cap** is validator-enforced; reports with more entries are rejected.
 
-## Multi-harness vs singular
+## Multi-harness layout
 
-With `--harness <name>` (orchestrator passes this in multi mode, or read from `current.json:recommendation.harness`):
+You are always invoked with `--harness <name>` (or read it from `current.json:recommendation.harness`):
 
 - Coverage snapshot: `current.json:harnesses[<name>].coverage.snapshot_file`
 - Cmplog dict: `extract-cmplog-dict.sh --harness <name>` → `fuzz/state/cmplog-dict-<HARNESS>-<ts>.dict`
 - Output filename: `fuzz/state/snapshots/gaps-<HARNESS>-<ts>.json` (via `harness-path.sh gaps_snapshot_name`); include top-level `"harness": "<HARNESS>"` field
 - Plan source: `### <name>` (H3) → `#### Coverage Targets` / `#### Out-of-Scope` / `#### Concolic Strategy` (H4)
 
-Without `--harness` (singular mode): top-level `coverage.snapshot_file`, top-level `## Coverage Targets`, output is `gaps-<ts>.json`, no `harness` field.
-
-The 15-gap cap is per-report (per-harness in multi mode). Different harnesses get separate reports.
+The 15-gap cap is per-report (per-harness). Different harnesses get separate reports.
 
 ## Cost discipline
 
@@ -99,7 +97,7 @@ You're on Sonnet — keep dispatches focused:
 | `delta_target` | Function appears in latest `delta-*.json` (recently changed) AND is unreached. Priority signal layered over a root cause. | `seed-generator` usually; `harness-writer` if unreachable from current harness |
 | `cve_hotspot` | Function/file appears in `cve-context-*.json:hotspots` AND is unreached. Priority signal. | `seed-generator` usually; `concolic-executor` if underlying cause is checksum/deep-path |
 | `code_review_target` | Function appears in `code-review-*.json:findings` with `confidence in {high, medium}` AND is unreached. The reviewer flagged this function as carrying a vulnerable pattern. | `seed-generator` (use the finding's `fuzzing_recommendation`); `concolic-executor` for checksum/deep-path causes |
-| `dead` | Provably unreachable by **ANY** harness design — a true RAII/cleanup stub pulled in via headers but callable by nothing (e.g. `sd_bus_flush_close_unrefp`). NOT "unreachable by the *current* harness." | `none` |
+| `dead` | Provably unreachable by **ANY** harness design — a true RAII/cleanup stub pulled in via headers but callable by nothing (e.g. a `_unrefp` cleanup-attribute destructor). NOT "unreachable by the *current* harness." | `none` |
 
 ### `dead` vs `harness_gap` — the discipline that keeps YOLO from parking
 
@@ -114,15 +112,15 @@ this taxonomy exists to prevent.
   `_unrefp` cleanup attributes, code gated by a compile-time flag the build doesn't set).
 - A function the *current* harness can't reach but a **rewrite / new harness / mock /
   engine change** could → `harness_gap` (or `state_precondition`) **with a
-  `harness_action`**, never `dead`. The sd-bus auth *server* path
-  (`bus_socket_auth_verify_server`) reached only by changing the entry from the *client*
-  verifier is `harness_gap` + `harness_action: entry_swap` — it is NOT dead.
+  `harness_action`**, never `dead`. The *server* variant of an auth-handshake function reached
+  only by changing the entry from the *client* variant is `harness_gap` + `harness_action:
+  entry_swap` — it is NOT dead.
 
 ### Harness action sub-classification (`harness_action`)
 
 For any `harness_gap` / `state_precondition`, add an optional `harness_action` naming the
-**cheapest reshape that reaches it**, so the orchestrator dispatches the right structural
-move instead of a blind "extend":
+**cheapest reshape that reaches it**, so the orchestrator selects the right structural
+move (for the main thread to dispatch) instead of a blind "extend":
 
 | `harness_action` | meaning | extra fields |
 |---|---|---|
@@ -221,14 +219,14 @@ Schema is `gaps-report/v1` (full field list in STATE_SCHEMA). Realistic example:
     },
     {
       "id": "g004",
-      "file": "src/bus-socket.c",
-      "function": "bus_socket_auth_verify_server",
+      "file": "src/transport-auth.c",
+      "function": "auth_verify_server",
       "line_range": [880, 940],
       "reason": "harness_gap",
-      "hint": "Server-side SASL handshake; current harness drives the client verifier only. Point a harness at the server entry to cover the broker-controlled path.",
+      "hint": "Server-side handshake; current harness drives the client verifier only. Point a harness at the server entry to cover the server-controlled path.",
       "recommended_agent": "harness-writer",
       "harness_action": "entry_swap",
-      "proposed_entry": "bus_socket_auth_verify_server"
+      "proposed_entry": "auth_verify_server"
     }
   ]
 }
@@ -238,7 +236,7 @@ Schema is `gaps-report/v1` (full field list in STATE_SCHEMA). Realistic example:
 "Harness action sub-classification"); include them on every `harness_gap` /
 `state_precondition` so the orchestrator's plateau-breaking levers fire on the right move.
 
-The `harness` field is required in multi mode, omitted in singular.
+The `harness` field is required.
 
 ## Output path
 

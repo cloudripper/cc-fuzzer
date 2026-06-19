@@ -101,7 +101,9 @@ try:
     d = json.load(open(path))
 except:
     d = {}
-d['schema'] = 'fuzz-config/v2'
+# Preserve the existing schema (a real campaign is fuzz-config/v3 once
+# harness-set has run); never downgrade it. Default to v3 for a fresh file.
+d.setdefault('schema', 'fuzz-config/v3')
 d[key] = int(value) if value.isdigit() else value
 json.dump(d, open(path, 'w'), indent=2, sort_keys=True)
 print(f"set {key} = {value} in {path}")

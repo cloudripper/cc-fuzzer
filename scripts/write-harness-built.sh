@@ -219,13 +219,17 @@ if [ "${#COVERAGE_DSO[@]}" -gt 0 ]; then
 fi
 SANITIZERS_PY="$SANITIZERS"
 
-# Multi-mode dispatch: when invoked with --harness and the campaign is in
-# multi mode, the authoritative record lives in harnesses.json[<name>] using
-# schema harness-built/v6 (adds `name`). The singular harness-built.json is
-# then rewritten as a read-only mirror of harnesses[0].
-IS_MULTI_WRITE=0
-if [ -n "$HARNESS_NAME" ] && is_multi; then
-  IS_MULTI_WRITE=1
+# Every campaign is multi-harness since v0.30 — there is no singular layout.
+# The authoritative record lives in harnesses.json[<name>] using schema
+# harness-built/v7; harness-built.json is rewritten as a read-only mirror of
+# harnesses[0]. A --harness name is therefore REQUIRED: a --harness-less write
+# would have fallen through to the retired singular harness-built/v5 layout.
+if [ -z "$HARNESS_NAME" ]; then
+  echo "ERROR: --harness <name> is required (multi-harness only since v0.30)." >&2
+  echo "       Run 'scripts/harness-set.sh init --entry <fn>' first to register a" >&2
+  echo "       harness slot, then re-run with --harness <name>. The singular" >&2
+  echo "       harness-built/v5 write path has been removed." >&2
+  exit 2
 fi
 
 export TARGET_SOURCE BUILD_SCRIPT HARNESS_SOURCE HARNESS_BINARY ENTRY_FUNCTION FUZZING_MODE
@@ -234,19 +238,15 @@ export VERIFY_BIN_JSON
 export CMPLOG_ENABLED CMPLOG_BIN_JSON CMPLOG_REASON_JSON
 export SYMCC_BINARY SANITIZERS_PY INPUT_ENCODING DICT_FILES_PY
 export TARGET_HASH BUILD_HASH BUILT_AT ATTEMPTS BUILD_COMMAND
-export HARNESS_NAME IS_MULTI_WRITE STATE_DIR BUILD_BACKEND ORACLE_JSON
+export HARNESS_NAME STATE_DIR BUILD_BACKEND ORACLE_JSON
 
 python3 "$SCRIPT_DIR/_lib/write_harness_built.py" "$TMP"
 
-# --- Atomic rename for the mirror / singular file ---
+# --- Atomic rename for the harness-built.json mirror ---
 mv -- "$TMP" "$OUT"
 
-if [ "$IS_MULTI_WRITE" -eq 1 ]; then
-  echo "Wrote $STATE_DIR/harnesses.json (entry: $HARNESS_NAME)"
-  echo "Updated mirror $OUT (mirrors harnesses[0])"
-else
-  echo "Wrote $OUT"
-fi
+echo "Wrote $STATE_DIR/harnesses.json (entry: $HARNESS_NAME)"
+echo "Updated mirror $OUT (mirrors harnesses[0])"
 echo "  target_source_hash : $TARGET_HASH  ($TARGET_SOURCE)"
 echo "  build_command_hash : $BUILD_HASH  ($BUILD_SCRIPT)"
 echo "  built_at           : $BUILT_AT"

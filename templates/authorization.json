@@ -1,0 +1,7 @@
+{
+  "target_ownership": "describe who owns/controls the target — your org? your lab? an authorized maintainer of an OSS project?",
+  "disclosure_intent": "responsible-disclosure research",
+  "demo_framing": "PoC demonstration for maintainer-facing reproducer bundle",
+  "scope_limits": "describe any scope limits — e.g. 'only local-loopback validation, no remote IPs'",
+  "contact": "optional: maintainer email / security contact for the disclosure"
+}

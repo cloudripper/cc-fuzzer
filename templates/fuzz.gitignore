@@ -1,0 +1,50 @@
+# fuzz/.gitignore — emitted by scripts/campaign-init.sh on fresh scaffold.
+#
+# Intent (PLUGIN_ISSUES.md friction item 4 — "do not delete the only backup of
+# untracked work"):
+#
+#   The Mosquitto campaign had fuzz/findings/ untracked. A "productionization
+#   cleanup" deleted the sole .bak of a working PoC variant, forcing
+#   reconstruction from memory. Keeping findings/ TRACKED by default makes the
+#   git history the backup — a clobber requires `git reflog` to recover, not
+#   recovery-from-nothing.
+#
+#   The broad fuzz/* ignore here intentionally excludes large ephemeral state
+#   (corpus, harness binaries, coverage tracefiles, fuzzer logs) from the
+#   repo — but findings/ and findings.jsonl carry the disclosure work and MUST
+#   stay tracked. Negate them with !findings/ and the matching tree.
+#
+# DO NOT add `findings/` (or any negated path here) to a top-level .gitignore
+# without ALSO updating this file. The negation has to live in the deepest
+# .gitignore for git to honor it.
+
+# Default: ignore everything under fuzz/ (large, regeneratable, churn-y).
+*
+
+# But keep .gitignore itself tracked so the rules survive a re-init.
+!.gitignore
+
+# Keep the high-value disclosure work tracked — this is the load-bearing line.
+!findings/
+!findings/**
+
+# Keep the campaign's structured state tracked. These files are small and
+# carry the audit trail (findings.jsonl, plan.md, events.jsonl, the schema'd
+# JSONs the agents read between ticks). The .trash/ subtree (backup-safe
+# staging from findings.sh and cleanup scripts) is intentionally NOT
+# negated — it's local salvage, not history.
+!state/
+!state/findings.jsonl
+!state/plan.md
+!state/harnesses.json
+!state/harness-built.json
+!state/current.json
+!state/fuzz-config.json
+!state/dropped_crashes.jsonl
+!state/harness-corrections.jsonl
+
+# Keep the nix campaign-flake deps file tracked (campaign-init writes it).
+!nix-deps.nix
+
+# Keep the gitignore template's own footprint visible.
+!.trash/.gitkeep

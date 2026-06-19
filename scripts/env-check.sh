@@ -195,6 +195,39 @@ case "$STATUS" in
     ;;
 esac
 
+#------------------------------------------------------------------------------
+# 5. ctxctl companion-plugin detection (non-fatal, v0.30 addition)
+#------------------------------------------------------------------------------
+# ctxctl restricts the top-level thread to a small allowlist of orchestration
+# tools, pushing real work into subagents. cc-fuzzer is designed to play
+# nicely with that — the v0.30 main-thread skills dispatch ops-runner for all
+# Bash work, and YOLO's tick chain needs ScheduleWakeup on the allowlist to
+# function. This detection is purely informational; it never aborts.
+#
+# We do NOT read the user's settings.json allowlist (privacy / scope cross).
+# We just check whether ctxctl appears installed and remind the user about
+# ScheduleWakeup.
+CTXCTL_DETECTED=0
+for candidate in \
+  "$SCRIPT_DIR/../../ctxctl/plugins/ctxctl/scripts/gate.sh" \
+  "${HOME:-/}/ctxctl/plugins/ctxctl/scripts/gate.sh" \
+  "${HOME:-/}/.claude/plugins/ctxctl/scripts/gate.sh" \
+  "${HOME:-/}/.claude/plugins/cache/ctxctl/scripts/gate.sh"; do
+  if [ -f "$candidate" ]; then
+    CTXCTL_DETECTED=1
+    break
+  fi
+done
+
+if [ "$CTXCTL_DETECTED" -eq 1 ]; then
+  CTX_PARTS+=("cc-fuzzer: ctxctl detected. Recommended allowlist: Agent,Skill,TodoWrite,AskUserQuestion,ExitPlanMode,ScheduleWakeup (ScheduleWakeup is required for the YOLO tick chain to fire).")
+elif [ "$IN_FUZZ_PROJECT" -eq 1 ] && [ ! -f "fuzz/state/current.json" ]; then
+  # COLD-start informational note. Once the campaign exists we don't re-print
+  # this on every session-start; we don't want to nag operators of long
+  # running campaigns. The detection above runs every session regardless.
+  CTX_PARTS+=("cc-fuzzer: consider installing ctxctl for context discipline on long campaigns (https://github.com/cloudripper/ctxctl).")
+fi
+
 if [ "${#CTX_PARTS[@]}" -gt 0 ]; then
   # Print integrity warning to stderr so it shows in the session output
   if [ "$INTEGRITY_DRIFT" -eq 1 ]; then
