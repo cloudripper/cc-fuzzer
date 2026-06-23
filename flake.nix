@@ -204,6 +204,14 @@
           # === VCS ===
           git
 
+          # === Static analysis (SAST signal for the code-review prescan) ===
+          # semgrep powers Tier-1 of /fuzz-review (rules/semgrep/*.yml). It is
+          # the fast, always-on default; the prescan self-skips loudly if it is
+          # absent. CodeQL is intentionally NOT pinned here — its CLI is unfree
+          # and DB construction needs the project build command, so it stays an
+          # opt-in host tool wired via code_review.sast.codeql_db.
+          semgrep
+
           # === Dev conveniences ===
           ripgrep
           fd

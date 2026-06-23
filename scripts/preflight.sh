@@ -46,6 +46,7 @@ AFL_CC=$(nix_tool afl-clang-fast 2>/dev/null || true)
 
 SYMCC=$(nix_tool symcc 2>/dev/null || true)
 SYMPP=$(nix_tool "sym++" 2>/dev/null || true)
+SEMGREP=$(nix_tool semgrep 2>/dev/null || true)
 Z3=$(nix_tool z3 2>/dev/null || true)
 
 # Probe libFuzzer
@@ -90,6 +91,7 @@ WARNINGS=()
 # v0.13: cmplog requires AFL++ toolchain (afl-clang-fast). Warn loudly when
 # missing, since cmplog is the cheapest path to solving direct-compare branches.
 [ -n "$AFL_CC" ] || WARNINGS+=("afl-clang-fast not found - cmplog (Redqueen-style I2S) unavailable; install AFL++ to enable")
+[ -n "$SEMGREP" ] || WARNINGS+=("semgrep not found - code-review SAST signal (Tier-1) unavailable; prescan falls back to grep heuristics. Install semgrep to enable.")
 
 # Status
 STATUS="ok"
@@ -123,14 +125,16 @@ cat > "$TMP" <<EOF
     "afl_clang_fast": "$AFL_CC",
     "symcc": "$SYMCC",
     "sym++": "$SYMPP",
-    "z3": "$Z3"
+    "z3": "$Z3",
+    "semgrep": "$SEMGREP"
   },
   "capabilities": {
     "libfuzzer_available": $LIBFUZZER_AVAILABLE,
     "coverage_instrumentation_available": $COVERAGE_INSTRUMENTATION_AVAILABLE,
     "afl_available": $([ -n "$AFL_FUZZ" ] && echo true || echo false),
     "cmplog_available": $([ -n "$AFL_CC" ] && [ -n "$AFL_FUZZ" ] && echo true || echo false),
-    "symcc_available": $([ -n "$SYMCC" ] && echo true || echo false)
+    "symcc_available": $([ -n "$SYMCC" ] && echo true || echo false),
+    "sast_available": $([ -n "$SEMGREP" ] && echo true || echo false)
   },
   "errors": $ERRORS_JSON,
   "warnings": $WARNINGS_JSON

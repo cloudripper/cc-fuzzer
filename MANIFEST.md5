@@ -1,10 +1,17 @@
 # cc-fuzzer plugin file manifest
 # Generated at release time. Used by integrity-check.sh to detect drift.
 # Format: <md5>  <relative-path>
+#
+# NOTE: rules/ (the bundled semgrep rule pack under rules/semgrep plus the
+# rules/trailofbits submodule) is intentionally EXCLUDED from integrity
+# tracking. Rule content is externally sourced and updated independently of
+# plugin releases (the submodule tracks upstream; the bundled pack may be
+# refreshed out of band), so drift there is expected and must not trip the
+# integrity check. The SAST driver scripts/_lib/sast_scan.py IS tracked.
 
 42bc4449a2e80448090ef5420506cec9  agents/campaign-planner.md
-098e6c134f8063ad31be4c8635e68c75  agents/code-reviewer-deep.md
-79d459d2ffa09212f87839fad7671af8  agents/code-reviewer.md
+db8b420f1ff14d5c16673a2543a4da6d  agents/code-reviewer-deep.md
+2ac8e75500155efff720afbabae5fd5d  agents/code-reviewer.md
 e25bcc4c64ccf7eead37deebd2cd7f1e  agents/concolic-executor.md
 827658c1bbd1a94e2aadd61e697fc231  agents/coverage-analyst.md
 bf43499781920b24a9a6a195b86b6e72  agents/crash-triager.md
@@ -39,7 +46,7 @@ eb268b845e1ea52515b2f7bdc627fbe2  scripts/campaign-init.sh
 274dd447aee7389af202e59121adfa26  scripts/check-campaign-state.sh
 c85439a714d198b8e04795d1f5562e7f  scripts/check-seed-safety.sh
 f1d8add21adeac6f4e072a122c021f42  scripts/check-slot-liveness.sh
-0b715555646f151e58992ae7e86a0c47  scripts/code-review-run.sh
+fc8ff7666393ea5e901779075929e5a7  scripts/code-review-run.sh
 ecada11063d5b0a981db98d2c25a5101  scripts/corpus-quarantine.sh
 ce16a758653e543f03e36c51a07564ff  scripts/cross-ref-findings.sh
 e1e55dc17855a03463fa278b8b5e5a4f  scripts/cve-context-build.sh
@@ -61,7 +68,7 @@ b6c93200cb33c51d12fc4cb2450a655b  scripts/find-delta-targets.sh
 5d222275d26c2cd39629848d8dced907  scripts/launch-fuzzer-slot.sh
 fc44e06db85e6b0a7cec50550d286b78  scripts/_lib/build_current_multi.py
 2a97033eb9cc0cd491a1c943989a1cea  scripts/_lib/ceiling_probe.py
-310db61b30cbf174b46800260b6f2838  scripts/_lib/code_review_prescan.py
+843f71442c932a435f05a1b6f882234c  scripts/_lib/code_review_prescan.py
 67d8e39c6552a4ff8360d4afad6ea995  scripts/_lib/cve-context-builder.py
 0ecb7ba1b53bc7158b009e6ae71fb9e9  scripts/_lib/cve_patterns.py
 3e5421f0c317575da597fe7089b5aa80  scripts/_lib/cve_poc_trust.py
@@ -83,7 +90,7 @@ e4f7f36d8a3d215eeeb620909f042dfd  scripts/nix-build.sh
 747b3eb02cce12a11d845d27efc910ac  scripts/nix-cleanup.sh
 9239c3a9b86560418d1dd81576e7eda1  scripts/nix-env-reconcile.sh
 b6ba5f4173c229037a2d4d1331c802a1  scripts/oracle-smoke-test.sh
-ab000c2fb90a5b77b5fdd497495db52c  scripts/preflight.sh
+5b59a2eef57d83be2f0431104dfad00e  scripts/preflight.sh
 087b09dc39647ce48f8b55fb1f396285  scripts/reset-campaign.sh
 eb401e3376a53b2577f7210e9a040b9c  scripts/reverify-after-rebuild.sh
 dcf88a99a20cf9e3c714c4432d9723d0  scripts/run-concolic.sh
@@ -105,7 +112,7 @@ f1bfc70bab160dd5f2fd52cea4374122  skills/dictionaries/SKILL.md
 12d8061e2cf9a922345b537e85ccc0d2  skills/doctor/SKILL.md
 d1ab61b7664c227eb0c1170fa6596fdb  skills/fuzz-plan/SKILL.md
 3c12326dd3e084491dc5238c6499ae6c  skills/fuzz-reset/SKILL.md
-2db3a1d74a2412d86bb9ea67c1a1f1e0  skills/fuzz-review/SKILL.md
+c794e7ebd28d08b0bcc58f09d85ba80c  skills/fuzz-review/SKILL.md
 491c1d7f2b54c1e8577d4029316e6694  skills/fuzz-run/SKILL.md
 6b21390eaec1354b337a4f2467c9cf67  skills/fuzz-status/SKILL.md
 90683fc9806ee83d7dfcef9ed433bb6c  skills/fuzz-stop/SKILL.md
@@ -120,9 +127,10 @@ b335b7350b299e2836b8238cf5fadd0e  skills/resume-campaign/SKILL.md
 165e6d1267fc833d28bfd534ce183ee4  skills/triage/SKILL.md
 5aee46ae6fba4176331d4356725c5aac  skills/validate/SKILL.md
 40791617948c2d7315dd8fd91a1c8eb3  skills/yolo/SKILL.md
-c160b1a190a3c105d5729582f5abcc5a  STATE_SCHEMA.md
+15a3141b627df9857fd13cc6ffa3d2dd  STATE_SCHEMA.md
 a012158cbac7a2b368f75bde83f60060  templates/authorization.json
 bf357df6f228d472aeb6c36cef77e3fc  templates/fuzz.gitignore
 888fb1d7211167477ca0a398adf6613d  templates/guidance.md
 c19001f0356b4e10dcd99423d650b984  templates/nix-deps.nix
 44b6635d45694ab9fb15d02bcc6cccee  templates/project-flake.nix
+69464c019c4c8a87398396e5a3cef6c6  scripts/_lib/sast_scan.py

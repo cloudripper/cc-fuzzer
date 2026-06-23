@@ -31,6 +31,10 @@
 #       [--sweep]              (review EVERY function: max-functions=all, mode=sweep)
 #       [--batch-size <S>]     (reviewer window size; default 30)
 #       [--excluded-paths <comma-list>] \\
+#       [--sast off|auto|on]   (Tier-1 external SAST; default auto)
+#       [--no-sast]            (alias for --sast off)
+#       [--sast-rules <dirs>]  (extra semgrep rule dirs; bundled pack always included)
+#       [--codeql-db <path>]   (analyze a PREBUILT CodeQL database; skipped if absent)
 #       [--refresh]   (ignore stale-source-hash check)
 #       [--no-cve-context]   (skip cross-linking the latest cve-context)
 #
@@ -71,6 +75,9 @@ CLI_REFRESH=false
 CLI_NO_CVE=false
 CLI_SWEEP=false
 CLI_BATCH_SIZE=""
+CLI_SAST=""          # off|auto|on ; empty => config/default
+CLI_SAST_RULES=""
+CLI_CODEQL_DB=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -79,6 +86,10 @@ while [ $# -gt 0 ]; do
     --sweep)          CLI_SWEEP=true;            shift ;;
     --batch-size)     CLI_BATCH_SIZE="${2:-}";   shift 2 ;;
     --excluded-paths) CLI_EXCLUDES="${2:-}";     shift 2 ;;
+    --sast)           CLI_SAST="${2:-}";          shift 2 ;;
+    --no-sast)        CLI_SAST="off";             shift ;;
+    --sast-rules)     CLI_SAST_RULES="${2:-}";    shift 2 ;;
+    --codeql-db)      CLI_CODEQL_DB="${2:-}";     shift 2 ;;
     --refresh)        CLI_REFRESH=true;          shift ;;
     --no-cve-context) CLI_NO_CVE=true;           shift ;;
     --help|-h)        sed -n '2,/^$/p' "$0" | sed 's/^# \?//'; exit 0 ;;
@@ -100,6 +111,8 @@ CFG_FILE="$STATE_DIR/fuzz-config.json"
 CFG_TARGET_ROOT=""
 CFG_MAX=""
 CFG_EXCLUDES=""
+CFG_SAST=""
+CFG_CODEQL_DB=""
 if [ -f "$CFG_FILE" ]; then
   # One field per line, read line-by-line. The target root is a filesystem path
   # (can contain spaces) and excludes is a joined list; a single `read -r A B C`
@@ -108,6 +121,8 @@ if [ -f "$CFG_FILE" ]; then
   { read -r CFG_TARGET_ROOT
     read -r CFG_MAX
     read -r CFG_EXCLUDES
+    read -r CFG_SAST
+    read -r CFG_CODEQL_DB
   } <<< "$(python3 - <<PY
 import json
 try:
@@ -119,11 +134,21 @@ try:
     excl = cr.get("excluded_paths") or []
     if isinstance(excl, list):
         excl = ",".join(excl)
+    sast = (cr.get("sast") or {})
+    # sast may be a bool (enabled) or an object; normalize to a mode string.
+    if isinstance(sast, bool):
+        sast_mode = "auto" if sast else "off"
+        codeql_db = ""
+    else:
+        sast_mode = sast.get("mode", "") or ("off" if sast.get("enabled") is False else "")
+        codeql_db = sast.get("codeql_db", "") or ""
     print(paths or "")
     print(cr.get("max_functions_to_review", "") or "")
     print(excl or "")
+    print(sast_mode or "")
+    print(codeql_db or "")
 except Exception:
-    print(); print(); print()
+    print(); print(); print(); print(); print()
 PY
 )"
 fi
@@ -152,6 +177,11 @@ fi
 TARGET_ROOT="${CLI_TARGET_ROOT:-${CFG_TARGET_ROOT:-$AUTO_TARGET_ROOT}}"
 MAX_FUNCTIONS="${CLI_MAX:-${CFG_MAX:-50}}"
 EXCLUDES="${CLI_EXCLUDES:-$CFG_EXCLUDES}"
+# SAST mode precedence: CLI > config > default(auto). The prescan auto-includes
+# the bundled rules/semgrep pack; --sast-rules only ADDS extra dirs.
+SAST_MODE="${CLI_SAST:-${CFG_SAST:-auto}}"
+SAST_RULES="$CLI_SAST_RULES"
+CODEQL_DB="${CLI_CODEQL_DB:-$CFG_CODEQL_DB}"
 
 if [ -z "$TARGET_ROOT" ] || [ ! -d "$TARGET_ROOT" ]; then
   echo "ERROR: cannot resolve target source root." >&2
@@ -179,11 +209,14 @@ PRESCAN_ARGS=(
   --target-root  "$TARGET_ROOT"
   --out          "$PRESCAN_OUT"
   --max-functions "$MAX_FUNCTIONS"
+  --sast         "$SAST_MODE"
 )
 [ -n "$EXCLUDES" ]           && PRESCAN_ARGS+=(--excluded-paths "$EXCLUDES")
 [ -n "$CVE_CONTEXT_PATH" ]   && PRESCAN_ARGS+=(--cve-context    "$CVE_CONTEXT_PATH")
+[ -n "$SAST_RULES" ]         && PRESCAN_ARGS+=(--sast-rules     "$SAST_RULES")
+[ -n "$CODEQL_DB" ]          && PRESCAN_ARGS+=(--codeql-db      "$CODEQL_DB")
 
-echo "[code-review] running prescan: target=$TARGET_ROOT max=$MAX_FUNCTIONS" >&2
+echo "[code-review] running prescan: target=$TARGET_ROOT max=$MAX_FUNCTIONS sast=$SAST_MODE" >&2
 [ -n "$CVE_CONTEXT_PATH" ] && echo "[code-review] cve-context: $CVE_CONTEXT_PATH" >&2
 
 if ! python3 "$SCRIPT_DIR/_lib/code_review_prescan.py" "${PRESCAN_ARGS[@]}" >/dev/null; then

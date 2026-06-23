@@ -1,0 +1,81 @@
+# cc-fuzzer :: semgrep rule pack — C/C++ memory & input-handling
+#
+# Complements the prescan's coarse grep (PATTERN_RULES) with structural rules
+# grep can't easily express: format strings from a variable, allocation sizes
+# from unchecked multiplication, unbounded scanf, and fixed-buffer copies whose
+# length is not the destination size. High-recall heuristics; Tier-2 confirms.
+
+rules:
+  - id: nonliteral-format-string
+    languages: [c, cpp]
+    severity: ERROR
+    message: >
+      Format string is a variable, not a literal: an attacker who controls it
+      can read/write memory via %n/%s. Pass a literal format and the data as an
+      argument, e.g. printf("%s", buf).
+    metadata:
+      cwe: "CWE-134: Use of Externally-Controlled Format String"
+      category: security
+      confidence: MEDIUM
+    patterns:
+      - pattern-either:
+          - pattern: printf($FMT);
+          - pattern: fprintf($STREAM, $FMT);
+          - pattern: syslog($PRI, $FMT);
+      - metavariable-pattern:
+          metavariable: $FMT
+          patterns:
+            - pattern-not: "\"...\""
+
+  - id: alloc-size-unchecked-mul
+    languages: [c, cpp]
+    severity: WARNING
+    message: >
+      Allocation size is a multiplication; if either operand is
+      attacker-influenced this can integer-overflow to a small allocation
+      followed by a large write. Use calloc (overflow-checked) or validate the
+      product against SIZE_MAX before allocating.
+    metadata:
+      cwe: "CWE-190: Integer Overflow leading to Buffer Overflow"
+      category: security
+      confidence: LOW
+    patterns:
+      - pattern-either:
+          - pattern: malloc($A * $B)
+          - pattern: realloc($P, $A * $B)
+          - pattern: alloca($A * $B)
+
+  - id: unbounded-scanf-string
+    languages: [c, cpp]
+    severity: ERROR
+    message: >
+      scanf/sscanf with an unbounded %s writes an attacker-controlled length
+      into a fixed buffer. Specify a field width (e.g. %63s) or use fgets.
+    metadata:
+      cwe: "CWE-787: Out-of-bounds Write"
+      category: security
+      confidence: MEDIUM
+    patterns:
+      - pattern-either:
+          - pattern: scanf($FMT, ...)
+          - pattern: sscanf($SRC, $FMT, ...)
+      - metavariable-regex:
+          metavariable: $FMT
+          # An unbounded %s/%[ conversion: a % not followed by a digit field
+          # width before the s or [ specifier. Matches "%s", "%5d ... %s",
+          # "%[^\n]" but not "%63s".
+          regex: '"(?:[^"\\]|\\.)*%(?:\*)?(?:s|\[)(?:[^"\\]|\\.)*"'
+
+  - id: memcpy-strlen-source
+    languages: [c, cpp]
+    severity: WARNING
+    message: >
+      memcpy length is derived from the *source* (strlen($SRC)) rather than the
+      destination capacity; if $SRC is longer than the destination this
+      overflows. Bound the copy by the destination size.
+    metadata:
+      cwe: "CWE-120: Buffer Copy without Checking Size of Input"
+      category: security
+      confidence: LOW
+    patterns:
+      - pattern: memcpy($DST, $SRC, strlen($SRC))

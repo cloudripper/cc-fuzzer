@@ -39,6 +39,14 @@ from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
+# Sibling deterministic SAST module (semgrep / CodeQL). Imported defensively so
+# a stripped checkout without it still runs the grep-only prescan.
+try:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import sast_scan  # type: ignore
+except Exception:  # noqa: BLE001
+    sast_scan = None  # type: ignore
+
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -169,6 +177,12 @@ class FunctionEntry:
     cve_hotspot_match: bool = False
     cve_pattern_hints: List[str] = field(default_factory=list)
     file_recently_changed: bool = False
+    # SAST findings (semgrep/CodeQL) attributed to this function by line range.
+    # Each entry: {tool, rule_id, severity, cwe[], line, message}. A real-tool
+    # hit is a stronger signal than a grep PATTERN_RULES hit and is scored
+    # accordingly (see sast_scan.SEVERITY_WEIGHT). Empty when SAST is off or
+    # the function had no findings.
+    sast_hits: List[dict] = field(default_factory=list)
     # Logic-bug oracle signal (Phase 1 of oracle-driven fuzzing). `semantic_role`
     # is "consumer" (parse/decode side), "producer" (serialize/encode side), or
     # "gate" (validate/auth/canonicalize). `oracle_base` is the verb-stripped
@@ -528,6 +542,22 @@ def main() -> int:
                     help="Comma-separated path fragments to exclude (defaults union with built-ins).")
     ap.add_argument("--cve-context", default="",
                     help="Optional path to cve-context-<ts>.json for hotspot cross-ref.")
+    ap.add_argument("--sast", default="auto", choices=["off", "auto", "on"],
+                    help="Run external SAST (semgrep/CodeQL) as additional Tier-1 signal. "
+                         "'auto' (default) runs whatever is installed and self-skips loudly "
+                         "when nothing is; 'off' disables; 'on' is auto plus a louder status.")
+    ap.add_argument("--sast-rules", default="",
+                    help="Comma-separated semgrep rule sources, appended to the bundled "
+                         "rules/semgrep default. Each is a local rule dir OR an explicit "
+                         "semgrep registry ref fetched on demand: 'p/trailofbits' (and "
+                         "other 'p/'/'r/' shorthands) or an http(s):// rule URL. NOTE: "
+                         "'auto' is unsupported (needs semgrep telemetry, disabled for "
+                         "privacy) and is skipped with a note — use an explicit pack.")
+    ap.add_argument("--sast-timeout", type=int, default=300,
+                    help="Wall-clock budget (seconds) for the whole SAST step (default 300).")
+    ap.add_argument("--codeql-db", default="",
+                    help="Path to a PREBUILT CodeQL database. CodeQL is skipped when absent "
+                         "(DB construction needs the build command and is not done implicitly).")
     args = ap.parse_args()
 
     # Resolve --max-functions into `max_functions: Optional[int]`.
@@ -591,7 +621,51 @@ def main() -> int:
                 pass
             all_functions.append(entry)
 
-    # Sort by suspicion score descending; ties broken by LOC descending, then by
+    # -- Tier-1 SAST signal (semgrep / CodeQL) -------------------------------
+    # Run external analyzers over the target root and fold attributed findings
+    # into suspicion scores BEFORE ranking, so a real-tool hit lifts a function
+    # into the candidate window. Self-skips (with a recorded reason) when the
+    # tools or rules are absent — never fatal, mirroring cmplog/SymCC.
+    sast_block: dict = {"enabled": False,
+                        "tools": [{"tool": "sast", "status": "skipped: module unavailable"}],
+                        "findings_total": 0, "attributed": 0, "unattributed": []}
+    if sast_scan is not None and args.sast != "off":
+        # Resolve the rules ROOT, then auto-discover EVERY immediate
+        # subdirectory that holds at least one .yml/.yaml file. This picks up the
+        # bundled rules/semgrep pack (the offline default) and any other local
+        # pack dropped under rules/ — no hardcoded pack name. Cross-language
+        # packs (C/C++, Python, Go, …) are pulled on demand from the semgrep
+        # REGISTRY via an explicit --sast-rules ref (e.g. `p/trailofbits`); they
+        # are not vendored. (`auto` is unsupported — telemetry-gated, disabled
+        # for privacy.) See run_sast for the local-dir vs registry-token routing.
+        rules_root = Path(os.environ.get("CLAUDE_PLUGIN_ROOT", "")) / "rules"
+        # When CLAUDE_PLUGIN_ROOT is unset (manual run), fall back to the rules
+        # dir relative to this file: <plugin>/scripts/_lib/.. -> <plugin>/rules.
+        if not rules_root.exists():
+            rules_root = Path(__file__).resolve().parents[2] / "rules"
+        rule_specs: List = []
+        if rules_root.is_dir():
+            for sub in sorted(p for p in rules_root.iterdir() if p.is_dir()):
+                if any(sub.rglob("*.yml")) or any(sub.rglob("*.yaml")):
+                    rule_specs.append(sub)
+        # User-supplied --sast-rules ADD to the discovered defaults (never
+        # replace). Pass each as a RAW STRING so run_sast can classify it as a
+        # local dir, a semgrep registry ref (`p/…`, `http(s)://…`), or a skip
+        # (`auto` and typos) — wrapping in Path() here would mangle URLs
+        # (`https://`→`https:/`).
+        rule_specs += [p.strip() for p in args.sast_rules.split(",") if p.strip()]
+
+        sast_res = sast_scan.run_sast(
+            target_root, mode=args.sast, rules_dirs=rule_specs,
+            excludes=excludes, timeout=args.sast_timeout,
+            codeql_db=Path(args.codeql_db) if args.codeql_db else None,
+        )
+        # all_functions already carry target-root-relative .file paths here;
+        # attribute() is suffix-tolerant so rel/abs differences still match.
+        attributed, unattributed = sast_scan.attribute(sast_res.findings, all_functions)
+        sast_block = sast_res.to_dict()
+        sast_block["attributed"] = attributed
+        sast_block["unattributed"] = unattributed
     # (file, name, line_start) so the order is STABLE across re-runs and the
     # window slices the merge step takes are deterministic.
     all_functions.sort(
@@ -621,6 +695,8 @@ def main() -> int:
             "excluded_paths": excludes,
             "cve_context_consumed": str(args.cve_context) if args.cve_context else None,
             "recently_changed_files": len(recent),
+            "sast_mode": args.sast,
+            "sast_attributed_findings": sast_block.get("attributed", 0),
         },
         # Oracle candidates for logic-bug fuzzing. The reviewer and planner read
         # these to decide whether a round-trip / differential / invariant /
@@ -628,6 +704,11 @@ def main() -> int:
         # fits (lifecycle pairs). Empty when no inverse pairs / gates / lifecycle
         # pairs are found by name heuristic — that just means crash-only default.
         "oracle_candidates": oracle_candidates,
+        # External SAST signal (semgrep / CodeQL). Per-tool status (ok / skipped
+        # reason / error), total + attributed counts, and any findings that
+        # didn't land inside an inventoried function (header/macro/file-level).
+        # Attributed findings also live on each candidate's `sast_hits`.
+        "sast": sast_block,
         "top_candidates": [f.to_dict() for f in top],
         # Full inventory is kept for transparency/audit but with NO score
         # breakdowns or pattern hits on the non-top entries (keeps the file

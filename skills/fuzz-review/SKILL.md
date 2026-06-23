@@ -1,12 +1,12 @@
 ---
 name: fuzz-review
-description: "Run a static code review of the target source — three-tier pipeline (deterministic prescan → Sonnet review → Opus deep pass). Deep pass is the default; use --no-deep to skip it. --sweep reviews EVERY function via batched dispatch. — usage: [--no-deep] [--refresh] [--delta] [--sweep] [--batch-size <N>] [--target-root <path>] [--max-functions <N>|all] [--cost-cap <USD>] [natural-language guidance...]"
-argument-hint: "[--no-deep] [--refresh] [--delta] [--sweep] [--batch-size <N>] [--target-root <path>] [--max-functions <N>|all] [--cost-cap <USD>] [natural-language guidance...]"
+description: "Run a static code review of the target source — three-tier pipeline (deterministic prescan → Sonnet review → Opus deep pass). Tier 1 now folds in external SAST (semgrep, optional CodeQL) as a real-tool signal on top of the grep heuristics. Deep pass is the default; use --no-deep to skip it. --sweep reviews EVERY function via batched dispatch. — usage: [--no-deep] [--refresh] [--delta] [--sweep] [--batch-size <N>] [--target-root <path>] [--max-functions <N>|all] [--cost-cap <USD>] [--sast off|auto|on] [--no-sast] [--sast-rules <dir,dir>] [--codeql-db <path>] [natural-language guidance...]"
+argument-hint: "[--no-deep] [--refresh] [--delta] [--sweep] [--batch-size <N>] [--target-root <path>] [--max-functions <N>|all] [--cost-cap <USD>] [--sast off|auto|on] [--no-sast] [--sast-rules <dir,dir>] [--codeql-db <path>] [natural-language guidance...]"
 ---
 
 Runs the code review pipeline:
 
-1. **Tier 1 — prescan** (free, ~seconds): file inventory + dangerous-API grep + CVE-hotspot cross-reference + suspicion scoring → `fuzz/state/snapshots/code-review-prescan-<ts>.json`
+1. **Tier 1 — prescan** (free, ~seconds; +SAST adds seconds-to-minutes): file inventory + dangerous-API grep + **external SAST (semgrep, optional CodeQL)** + CVE-hotspot cross-reference + suspicion scoring → `fuzz/state/snapshots/code-review-prescan-<ts>.json`. Rules come from the bundled `rules/semgrep` set (TOCTOU + C/C++ memory; ships offline, the default) — every immediate `rules/*` subdir holding rule files is auto-loaded — plus any extra packs passed via `--sast-rules`, which accepts both local rule dirs and explicit semgrep **registry refs** (`p/trailofbits` for the cross-language Trail of Bits pack, other `p/…`/`r/…` packs, or rule URLs; fetched on demand, needs network). semgrep's `--config auto` is not supported (it requires telemetry, kept disabled for privacy) — name an explicit pack. SAST findings are attributed to the enclosing function by line range and bump its suspicion score harder than a grep hit (a real check/use rule beats a token match), so functions with no dangerous APIs but a real flaw — classic TOCTOU — get pulled into the candidate window instead of ranking at the bottom. Self-skips with a recorded reason when no analyzer is installed; the campaign continues on grep alone.
 2. **Tier 2 — `code-reviewer`** (Sonnet, $0.30-0.50): classifies candidates as `high` / `medium` / `needs_deep_pass` / `low` → `fuzz/state/snapshots/code-review-<ts>.json` + `fuzz/state/code-review.md`
 3. **Tier 3 — `code-reviewer-deep`** (Opus, $1-3, default): resolves `needs_deep_pass` questions via cross-file taint analysis, refines high findings with chain-fuel context, and ADDS new findings discovered during deep reading. Updates the same artifact in place.
 
@@ -53,6 +53,10 @@ This is a windowed flow: prescan → N reviewer windows → merge → deep pass.
 - `--target-root <path>` — override auto-detected source root
 - `--max-functions <N>|all` — cap Tier 2 to N candidates (default 50). `all` (or `0`) reviews everything (= `--sweep`); negatives are rejected.
 - `--cost-cap <USD>` — override `code_review.deep_pass_cost_cap_usd` for this run (raise it for `--sweep`)
+- `--sast off|auto|on` — control Tier-1 external SAST. `auto` (default) runs whatever analyzer is on PATH and self-skips loudly when none is; `off` disables; `on` is `auto` with a louder status. Also settable via `code_review.sast` in `fuzz-config.json`.
+- `--no-sast` — shorthand for `--sast off`
+- `--sast-rules <spec,spec>` — extra semgrep rule sources, appended to the default (the bundled `rules/semgrep` pack — TOCTOU + C/C++ memory — auto-discovered from every `rules/*` subdir, shipped offline). Each spec is either a **local rule dir** OR an explicit **semgrep registry ref** fetched on demand (needs network): `p/trailofbits` (cross-language Trail of Bits pack), other `p/…`/`r/…` registry shorthands, or an `http(s)://` rule URL. Each source runs in its own isolated pass, so a bad/unreachable spec only loses itself. semgrep's `auto` config is **unsupported** — it requires semgrep telemetry (`--metrics on`), which this plugin keeps disabled for privacy; passing `auto` is skipped with that note (no scan, no telemetry). Name an explicit pack like `p/trailofbits` instead.
+- `--codeql-db <path>` — analyze a PREBUILT CodeQL database. CodeQL is skipped unless this (or `code_review.sast.codeql_db`) points at an existing DB; the prescan never builds one implicitly, to preserve its fast-and-free contract.
 
 ## Loud coverage disclosure
 

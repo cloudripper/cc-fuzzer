@@ -1,0 +1,137 @@
+# cc-fuzzer :: semgrep rule pack — TOCTOU (time-of-check to time-of-use)
+#
+# CWE-367. These rules flag a security-relevant *check* on a resource followed
+# by a *use* of the same resource, with a window in between where an attacker
+# can swap what the path/handle refers to (symlink swap, rename, etc.).
+#
+# They are deliberately high-recall heuristics: a match means "a check/use pair
+# exists on the same operand", NOT "this is exploitable". The cc-fuzzer Tier-2
+# (Sonnet) reviewer confirms whether the window is attacker-reachable. Pair this
+# pack with the cc-fuzzer prescan so each hit bumps the enclosing function's
+# suspicion score.
+#
+# Scope note: the strongest fix for filesystem TOCTOU is to operate on a handle
+# (open then fstat/faccessat(AT_EMPTY_PATH)) rather than re-resolving the path.
+# Rules below therefore key on path-based check/use sequences sharing $PATH.
+
+rules:
+  # --- access() then open/fopen on the same path -------------------------
+  - id: toctou-access-then-open
+    languages: [c, cpp]
+    severity: WARNING
+    message: >
+      TOCTOU: access() on $PATH is followed by open()/fopen() on the same path.
+      The permission check and the use are not atomic; an attacker can replace
+      $PATH (e.g. via symlink) in the window. Operate on a file descriptor
+      (open then faccessat(fd, "", AT_EMPTY_PATH) / fstat) instead.
+    metadata:
+      cwe: "CWE-367: Time-of-check Time-of-use (TOCTOU) Race Condition"
+      category: security
+      confidence: MEDIUM
+      references:
+        - https://cwe.mitre.org/data/definitions/367.html
+    patterns:
+      - pattern-either:
+          - pattern: |
+              access($PATH, ...);
+              ...
+              open($PATH, ...);
+          - pattern: |
+              access($PATH, ...);
+              ...
+              fopen($PATH, ...);
+          - pattern: |
+              if (access($PATH, ...) == 0) { ... open($PATH, ...); ... }
+          - pattern: |
+              if (access($PATH, ...) == 0) { ... fopen($PATH, ...); ... }
+
+  # --- stat/lstat then open/fopen on the same path -----------------------
+  - id: toctou-stat-then-use
+    languages: [c, cpp]
+    severity: WARNING
+    message: >
+      TOCTOU: stat()/lstat() on $PATH is followed by a use (open/fopen) on the
+      same path. Metadata checked before use can change before the use runs.
+      Prefer open()+fstat() on the resulting descriptor.
+    metadata:
+      cwe: "CWE-367: Time-of-check Time-of-use (TOCTOU) Race Condition"
+      category: security
+      confidence: MEDIUM
+    patterns:
+      - pattern-either:
+          - pattern: |
+              stat($PATH, ...);
+              ...
+              open($PATH, ...);
+          - pattern: |
+              lstat($PATH, ...);
+              ...
+              open($PATH, ...);
+          - pattern: |
+              stat($PATH, ...);
+              ...
+              fopen($PATH, ...);
+          - pattern: |
+              lstat($PATH, ...);
+              ...
+              fopen($PATH, ...);
+
+  # --- check then unlink/chmod/chown on the same path --------------------
+  - id: toctou-check-then-mutate
+    languages: [c, cpp]
+    severity: ERROR
+    message: >
+      TOCTOU: a check on $PATH is followed by a privileged mutation
+      (unlink/chmod/chown/rename) on the same path. If $PATH can be replaced in
+      the window, the mutation hits an attacker-chosen target. Use the *at()
+      family with a trusted directory fd, or operate on an open handle.
+    metadata:
+      cwe: "CWE-367: Time-of-check Time-of-use (TOCTOU) Race Condition"
+      category: security
+      confidence: MEDIUM
+    patterns:
+      - pattern-either:
+          - pattern: |
+              access($PATH, ...);
+              ...
+              unlink($PATH);
+          - pattern: |
+              stat($PATH, ...);
+              ...
+              chmod($PATH, ...);
+          - pattern: |
+              stat($PATH, ...);
+              ...
+              chown($PATH, ...);
+          - pattern: |
+              lstat($PATH, ...);
+              ...
+              rename($PATH, ...);
+
+  # --- mktemp/tempnam then open (classic insecure-temp TOCTOU) -----------
+  - id: toctou-insecure-temp-then-open
+    languages: [c, cpp]
+    severity: ERROR
+    message: >
+      TOCTOU on a temp path: $PATH is produced by an insecure name generator
+      (mktemp/tempnam/tmpnam) and then opened. The name can be predicted and
+      pre-created by an attacker. Use mkstemp(), which atomically creates and
+      opens, and never re-open by name.
+    metadata:
+      cwe: "CWE-377: Insecure Temporary File"
+      category: security
+      confidence: HIGH
+    patterns:
+      - pattern-either:
+          - pattern: |
+              $PATH = mktemp(...);
+              ...
+              open($PATH, ...);
+          - pattern: |
+              $PATH = tempnam(...);
+              ...
+              fopen($PATH, ...);
+          - pattern: |
+              $PATH = tmpnam(...);
+              ...
+              open($PATH, ...);

@@ -19,6 +19,8 @@ At the start of EVERY dispatch (not just on plateau), load:
 
 This is mandatory dispatch-time loading; the catalog is how the deep pass sees logic bugs the prescan/Sonnet pipeline might have left implicit. The plugin reaches this lens on tick 1 (see [[PLUGIN_ISSUES.md A]]) — Opus does not get to skip it.
 
+**SAST hits are cross-file leads.** The prescan's `sast` block and each candidate's `sast_hits` (semgrep/CodeQL findings, with `cwe` and `line`) are single-translation-unit signals — a TOCTOU `access()→open()` rule, an unchecked-multiply allocation, a non-literal format string. Their check/use window or taint source frequently spans functions and files, which is exactly your job: take a confirmed or plausible SAST hit and trace whether the operand (path, length, format) is attacker-reachable across the call graph. A SAST rule that fired but whose window stays within one already-safe function is a false positive you can down-rank; one whose operand flows from untrusted input across a boundary is a finding to ADD or promote.
+
 ## Plugin files are read-only
 
 Your only writable scope is `fuzz/`. Never edit anything under `${CLAUDE_PLUGIN_ROOT}/`.

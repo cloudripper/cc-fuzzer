@@ -536,7 +536,8 @@ Schema: **`fuzz-config/v3`**. The user-editable launch config: it declares the c
   "excluded_paths": ["tests/", "docs/", "examples/", "third_party/", "vendor/"],
   "max_functions_to_review": 50,
   "refresh_on_source_hash_change": true,
-  "deep_pass_cost_cap_usd": 3.0
+  "deep_pass_cost_cap_usd": 3.0,
+  "sast": { "mode": "auto", "codeql_db": null }
 }
 ```
 - `default_tier` — `"prescan"` | `"sonnet"` | `"opus"`. Sonnet is the recommended default ($0.20–$0.50 per run).
@@ -544,6 +545,7 @@ Schema: **`fuzz-config/v3`**. The user-editable launch config: it declares the c
 - `excluded_paths` — list of path fragments to skip during the prescan. The defaults exclude tests, docs, examples, vendor trees, build outputs.
 - `max_functions_to_review` — Tier-2 caps. Top-N from the prescan are reviewed.
 - `deep_pass_cost_cap_usd` — hard cap on the Tier-3 Opus pass; refuses to start if the estimate exceeds.
+- `sast` — Tier-1 external static-analysis signal (semgrep, optional CodeQL). `mode` ∈ `off | auto | on` (default `auto`: run whatever analyzer is on PATH, self-skip with a recorded reason otherwise). May also be a bare bool (`true`→auto, `false`→off). `codeql_db` is the path to a PREBUILT CodeQL database; CodeQL is skipped unless set (the prescan never builds a DB implicitly). The bundled `rules/semgrep` pack (TOCTOU + C/C++ memory) is the offline default — auto-discovered from every local `rules/*` subdir with rule files, and not integrity-tracked (rule content is externally sourced). CLI `--sast-rules` appends extra sources: each is either a local rule dir or an explicit semgrep **registry ref** pulled on demand (`p/trailofbits`, other `p/…`/`r/…` shorthands, or an `http(s)://` URL; needs network). Each source runs in an isolated pass. semgrep's `--config auto` is unsupported (it requires telemetry, kept disabled for privacy); an `auto` spec is skipped with a note. Attributed findings bump the enclosing function's suspicion score (see `code-review-prescan/v1` `sast` block).
 
 Toggled via `/fuzz-review [--deep] [--refresh] [--delta]`. Auto-runs at COLD between `cve-context-build` and `campaign-planner`; never auto-runs on WARM ticks (deliberate one-time-ish cost).
 
@@ -1108,20 +1110,40 @@ Produced by `scripts/_lib/code_review_prescan.py` (invoked via `scripts/code-rev
     "not_selected": 262,
     "excluded_paths": ["tests/", "docs/", ...],
     "cve_context_consumed": "fuzz/state/snapshots/cve-context-1779100000.json",
-    "recently_changed_files": 18
+    "recently_changed_files": 18,
+    "sast_mode": "auto",
+    "sast_attributed_findings": 3
+  },
+  "sast": {
+    "enabled": true,
+    "tools": [
+      {"tool": "semgrep", "status": "ok", "findings_count": 3,
+       "duration_s": 2.1, "rules_source": ["<plugin>/rules/semgrep"]},
+      {"tool": "codeql", "status": "skipped: no codeql_db configured",
+       "findings_count": 0, "duration_s": 0.0, "rules_source": []}
+    ],
+    "findings_total": 3,
+    "attributed": 3,
+    "unattributed": []
   },
   "top_candidates": [
     {
       "file": "src/parser.c",
       "name": "parse_chunk",
       "line_start": 142, "line_end": 198, "loc": 57,
-      "suspicion_score": 22,
+      "suspicion_score": 31,
       "score_breakdown": {"strcpy_call": 5, "memcpy_call": 4,
-                          "cve_hotspot_function": 10, "recently_changed": 3},
+                          "cve_hotspot_function": 10, "recently_changed": 3,
+                          "sast_semgrep_high": 9},
       "pattern_hits": {"strcpy_call": 1, "memcpy_call": 2, "indexed_write": 3},
       "cve_hotspot_match": true,
       "cve_pattern_hints": ["oob_write", "int_overflow"],
-      "file_recently_changed": true
+      "file_recently_changed": true,
+      "sast_hits": [
+        {"tool": "semgrep", "rule_id": "toctou-access-then-open",
+         "severity": "high", "cwe": ["CWE-367"], "line": 150,
+         "message": "access() then open() on same path — TOCTOU race"}
+      ]
     }
   ],
   "full_inventory_summary": [
@@ -1131,7 +1153,7 @@ Produced by `scripts/_lib/code_review_prescan.py` (invoked via `scripts/code-rev
 ```
 
 **Required fields**: schema, ts, target_root, scope, top_candidates.
-**Optional fields**: full_inventory_summary.
+**Optional fields**: full_inventory_summary, sast. (`sast` is present whenever the prescan ran with SAST not `off`; `top_candidates[].sast_hits` is `[]` when a function had no attributed findings. Both are additive — older readers ignore them.)
 
 **Windowing contract / loud coverage disclosure (v0.30).** `scope` carries the review-coverage posture so every stage (prescan → run-script → reviewer → merge) agrees on how much was selected and how much was deliberately left out:
 - **`mode`** — one of `enums.py` `CR_REVIEW_MODE` = `capped | sweep`. `capped` is the default per-tick posture (top-N candidates, cost-disciplined); `sweep` reviews EVERY inventoried function via batched reviewer dispatch.

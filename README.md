@@ -13,6 +13,8 @@ Install the plugin once, inside Claude Code:
 /plugin install cc-fuzzer
 ```
 
+Tier-1 SAST in `/fuzz-review` ships the bundled `rules/semgrep` pack offline by default — no setup needed. Additional cross-language rulesets (C/C++, Python, Go, Rust, etc.) can be pulled on demand from the semgrep registry via an explicit pack, e.g. `--sast-rules p/trailofbits` (requires network at scan time). (semgrep's `--config auto` is intentionally **not** supported: it requires semgrep telemetry, which this plugin keeps disabled for privacy — name an explicit pack instead.)
+
 ### Recommended companion plugin: ctxctl
 
 For unattended campaigns pair cc-fuzzer with [**ctxctl**](https://github.com/cloudripper/ctxctl): it blocks the main thread from running Bash/Read/Write/etc., so real work lives in subagents whose context dies with them and the orchestrator stays at planning altitude across long runs. cc-fuzzer's v0.30 main-thread skills dispatch a Haiku `ops-runner` subagent for every Bash call when ctxctl is enforcing.
