@@ -1,0 +1,17 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/is-crash.sh",
+    "--exit-code",
+    "139",
+    "<ROOT>/tests/fixtures/sanitizer-logs/asan-uaf.log"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {},
+  "stderr": [],
+  "stdout": [
+    "{\"is_crash\":true,\"category\":\"heap-use-after-free\",\"summary_line\":\"SUMMARY: AddressSanitizer: heap-use-after-free /src/target/src/parser.c:34:9 in free_chunk\",\"top_frame\":\"free_chunk @ /src/target/src/parser.c:34\",\"exit_code\":139}"
+  ]
+}

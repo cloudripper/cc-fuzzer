@@ -8,11 +8,8 @@
   "deleted": [],
   "exit_code": 0,
   "files": {},
-  "stderr": [
-    "awk: cmd. line:5:                     func = $(i+1);",
-    "awk: cmd. line:5:                     ^ syntax error"
-  ],
+  "stderr": [],
   "stdout": [
-    "{\"is_crash\":true,\"category\":\"heap-buffer-overflow\",\"summary_line\":\"SUMMARY: AddressSanitizer: heap-buffer-overflow /src/target/src/parser.c:25:13 in parse_exif\",\"top_frame\":\"\",\"exit_code\":null}"
+    "{\"is_crash\":true,\"category\":\"heap-buffer-overflow\",\"summary_line\":\"SUMMARY: AddressSanitizer: heap-buffer-overflow /src/target/src/parser.c:25:13 in parse_exif\",\"top_frame\":\"parse_exif @ /src/target/src/parser.c:25\",\"exit_code\":null}"
   ]
 }

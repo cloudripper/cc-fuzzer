@@ -1,0 +1,26 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/detect-crashes.sh"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {
+    "fuzz/crashes/new/parser__c49fea7425fa7f86.bin": {
+      "lines": [
+        "legacy"
+      ],
+      "trailing_newline": false
+    }
+  },
+  "stderr": [],
+  "stdout": [
+    "{",
+    "  \"hookSpecificOutput\": {",
+    "    \"hookEventName\": \"PostToolUse\",",
+    "    \"additionalContext\": \"cc-fuzzer: queued 1 new crash file(s) into <PROJECT>/fuzz/crashes/new/. Next /cc-fuzzer:tick should dispatch crash-triager.\"",
+    "  }",
+    "}"
+  ]
+}

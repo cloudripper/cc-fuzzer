@@ -23,14 +23,6 @@ N = FROZEN_NOW
 LOGS = FIXTURES / "sanitizer-logs"
 
 
-def _awk_is_gawk() -> bool:
-    try:
-        out = subprocess.run(["awk", "--version"], capture_output=True, text=True, timeout=5)
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    return "GNU Awk" in out.stdout
-
-
 # ---------------------------------------------------------------------------
 # validate-state.sh
 # ---------------------------------------------------------------------------
@@ -198,9 +190,6 @@ class TestYoloNextTick(GoldenTestCase):
 # is-crash.sh
 # ---------------------------------------------------------------------------
 
-@unittest.skipUnless(_awk_is_gawk(),
-                     "is-crash.sh goldens were recorded with GNU awk; its top-frame "
-                     "awk program uses `func`, a gawk keyword, so output is awk-dependent")
 class TestIsCrash(GoldenTestCase):
     def _log(self, name, *args):
         sb = self.sandbox(None)

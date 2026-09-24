@@ -1,4 +1,4 @@
-"""Shared golden cases for the §2 ports (UPDATE_ROADMAP.md table rows 1-3).
+"""Shared golden cases for the §2 ports (UPDATE_ROADMAP.md table rows 1-6).
 
 Each Case names ONE golden (tests/golden/<name>.json), the fixture + setup it
 runs on, the bash entry point that recorded it (`bash_argv`) and the core CLI
@@ -15,6 +15,8 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
+import time
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -33,16 +35,35 @@ class Case:
     env: dict = field(default_factory=dict)
     cwd: str | None = None
     stdin: str | None = None
+    # live=True: run_case starts a real `sleep` process first and exposes its
+    # pid as sb.live_pid (for slot-liveness checks); setup writes it where needed.
+    live: bool = False
+    # real_now=True: the sandbox clock is the real wall clock (for code that
+    # compares mtimes with the real clock, e.g. find -mmin).
+    real_now: bool = False
+    # Capture fields the core run is not compared on (e.g. the bash side prints
+    # plugin hook JSON where the core prints data): ("stdout",).
+    core_ignore: tuple = ()
 
 
 def run_case(test, case: Case, argv):
     """Sandbox the case's fixture, apply its setup, run argv, return the capture."""
-    sb = test.sandbox(case.fixture)
+    sb = test.sandbox(case.fixture, **({"now": int(time.time())} if case.real_now else {}))
     if case.fixture is None:
         (sb.project / "fuzz").mkdir()
+    if case.live:
+        proc = subprocess.Popen(["sleep", "300"])
+        test.addCleanup(proc.wait)
+        test.addCleanup(proc.kill)
+        sb.live_pid = proc.pid
     if case.setup:
         case.setup(sb)
     return sb.run(argv, env=case.env or None, cwd=case.cwd, stdin=case.stdin)
+
+
+def assert_core_case(test, case: Case):
+    """Run case.core_argv and assert it against the case's golden."""
+    test.assertGolden(case.name, run_case(test, case, case.core_argv), ignore=case.core_ignore)
 
 
 # ---------------------------------------------------------------------------
@@ -529,7 +550,112 @@ UPDATE_CASES = [
     Case("update-current/cold-bare", "campaign-cold", UC, UCC, setup=_no_state_files),
 ]
 
+
+# ---------------------------------------------------------------------------
+# row 4: is-crash.sh, detect-crashes.sh
+# ---------------------------------------------------------------------------
+
+LOGS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "fixtures", "sanitizer-logs")
+IC = "scripts/is-crash.sh"
+
+
+def _log_text(name):
+    with open(os.path.join(LOGS_DIR, name)) as f:
+        return f.read()
+
+
+def _ic(name, *args, stdin=None):
+    return Case(f"is-crash/{name}", None, bash(IC, *args), core("crash", "classify", *args),
+                stdin=stdin)
+
+
+CLASSIFY_CASES = [
+    _ic("path-with-exit-code", "--exit-code", "139", os.path.join(LOGS_DIR, "asan-uaf.log")),
+    _ic("stdin-asan-segv", stdin=_log_text("asan-segv.log")),
+    _ic("stdin-exit-132", "--exit-code", "132", stdin="no output\n"),
+    _ic("stdin-exit-135-deadly", "--exit-code", "135",
+        stdin="==1==ERROR: libFuzzer: deadly signal\nMS: 1 DEADLYSIGNAL\n"),
+    _ic("frames-infra-and-ubsan", stdin=(
+        "src/a.c:3:1: runtime error: division by zero\n"
+        "    #0 0x1 in __ubsan_handle_divrem_overflow compiler-rt/ubsan.cc:10\n"
+        "    #1 0x2 in LLVMFuzzerTestOneInput fuzz/h.c:5:2\n"
+        "    #2 fuzzer::Fuzzer::ExecuteCallback lib/F.cpp:600\n"
+        "    in divide src/a.c:3:1\n")),
+    _ic("frame-without-location", stdin="Segmentation fault\n    #0 0x1 in lonely\n"),
+    _ic("summary-other-category", stdin=(
+        "SUMMARY: AddressSanitizer: use-after-poison /x.c:1 in f\n    #0 0x1 in f /x.c:1:2\n")),
+    _ic("summary-leak", stdin="SUMMARY: LeakSanitizer: 64 byte(s) leaked in 1 allocation(s).\n"),
+    _ic("empty-stdin", stdin=""),
+]
+
+DC = bash("scripts/detect-crashes.sh")
+DCC = core("crash", "detect", "--json")
+
+
+def _sha(data: bytes) -> str:
+    import hashlib
+    return hashlib.sha256(data).hexdigest()
+
+
+def _slot_live(sb):
+    sb.add_sub(str(sb.live_pid), "<PID>")
+    sb.edit_json("fuzz/state/fuzzers.json",
+                 lambda d: d["slots"][0].update(pid=str(sb.live_pid), pgid=str(sb.live_pid)))
+
+
+def _crash_files(sb):
+    """Crash-like files in every engine location detect-crashes.sh scans."""
+    real = sb.now
+    lf = "fuzz/harnesses/parser/.libfuzzer-cwd"
+    sb.write(f"{lf}/crash-aaa", b"CRASH-A payload")
+    sb.write(f"{lf}/leak-bbb", b"leak payload")
+    sb.write("crash-at-root", b"unattributed")
+    sb.write("fuzz/harnesses/encoder/aflpp-out/default/crashes/id:000000,sig:11", b"afl crash")
+    # identical to a known finding's repro -> skipped
+    sb.write(f"{lf}/timeout-ccc", sb.path("fuzz/crashes/known/f001/repro.bin").read_bytes())
+    # already queued -> skipped
+    dup = b"already queued"
+    sb.write(f"{lf}/oom-ddd", dup)
+    sb.write(f"fuzz/crashes/new/parser__{_sha(dup)[:16]}.bin", dup)
+    # too old (10 min) and too deep (depth 7) -> skipped
+    old = sb.write(f"{lf}/crash-old", b"old crash")
+    os.utime(old, (real - 600, real - 600))
+    sb.write("a/b/c/d/e/f/crash-deep", b"deep")
+    sb.write("a/b/c/d/e/crash-depth6", b"depth six")
+    for p in sb.project.rglob("*"):
+        if p != old and p.is_file():
+            os.utime(p, (real - 30, real - 30))
+
+
+def _detect_live(sb):
+    _slot_live(sb)
+    _crash_files(sb)
+
+
+def _detect_legacy_pid(sb):
+    sb.path("fuzz/state/fuzzers.json").unlink()
+    sb.write("fuzz/state/fuzzer.pid", f"{sb.live_pid}\n")
+    sb.add_sub(str(sb.live_pid), "<PID>")
+    sb.write("fuzz/harnesses/parser/.libfuzzer-cwd/crash-legacy", b"legacy")
+
+
+def _dc(name, fixture, setup, live=True, **kw):
+    return Case(f"detect-crashes/{name}", fixture, DC, DCC, setup=setup, live=live, real_now=True,
+                core_ignore=("stdout",), **kw)
+
+
+DETECT_CASES = [
+    _dc("live-slot", "campaign-crashes", _detect_live),
+    _dc("no-live-slot", "campaign-crashes", _crash_files, live=False),
+    _dc("legacy-pid", "campaign-crashes", _detect_legacy_pid),
+    _dc("state-dir-override", "campaign-crashes",
+        lambda sb: (_detect_live(sb), shutil.move(str(sb.path("fuzz/state")), str(sb.path("alt-state")))),
+        env={"FUZZ_STATE_DIR": "alt-state"}),
+]
+
 ROW1_CASES = CONFIG_CASES + ENUMS_CASES
 ROW2_CASES = VALIDATE_CASES
 ROW3_CASES = YOLO_CASES + ROUNDUP_CASES + CEILING_CASES + DERIVE_CASES + UPDATE_CASES
-ALL_CASES = ROW1_CASES + ROW2_CASES + ROW3_CASES
+ROW4_CASES = CLASSIFY_CASES + DETECT_CASES
+ALL_CASES = ROW1_CASES + ROW2_CASES + ROW3_CASES + ROW4_CASES

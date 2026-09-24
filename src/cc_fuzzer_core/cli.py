@@ -27,6 +27,7 @@ SUBSYSTEMS = (
     "cc_fuzzer_core.config",
     "cc_fuzzer_core.schema",
     "cc_fuzzer_core.state",
+    "cc_fuzzer_core.crash",
     "cc_fuzzer_core.models",
     "cc_fuzzer_core.manifest",
 )
@@ -40,6 +41,22 @@ def add_subsystem(subparsers, name, help_text):
     verbs = p.add_subparsers(dest="verb", metavar="<verb>")
     p.set_defaults(func=lambda _a, _p=p: (_p.print_help(sys.stderr), 2)[1])
     return p, verbs
+
+
+# (subsystem, verb) -> handler for verbs that parse their own arguments (to
+# keep a legacy script's exact usage errors). See add_raw_verb().
+RAW_VERBS: dict = {}
+
+
+def add_raw_verb(verbs, subsystem, name, func, help_text):
+    """Register a verb whose handler gets every argument after the verb
+    unparsed, as `Namespace(args=[...])`; argparse never sees them, so a
+    leading --flag reaches the handler instead of failing the global parse."""
+    v = verbs.add_parser(name, help=help_text, add_help=False)
+    v.add_argument("args", nargs=argparse.REMAINDER)
+    v.set_defaults(func=func)
+    RAW_VERBS[(subsystem, name)] = func
+    return v
 
 
 def build_parser():
@@ -56,8 +73,13 @@ def build_parser():
 
 def main(argv):
     parser = build_parser()
-    args = parser.parse_args(argv)
-    func = getattr(args, "func", None)
+    raw = RAW_VERBS.get(tuple(argv[:2])) if len(argv) >= 2 else None
+    if raw is not None:
+        args = argparse.Namespace(args=list(argv[2:]))
+        func = raw
+    else:
+        args = parser.parse_args(argv)
+        func = getattr(args, "func", None)
     if func is None:
         parser.print_help(sys.stderr)
         return 2

@@ -1,0 +1,14 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/is-crash.sh"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {},
+  "stderr": [],
+  "stdout": [
+    "{\"is_crash\":true,\"category\":\"use-after-poison\",\"summary_line\":\"SUMMARY: AddressSanitizer: use-after-poison /x.c:1 in f\",\"top_frame\":\"f @ /x.c:1\",\"exit_code\":null}"
+  ]
+}

@@ -3,7 +3,7 @@
     "bash",
     "<ROOT>/scripts/is-crash.sh",
     "--exit-code",
-    "137"
+    "132"
   ],
   "created_dirs": [],
   "deleted": [],
@@ -11,6 +11,6 @@
   "files": {},
   "stderr": [],
   "stdout": [
-    "{\"is_crash\":true,\"category\":\"oom\",\"summary_line\":\"exit=137 (SIGKILL — OOM or external)\",\"top_frame\":\"\",\"exit_code\":137}"
+    "{\"is_crash\":true,\"category\":\"generic-crash\",\"summary_line\":\"exit=132 (SIGILL)\",\"top_frame\":\"\",\"exit_code\":132}"
   ]
 }

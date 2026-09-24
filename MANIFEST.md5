@@ -75,7 +75,7 @@ d53a559c6137248f64d0c4cf7af72ca9  scripts/corpus-quarantine.sh
 35c17145b16a684bfcc73d0f9c9c4cd8  scripts/cross-ref-findings.sh
 6a66deb96c7d17997853e63683e1d9a9  scripts/cve-context-build.sh
 6cc42ad94c0d4c4fa38189aace915f9e  scripts/cve-lookup.py
-f7a442502d7ae441cb79dc969a6948e9  scripts/detect-crashes.sh
+8a20285877557788f2a83e6237f8050d  scripts/detect-crashes.sh
 ded9c4697f621e5f3380f94944c803fe  scripts/dictionaries.sh
 430f103a67bfe4b0594ac1b14202b9d0  scripts/doctor.sh
 8e692cae3d9f755ef8cf5a7dac1cf4fb  scripts/enforce-readonly.sh
@@ -88,7 +88,7 @@ a7ab9088aedd216954d468722f471a4e  scripts/gen-manifest.sh
 5ef36dfdbee7f51b7a48c03a7fe0b29e  scripts/harness-set.sh
 8472ac9fe8dfe6c2af7a0d238d98b3d4  scripts/install-symcc.sh
 31374035a6732ec70a11148241e0c983  scripts/integrity-check.sh
-3f4e33933ed2a9aec0ba40ddb0c3b3f0  scripts/is-crash.sh
+3876158eebc4bd02d8469806d11574ca  scripts/is-crash.sh
 6778736e7094b602a0400e22af53d941  scripts/kill-harness-processes.sh
 abebc8413234d86a8f81e60f5157323c  scripts/launch-fuzzer-slot.sh
 dfbbde7c7c1a99e2f24fe56718427767  scripts/netem-harness.sh
@@ -136,8 +136,11 @@ e290baf96ab206f60000850d6b4a9891  skills/report/SKILL.md
 b6243c453ddf3c899989d80db09f886a  skills/yolo/SKILL.md
 7a0c7c6f7ff94edcf52f367204c63f55  src/cc_fuzzer_core/__init__.py
 81df487b0971d3b41a1613371d67df65  src/cc_fuzzer_core/__main__.py
-df06fe4c2b807fb910729b80ebc9830c  src/cc_fuzzer_core/cli.py
+084cfb224b63aa601b5e7b8220bb2833  src/cc_fuzzer_core/cli.py
 b72bfbf569f1d0c6aded6b744fc93529  src/cc_fuzzer_core/config.py
+6f02bd68429cf3b878ca461b07752beb  src/cc_fuzzer_core/crash/__init__.py
+edd2ef13c1a14be5d257860ed72a34e8  src/cc_fuzzer_core/crash/classify.py
+d8b8695c4bd96bd7df2ea0eaf287c67b  src/cc_fuzzer_core/crash/detect.py
 126ddcd5c81cf200d43f5b54d3c7bebf  src/cc_fuzzer_core/data/models.json
 5aac804d28e009a87237b76ae01fa930  src/cc_fuzzer_core/enums.py
 82c7724d8024f81554ebcd34959503e0  src/cc_fuzzer_core/manifest.py

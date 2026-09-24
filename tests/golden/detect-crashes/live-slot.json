@@ -1,0 +1,44 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/detect-crashes.sh"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {
+    "fuzz/crashes/new/parser__9f6f6262d3690070.bin": {
+      "lines": [
+        "CRASH-A payload"
+      ],
+      "trailing_newline": false
+    },
+    "fuzz/crashes/new/parser__e190de1acc718eeb.bin": {
+      "lines": [
+        "leak payload"
+      ],
+      "trailing_newline": false
+    },
+    "fuzz/crashes/new/unknown__1532a206699ec079.bin": {
+      "lines": [
+        "unattributed"
+      ],
+      "trailing_newline": false
+    },
+    "fuzz/crashes/new/unknown__c433d9bb45718237.bin": {
+      "lines": [
+        "depth six"
+      ],
+      "trailing_newline": false
+    }
+  },
+  "stderr": [],
+  "stdout": [
+    "{",
+    "  \"hookSpecificOutput\": {",
+    "    \"hookEventName\": \"PostToolUse\",",
+    "    \"additionalContext\": \"cc-fuzzer: queued 4 new crash file(s) into <PROJECT>/fuzz/crashes/new/. Next /cc-fuzzer:tick should dispatch crash-triager.\"",
+    "  }",
+    "}"
+  ]
+}

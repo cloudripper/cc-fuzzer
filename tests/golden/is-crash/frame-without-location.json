@@ -1,0 +1,14 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/is-crash.sh"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {},
+  "stderr": [],
+  "stdout": [
+    "{\"is_crash\":true,\"category\":\"segfault\",\"summary_line\":\"Segmentation fault\",\"top_frame\":\"lonely @ \",\"exit_code\":null}"
+  ]
+}

@@ -1,8 +1,7 @@
 {
   "argv": [
     "bash",
-    "<ROOT>/scripts/is-crash.sh",
-    "<ROOT>/tests/fixtures/sanitizer-logs/asan-segv.log"
+    "<ROOT>/scripts/is-crash.sh"
   ],
   "created_dirs": [],
   "deleted": [],
