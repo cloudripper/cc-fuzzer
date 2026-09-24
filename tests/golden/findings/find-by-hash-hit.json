@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/findings.sh",
+    "find-by-hash",
+    "0f1e2d3c4b5a6978"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {},
+  "stderr": [],
+  "stdout": [
+    "{\"schema\":\"finding/v2\",\"id\":\"f002\",\"stack_hash\":\"0f1e2d3c4b5a6978\",\"harnesses\":[\"parser\"],\"category\":\"heap-buffer-overflow\",\"subcategory\":\"READ-1B\",\"location\":\"parse_exif@src/parser.c:25\",\"exploitability\":\"medium\",\"root_cause\":\"loop bound uses <= len, reading one byte past the exif buffer\",\"reproducer\":\"fuzz/crashes/known/f002/repro.bin\",\"first_seen\":\"2026-09-21T13:58:20Z\",\"last_seen\":\"2026-09-21T14:08:20Z\",\"dedup_count\":2,\"status\":\"candidate\"}"
+  ]
+}

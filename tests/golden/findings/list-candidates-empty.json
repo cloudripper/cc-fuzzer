@@ -1,0 +1,17 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/findings.sh",
+    "list-candidates"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {
+    "fuzz/state/findings.jsonl": {
+      "lines": []
+    }
+  },
+  "stderr": [],
+  "stdout": []
+}

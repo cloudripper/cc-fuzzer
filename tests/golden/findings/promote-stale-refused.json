@@ -1,0 +1,26 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/findings.sh",
+    "promote",
+    "f002",
+    "--driver",
+    "fuzz/findings/f002/repro/driver.c",
+    "--verifier",
+    "fuzz/findings/f002/repro/verify.sh",
+    "--boundary",
+    "confidentiality",
+    "--precondition",
+    "attacker file",
+    "--projected",
+    "demonstrated"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 1,
+  "files": {},
+  "stderr": [
+    "ERROR: promote: f002 has status=stale — promotion refused"
+  ],
+  "stdout": []
+}

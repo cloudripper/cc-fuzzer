@@ -1,0 +1,30 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/findings.sh",
+    "drop",
+    "fuzz/crashes/new/parser__deadbeefcafe0001.bin",
+    "artifact_filter",
+    "harness frees the buffer",
+    "--principle",
+    "harness_correctness",
+    "--evidence",
+    "harness.c:12 double free"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {
+    "fuzz/state/dropped_crashes.jsonl": {
+      "lines": [
+        "{\"schema\":\"dropped-crash/v1\",\"ts\":\"2026-09-21T11:26:40Z\",\"crash_file\":\"fuzz/crashes/new/parser__00000000aaaa0001.bin\",\"stack_hash_partial\":\"99887766\",\"stage\":\"artifact_filter\",\"principle\":\"harness_correctness\",\"reason\":\"harness passes a length larger than the buffer it allocated\",\"evidence\":\"fuzz/harnesses/parser/harness/parser_fuzzer.c:5\"}",
+        "{\"schema\":\"dropped-crash/v1\",\"ts\":\"2026-09-21T12:00:00Z\",\"crash_file\":\"fuzz/crashes/new/parser__00000000aaaa0002.bin\",\"stage\":\"deterministic_replay\",\"principle\":null,\"reason\":\"top frames differed across 3 replays\"}",
+        "{\"schema\":\"dropped-crash/v1\",\"ts\":\"2026-09-21T14:13:20Z\",\"crash_file\":\"fuzz/crashes/new/parser__deadbeefcafe0001.bin\",\"stage\":\"artifact_filter\",\"reason\":\"harness frees the buffer\",\"stack_hash_partial\":\"a8ea7d51\",\"principle\":\"harness_correctness\",\"evidence\":\"harness.c:12 double free\"}"
+      ]
+    }
+  },
+  "stderr": [],
+  "stdout": [
+    "dropped: fuzz/crashes/new/parser__deadbeefcafe0001.bin (stage=artifact_filter, principle=harness_correctness)"
+  ]
+}

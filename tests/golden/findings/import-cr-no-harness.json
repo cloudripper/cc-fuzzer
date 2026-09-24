@@ -1,0 +1,23 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/findings.sh",
+    "import-cr"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {
+    "fuzz/state/findings.jsonl": {
+      "lines": [
+        "{\"schema\":\"finding/v2\",\"id\":\"f001\",\"status\":\"candidate\",\"source\":\"code_review\",\"cr_ref\":\"c0ffee01\",\"category\":\"heap-buffer-overflow\",\"location\":\"parse_chunk@src/parser.c:8\",\"exploitability\":\"medium\",\"root_cause\":\"[code-review oob_read] len unchecked\",\"first_seen\":\"2026-09-21T14:13:20Z\",\"last_seen\":\"2026-09-21T14:13:20Z\",\"dedup_count\":1,\"oracle_kind\":\"memory\",\"code_review_evidence\":\"len unchecked\"}",
+        "{\"schema\":\"finding/v2\",\"id\":\"f002\",\"status\":\"candidate\",\"source\":\"code_review\",\"cr_ref\":\"c0ffee02\",\"category\":\"auth-bypass\",\"location\":\"check_token@src/auth.c:?\",\"exploitability\":\"medium\",\"root_cause\":\"[code-review auth_bypass]\",\"first_seen\":\"2026-09-21T14:13:20Z\",\"last_seen\":\"2026-09-21T14:13:20Z\",\"dedup_count\":1,\"oracle_kind\":\"auth\",\"trust_boundary_crossed\":\"user->admin\",\"precondition\":\"valid session\"}",
+        "{\"schema\":\"finding/v2\",\"id\":\"f003\",\"status\":\"candidate\",\"source\":\"code_review\",\"cr_ref\":\"c0ffee05\",\"category\":\"logic-error\",\"location\":\"f@g.c:3\",\"exploitability\":\"medium\",\"root_cause\":\"[code-review mystery_pattern]\",\"first_seen\":\"2026-09-21T14:13:20Z\",\"last_seen\":\"2026-09-21T14:13:20Z\",\"dedup_count\":1}"
+      ]
+    }
+  },
+  "stderr": [
+    "import-cr: imported=3 skipped=1 (snapshot=<PROJECT>/fuzz/state/snapshots/code-review-1789999000.json)"
+  ],
+  "stdout": []
+}

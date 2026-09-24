@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/findings.sh",
+    "add",
+    "abcdef0123456789",
+    "bad-thing",
+    "l",
+    "likely",
+    "r",
+    "fuzz/crashes/known/f003/repro.bin"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "ERROR: invalid category 'bad-thing'. See 'findings.sh help'."
+  ],
+  "stdout": []
+}

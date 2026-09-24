@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/findings.sh",
+    "find-by-hash",
+    "3333333333333333"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {},
+  "stderr": [],
+  "stdout": [
+    "{\"schema\": \"finding/v2\", \"id\": \"f003\", \"stack_hash\": \"3333333333333333\", \"status\": \"candidate\", \"category\": \"oom\", \"location\": \"a@b.c:1\", \"first_seen\": \"2026-09-21T10:00:00Z\", \"harnesses\": [\"parser\"]}"
+  ]
+}

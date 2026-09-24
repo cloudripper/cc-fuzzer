@@ -1,0 +1,20 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/findings.sh",
+    "promote",
+    "f002",
+    "--driver",
+    "x",
+    "--bogus",
+    "y"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "ERROR: promote: unknown flag '--bogus'"
+  ],
+  "stdout": []
+}

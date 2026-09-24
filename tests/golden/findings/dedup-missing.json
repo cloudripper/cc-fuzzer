@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/findings.sh",
+    "dedup",
+    "ffffffffffffffff"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 1,
+  "files": {},
+  "stderr": [
+    "ERROR: no finding with stack_hash ffffffffffffffff"
+  ],
+  "stdout": []
+}

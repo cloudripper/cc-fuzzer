@@ -1,0 +1,28 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/findings.sh",
+    "drop",
+    "fuzz/crashes/new/parser__deadbeefcafe0002.bin",
+    "target_realistic_reproducer",
+    "needs a debug-only API",
+    "--principle",
+    "api_contract"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {
+    "fuzz/state/dropped_crashes.jsonl": {
+      "lines": [
+        "{\"schema\":\"dropped-crash/v1\",\"ts\":\"2026-09-21T11:26:40Z\",\"crash_file\":\"fuzz/crashes/new/parser__00000000aaaa0001.bin\",\"stack_hash_partial\":\"99887766\",\"stage\":\"artifact_filter\",\"principle\":\"harness_correctness\",\"reason\":\"harness passes a length larger than the buffer it allocated\",\"evidence\":\"fuzz/harnesses/parser/harness/parser_fuzzer.c:5\"}",
+        "{\"schema\":\"dropped-crash/v1\",\"ts\":\"2026-09-21T12:00:00Z\",\"crash_file\":\"fuzz/crashes/new/parser__00000000aaaa0002.bin\",\"stage\":\"deterministic_replay\",\"principle\":null,\"reason\":\"top frames differed across 3 replays\"}",
+        "{\"schema\":\"dropped-crash/v1\",\"ts\":\"2026-09-21T14:13:20Z\",\"crash_file\":\"fuzz/crashes/new/parser__deadbeefcafe0002.bin\",\"stage\":\"target_realistic_reproducer\",\"reason\":\"needs a debug-only API\",\"stack_hash_partial\":\"96e99228\",\"principle\":\"api_contract\"}"
+      ]
+    }
+  },
+  "stderr": [],
+  "stdout": [
+    "dropped: fuzz/crashes/new/parser__deadbeefcafe0002.bin (stage=target_realistic_reproducer, principle=api_contract)"
+  ]
+}

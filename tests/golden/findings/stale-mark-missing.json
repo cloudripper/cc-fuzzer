@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/findings.sh",
+    "stale-mark",
+    "f099"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 1,
+  "files": {},
+  "stderr": [
+    "ERROR: <PROJECT>/fuzz/crashes/known/f099 does not exist"
+  ],
+  "stdout": []
+}

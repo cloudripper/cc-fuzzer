@@ -1243,6 +1243,342 @@ MERGE_CASES = [
     _merge("no-partials", *_MERGE_ARGS),
 ]
 
+
+# ---------------------------------------------------------------------------
+# row 8: findings.sh (+ _lib/findings_ops.py). The campaign-crashes stub
+# harnesses "crash" on inputs containing CRASH; setups swap in other stubs.
+# ---------------------------------------------------------------------------
+
+FS = "scripts/findings.sh"
+HB = "fuzz/harnesses/parser/harness/parser_fuzzer"
+VB = "fuzz/harnesses/parser/harness/parser_fuzzer_verify"
+LEDGER = "fuzz/state/findings.jsonl"
+NEW_HASH = "abcdef0123456789"
+
+
+def _fs(name, *args, fixture="campaign-crashes", setup=None, env=None, cwd=None, core_args=True):
+    return Case(f"findings/{name}", fixture, bash(FS, *args),
+                core("findings", *args) if core_args else None, setup=setup, env=env or {}, cwd=cwd)
+
+
+def _stub_bin(rel, body):
+    def setup(sb):
+        sb.write(rel, "#!/bin/sh\n" + body, mode=0o755)
+    return setup
+
+
+# Harness stub bodies (the input path is $1).
+_ASAN = ('echo "==1==ERROR: AddressSanitizer: heap-buffer-overflow" >&2\n'
+         'echo "SUMMARY: AddressSanitizer: heap-buffer-overflow src/parser.c:14:5 in parse_chunk" >&2\nexit 77\n')
+_CLEAN = "echo clean run\nexit 0\n"
+_KILLED = "kill -KILL $$\n"  # rc 137; no core dump (whose timeout(1) note is host-dependent)
+_DEADLY = 'echo "==1== ERROR: libFuzzer: deadly signal" >&2\nexit 1\n'
+_ORACLE = 'echo "CCFUZZ_ORACLE_VIOLATION property=roundtrip" >&2\nexit 1\n'
+_UBSAN = 'echo "src/parser.c:12:20: runtime error: left shift of 255 by 8 places" >&2\nexit 1\n'
+_REAL_ONLY = 'if grep -q REAL "$1"; then\n' + _ASAN.replace("\n", "\n  ") + 'fi\nexit 0\n'
+
+
+def _nth_crash(crash_runs):
+    """Crash only on the given (1-based) runs; a counter file under $TMPDIR."""
+    cond = " || ".join(f'[ "$n" -eq {k} ]' for k in crash_runs) or "false"
+    return ('n=$(cat "$TMPDIR/runs" 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > "$TMPDIR/runs"\n'
+            f'if {cond}; then\n  {_ASAN.replace(chr(10), chr(10) + "  ")}fi\nexit 0\n')
+
+
+def _repro(rel="fuzz/crashes/known/f003/repro.bin", data=b"eXIf\x01\x00\x00\x00CRASH REAL"):
+    def setup(sb):
+        sb.write(rel, data)
+    return setup
+
+
+def _chain(*fns):
+    def setup(sb):
+        for f in fns:
+            f(sb)
+    return setup
+
+
+REPRO = "fuzz/crashes/known/f003/repro.bin"
+_ADD = ("add", NEW_HASH, "heap-buffer-overflow", "parse_chunk@src/parser.c:14", "likely",
+        "chunk length not bounded", REPRO)
+_ADDX = _ADD + ("==1==ERROR: AddressSanitizer: heap-buffer-overflow",)
+
+
+def _ids_with_octal_trap(sb):
+    _jsonl_append(sb, LEDGER,
+                  '{"schema": "finding/v2", "id": "f009", "stack_hash": "9999999999999999", "status": "candidate"}',
+                  {"schema": "finding/v2", "id": "f020", "stack_hash": "2020202020202020", "status": "stale"})
+
+
+def _spaced_line(sb):
+    _jsonl_append(sb, LEDGER, '{"schema": "finding/v2", "id": "f003", "stack_hash": "3333333333333333", '
+                              '"status": "candidate", "category": "oom", "location": "a@b.c:1", '
+                              '"first_seen": "2026-09-21T10:00:00Z", "harnesses": ["parser"]}')
+
+
+def _junk_line(sb):
+    _jsonl_append(sb, LEDGER, "not json at all")
+
+
+def _dedup_high(sb):
+    lines = sb.path(LEDGER).read_text().splitlines()
+    d = json.loads(lines[1])
+    d["dedup_count"] = 4
+    lines[1] = json.dumps(d, separators=(",", ":"))
+    sb.write(LEDGER, "\n".join(lines) + "\n")
+
+
+def _second_harness(sb):
+    def cfg(d):
+        d["harnesses"].append({"name": "encoder", "entry_function": "encode"})
+    sb.edit_json("fuzz/state/fuzz-config.json", cfg)
+
+
+def _verify_findings(sb):
+    """f001: reproduces on both binaries; f002: harness only; f003: stale;
+    f004: reproducer missing (f001/f002 in the fixture, 3/4 added)."""
+    _stub_bin(VB, _REAL_ONLY)(sb)
+    sb.write("fuzz/crashes/known/f001/repro.bin", b"CRASH REAL")
+    sb.write("fuzz/crashes/known/f003/repro.bin", b"benign")
+    _jsonl_append(sb, LEDGER,
+                  {"schema": "finding/v2", "id": "f003", "stack_hash": "3333333333333333",
+                   "reproducer": "fuzz/crashes/known/f003/repro.bin", "status": "candidate"},
+                  {"schema": "finding/v2", "id": "f004", "stack_hash": "4444444444444444",
+                   "reproducer": "fuzz/crashes/known/f004/repro.bin", "status": "candidate"},
+                  "", {"schema": "finding/v2", "stack_hash": "5555555555555555"})
+
+
+def _stale_dest_exists(sb):
+    sb.write("fuzz/crashes/stale/f002/repro.bin", b"older stale copy")
+
+
+def _promote_files(sb, lines=20, tools=3):
+    sb.write("fuzz/findings/f002/repro/driver.c", "int main(void) { return 0; }\n")
+    body = ["#!/bin/sh", "set -e"]
+    names = ["clang", "gcc", "objdump", "readelf", "nm", "strace", "ltrace", "gdb", "python3"]
+    body += [f"{names[i]} --version | head -1" for i in range(tools)]
+    body += [f"# filler {i}" for i in range(max(0, lines - len(body)))]
+    sb.write("fuzz/findings/f002/repro/verify.sh", "\n".join(body) + "\n", mode=0o755)
+
+
+_PROMOTE = ("promote", "f002", "--driver", "fuzz/findings/f002/repro/driver.c",
+            "--verifier", "fuzz/findings/f002/repro/verify.sh", "--boundary", "confidentiality",
+            "--precondition", "attacker file", "--projected", "demonstrated")
+
+
+def _promote_cfg(sb):
+    _promote_files(sb, lines=30, tools=4)
+    sb.edit_json("fuzz/state/fuzz-config.json", lambda d: d.update(
+        poc={"verifier_complexity_soft_max_lines": 10, "verifier_complexity_soft_max_tools": 2}))
+
+
+def _status(fid, status):
+    def setup(sb):
+        lines = sb.path(LEDGER).read_text().splitlines()
+        out = []
+        for ln in lines:
+            d = json.loads(ln)
+            if d.get("id") == fid:
+                d["status"] = status
+            out.append(json.dumps(d, separators=(",", ":")))
+        sb.write(LEDGER, "\n".join(out) + "\n")
+    return setup
+
+
+def _remove_dirs(sb):
+    sb.write("fuzz/findings/f001/report.md", "# f001\n")
+
+
+def _cr_snapshot(rel="fuzz/state/snapshots/code-review-1789999000.json", mtime_ago=60, findings=None):
+    if findings is None:
+        findings = [
+            {"id": "cr001", "cr_hash": "c0ffee01", "confidence": "high", "pattern": "oob_read",
+             "function": "parse_chunk", "file": "src/parser.c", "line_range": [8, 19],
+             "evidence": "len unchecked", "oracle_kind": "memory"},
+            {"id": "cr002", "cr_hash": "c0ffee02", "confidence": "medium", "pattern": "auth_bypass",
+             "function": "check_token", "file": "src/auth.c", "line_range": [],
+             "evidence": "", "oracle_kind": "auth", "trust_boundary_crossed": "user->admin",
+             "precondition": "valid session", "needs_deep_pass": True},
+            {"id": "cr003", "cr_hash": "c0ffee03", "confidence": "low", "pattern": "oob_read"},
+            {"id": "cr004", "confidence": "high", "pattern": "uaf"},
+            {"id": "cr005", "cr_hash": "c0ffee05", "confidence": "high", "pattern": "mystery_pattern",
+             "function": "f", "file": "g.c", "line_range": [3]},
+        ]
+
+    def setup(sb):
+        p = sb.write(rel, json.dumps({"schema": "code-review/v1", "ts": 1, "findings": findings}) + "\n")
+        os.utime(p, (sb.now - mtime_ago, sb.now - mtime_ago))
+    return setup
+
+
+def _cr_two_snapshots(sb):
+    _cr_snapshot("fuzz/state/snapshots/code-review-1789990000.json", mtime_ago=900,
+                 findings=[{"cr_hash": "01d", "confidence": "high", "pattern": "oob_write"}])(sb)
+    _cr_snapshot()(sb)
+
+
+def _cr_reimport(sb):
+    _cr_snapshot()(sb)
+    _jsonl_append(sb, LEDGER, {"schema": "finding/v2", "id": "f007", "status": "candidate",
+                               "source": "code_review", "cr_ref": "c0ffee01"})
+
+
+FINDINGS_CASES = [
+    # help / dispatch
+    _fs("help", "help"),
+    _fs("no-args", core_args=False),
+    _fs("unknown-subcommand", "frobnicate", core_args=False),
+    _fs("help-creates-ledger", "help", fixture="campaign-cold"),
+    # count / list / find-by-hash
+    _fs("count", "count"),
+    _fs("count-spaced", "count", setup=_spaced_line),
+    _fs("count-empty", "count", fixture="campaign-cold"),
+    _fs("list", "list", setup=_junk_line),
+    _fs("find-by-hash-hit", "find-by-hash", "0f1e2d3c4b5a6978"),
+    _fs("find-by-hash-miss", "find-by-hash", "ffffffffffffffff"),
+    _fs("find-by-hash-spaced", "find-by-hash", "3333333333333333", setup=_spaced_line),
+    _fs("find-by-hash-no-arg", "find-by-hash"),
+    # add: argument validation
+    _fs("add-usage", "add", NEW_HASH, "oom"),
+    _fs("add-flag-style", "add", "--id", "f009", "--category", "oom", "--location", "x"),
+    _fs("add-bad-hash", "add", "xyz", "oom", "l", "likely", "r", REPRO),
+    _fs("add-bad-category", "add", NEW_HASH, "bad-thing", "l", "likely", "r", REPRO),
+    _fs("add-bad-exploitability", "add", NEW_HASH, "oom", "l", "sure", "r", REPRO),
+    _fs("add-duplicate", "add", "0f1e2d3c4b5a6978", "oom", "l", "likely", "r", REPRO),
+    _fs("add-reproducer-missing", *_ADD),
+    # add: verification
+    _fs("add-stage2-ok", *_ADDX, setup=_repro()),
+    _fs("add-stage2-ok-no-sidecar-dir", *_ADD[:-1], "fuzz/crashes/new/parser__deadbeefcafe0001.bin",
+        setup=_stub_bin(VB, _ASAN)),
+    _fs("add-stage1-none", *_ADD, setup=_chain(_repro(data=b"benign"))),
+    _fs("add-stage1-one-of-three", *_ADD, setup=_chain(_repro(), _stub_bin(HB, _nth_crash([1])))),
+    _fs("add-stage1-two-of-three", *_ADD, setup=_chain(_repro(), _stub_bin(HB, _nth_crash([1, 3])))),
+    _fs("add-stage2-harness-artifact", *_ADD, setup=_chain(_repro(data=b"CRASH only"), _stub_bin(VB, _REAL_ONLY))),
+    _fs("add-stage2-one-of-three", *_ADD, setup=_chain(_repro(), _stub_bin(VB, _nth_crash([2])))),
+    _fs("add-no-verify-binary", *_ADD, setup=_chain(
+        _repro(), lambda sb: sb.edit_json("fuzz/state/harnesses.json",
+                                          lambda d: d["harnesses"][0].update(verify_binary=None)),
+        lambda sb: sb.edit_json("fuzz/state/harness-built.json", lambda d: d.update(verify_binary=None)))),
+    _fs("add-verify-binary-not-executable", *_ADD, setup=_chain(
+        _repro(), lambda sb: sb.path(VB).chmod(0o644))),
+    _fs("add-verify-binary-from-mirror", *_ADD, setup=_chain(
+        _repro(), lambda sb: sb.edit_json("fuzz/state/harnesses.json",
+                                          lambda d: d["harnesses"][0].pop("verify_binary")))),
+    _fs("add-no-harness-binary", *_ADD, setup=_chain(
+        _repro(), lambda sb: sb.edit_json("fuzz/state/harnesses.json",
+                                          lambda d: d["harnesses"][0].update(harness_binary=None)),
+        lambda sb: sb.edit_json("fuzz/state/harness-built.json", lambda d: d.pop("harness_binary")))),
+    _fs("add-harness-binary-from-mirror", *_ADD, setup=_chain(
+        _repro(), lambda sb: sb.edit_json("fuzz/state/harnesses.json",
+                                          lambda d: d["harnesses"][0].update(harness_binary=None)))),
+    _fs("add-harness-binary-not-executable", *_ADD, setup=_chain(_repro(), lambda sb: sb.path(HB).chmod(0o644))),
+    _fs("add-signal-rc", *_ADD, setup=_chain(_repro(), _stub_bin(HB, _KILLED), _stub_bin(VB, _KILLED))),
+    _fs("add-deadly-signal", *_ADD, setup=_chain(_repro(), _stub_bin(HB, _DEADLY), _stub_bin(VB, _DEADLY))),
+    _fs("add-oracle-marker", *_ADD, setup=_chain(_repro(), _stub_bin(HB, _ORACLE), _stub_bin(VB, _ORACLE)),
+        env={"ORACLE_TYPE": "roundtrip",
+             "DIVERGENCE": '{"property_id":"rt1","comparison":"eq","observed":"a","expected":"b"}'}),
+    _fs("add-ubsan-runtime-error", "add", NEW_HASH, "ubsan-shift-exponent", "p@src/parser.c:12", "medium", "shift",
+        REPRO, setup=_chain(_repro(), _stub_bin(HB, _UBSAN), _stub_bin(VB, _UBSAN))),
+    _fs("add-repro-binary-kept", *_ADD, setup=_chain(
+        _repro(), lambda sb: sb.write("fuzz/crashes/known/f003/repro.binary", b"older binary"))),
+    # add: skip-verify / record shape
+    _fs("add-skip-verify", *_ADDX, env={"FINDINGS_SKIP_VERIFY": "1"}),
+    _fs("add-skip-verify-sidecar", *_ADD, setup=_repro(), env={"FINDINGS_SKIP_VERIFY": "1"}),
+    _fs("add-oracle-malformed-divergence", *_ADD[:2], "invariant-violation", *_ADD[3:],
+        env={"FINDINGS_SKIP_VERIFY": "1", "ORACLE_TYPE": "invariant", "DIVERGENCE": "{not json"}),
+    _fs("add-oracle-type-crash", *_ADD, env={"FINDINGS_SKIP_VERIFY": "1", "ORACLE_TYPE": "crash",
+                                             "DIVERGENCE": '{"x":1}'}),
+    _fs("add-harness-env", *_ADD, setup=_chain(_second_harness, _repro("fuzz/crashes/known/f003/repro.bin")),
+        env={"HARNESS": "encoder", "FINDINGS_SKIP_VERIFY": "1"}),
+    _fs("add-harness-env-verify-fallback", *_ADD, setup=_chain(_second_harness, _repro()),
+        env={"HARNESS": "encoder"}),
+    _fs("add-id-octal-trap", *_ADD, setup=_ids_with_octal_trap, env={"FINDINGS_SKIP_VERIFY": "1"}),
+    _fs("add-empty-ledger", *_ADD, fixture="campaign-cold", env={"FINDINGS_SKIP_VERIFY": "1"}),
+    _fs("add-state-dir-override", *_ADD, setup=_chain(
+        _repro(), lambda sb: shutil.move(str(sb.path("fuzz/state")), str(sb.path("alt-state")))),
+        env={"FUZZ_STATE_DIR": "alt-state"}),
+    _fs("add-from-subdir", *_ADD[:-1], "../" + REPRO, setup=_repro(), cwd="src",
+        env={"FINDINGS_SKIP_VERIFY": "1"}),
+    # dedup
+    _fs("dedup-missing", "dedup", "ffffffffffffffff"),
+    _fs("dedup-no-arg", "dedup"),
+    _fs("dedup-ok", "dedup", "0f1e2d3c4b5a6978", setup=_junk_line),
+    _fs("dedup-threshold-default", "dedup", "0f1e2d3c4b5a6978", setup=_dedup_high),
+    _fs("dedup-threshold-env", "dedup", "a1b2c3d4e5f60718", env={"FINDINGS_DEDUP_THRESHOLD": "4"}),
+    _fs("dedup-new-harness", "dedup", "a1b2c3d4e5f60718", setup=_second_harness, env={"HARNESS": "encoder"}),
+    _fs("dedup-spaced", "dedup", "3333333333333333", setup=_spaced_line),
+    # add-harness
+    _fs("add-harness-missing-id", "add-harness", "f099", "encoder"),
+    _fs("add-harness-no-args", "add-harness"),
+    _fs("add-harness-no-harness-arg", "add-harness", "f001"),
+    _fs("add-harness-new", "add-harness", "f002", "encoder", setup=_junk_line),
+    _fs("add-harness-noop", "add-harness", "f001", "parser"),
+    _fs("add-harness-no-known-dir", "add-harness", "f003", "encoder", setup=_spaced_line),
+    # verify
+    _fs("verify-all", "verify", setup=_verify_findings),
+    _fs("verify-one", "verify", "f002", setup=_verify_findings),
+    _fs("verify-no-stage2", "verify", setup=_chain(
+        _verify_findings, lambda sb: sb.edit_json("fuzz/state/harness-built.json",
+                                                  lambda d: d.update(verify_binary="")))),
+    _fs("verify-no-harness-binary", "verify",
+        setup=lambda sb: sb.edit_json("fuzz/state/harness-built.json", lambda d: d.pop("harness_binary"))),
+    _fs("verify-deadly-signal", "verify", "f001",
+        setup=_chain(_stub_bin(HB, _DEADLY), _stub_bin(VB, _ORACLE))),
+    # stale-mark
+    _fs("stale-mark-missing", "stale-mark", "f099"),
+    _fs("stale-mark-no-arg", "stale-mark"),
+    _fs("stale-mark-ok", "stale-mark", "f002", setup=_junk_line),
+    _fs("stale-mark-dest-exists", "stale-mark", "f002", setup=_stale_dest_exists),
+    # list-candidates
+    _fs("list-candidates", "list-candidates", setup=_chain(_spaced_line, _junk_line)),
+    _fs("list-candidates-empty", "list-candidates", fixture="campaign-cold"),
+    # promote
+    _fs("promote-no-id", "promote"),
+    _fs("promote-unknown-flag", "promote", "f002", "--driver", "x", "--bogus", "y"),
+    _fs("promote-missing-fields", "promote", "f002", "--driver", "d.c"),
+    _fs("promote-missing-all", "promote", "f002"),
+    _fs("promote-driver-missing", *_PROMOTE[:3], "nope.c", *_PROMOTE[4:], setup=_promote_files),
+    _fs("promote-verifier-missing", *_PROMOTE[:5], "nope.sh", *_PROMOTE[6:], setup=_promote_files),
+    _fs("promote-no-such-id", "promote", "f099", *_PROMOTE[2:], setup=_promote_files),
+    _fs("promote-stale-refused", *_PROMOTE, setup=_chain(_promote_files, _status("f002", "stale"))),
+    _fs("promote-no-status", *_PROMOTE, setup=_chain(_promote_files, _status("f002", ""))),
+    _fs("promote-already-finding", "promote", "f001", *_PROMOTE[2:], setup=_promote_files),
+    _fs("promote-ok", *_PROMOTE, setup=_chain(_promote_files, _junk_line)),
+    _fs("promote-soft-warnings", *_PROMOTE, setup=lambda sb: _promote_files(sb, lines=240, tools=9)),
+    _fs("promote-config-thresholds", *_PROMOTE, setup=_promote_cfg),
+    # remove
+    _fs("remove-missing", "remove", "f099"),
+    _fs("remove-no-arg", "remove"),
+    _fs("remove-ok", "remove", "f001", setup=_remove_dirs),
+    _fs("remove-no-dirs", "remove", "f003", setup=_spaced_line),
+    # drop
+    _fs("drop-usage", "drop", "x", "artifact_filter"),
+    _fs("drop-bad-stage", "drop", "fuzz/crashes/new/parser__deadbeefcafe0001.bin", "vibes", "meh"),
+    _fs("drop-principle-required", "drop", "fuzz/crashes/new/parser__deadbeefcafe0001.bin",
+        "artifact_filter", "harness bug"),
+    _fs("drop-principle-invalid", "drop", "fuzz/crashes/new/parser__deadbeefcafe0001.bin",
+        "artifact_filter", "harness bug", "--principle", "vibes"),
+    _fs("drop-artifact-filter", "drop", "fuzz/crashes/new/parser__deadbeefcafe0001.bin",
+        "artifact_filter", "harness frees the buffer", "--principle", "harness_correctness",
+        "--evidence", "harness.c:12 double free"),
+    _fs("drop-replay-missing-file", "drop", "fuzz/crashes/new/gone.bin", "deterministic_replay", "0/3 crashed"),
+    _fs("drop-realistic", "drop", "fuzz/crashes/new/parser__deadbeefcafe0002.bin",
+        "target_realistic_reproducer", "needs a debug-only API", "--principle", "api_contract"),
+    _fs("drop-unknown-flag", "drop", "x", "deterministic_replay", "r", "--why", "z"),
+    # import-cr
+    _fs("import-cr-no-snapshot", "import-cr"),
+    _fs("import-cr-not-found", "import-cr", "fuzz/state/snapshots/nope.json"),
+    _fs("import-cr-latest", "import-cr", setup=_cr_two_snapshots),
+    _fs("import-cr-explicit", "import-cr", "fuzz/state/snapshots/code-review-1789990000.json",
+        setup=_cr_two_snapshots),
+    _fs("import-cr-reimport", "import-cr", setup=_cr_reimport, env={"HARNESS": "encoder"}),
+    _fs("import-cr-malformed", "import-cr", "bad.json",
+        setup=lambda sb: sb.write("bad.json", "{not json\n")),
+    _fs("import-cr-no-harness", "import-cr", fixture="campaign-cold",
+        setup=_chain(_cr_snapshot(), lambda sb: sb.edit_json("fuzz/state/fuzz-config.json",
+                                                              lambda d: d.update(harnesses=[])))),
+]
+
 ROW1_CASES = CONFIG_CASES + ENUMS_CASES
 ROW2_CASES = VALIDATE_CASES
 ROW3_CASES = YOLO_CASES + ROUNDUP_CASES + CEILING_CASES + DERIVE_CASES + UPDATE_CASES
@@ -1250,4 +1586,6 @@ ROW4_CASES = CLASSIFY_CASES + DETECT_CASES
 ROW5_CASES = LAUNCH_CASES + LIVENESS_CASES
 ROW6_CASES = CMPLOG_CASES + COVERAGE_CASES + QUARANTINE_CASES + SAFETY_CASES + DELTA_CASES
 ROW7_CASES = PRESCAN_CASES + LIB_PRESCAN_CASES + MERGE_CASES
-ALL_CASES = ROW1_CASES + ROW2_CASES + ROW3_CASES + ROW4_CASES + ROW5_CASES + ROW6_CASES + ROW7_CASES
+ROW8_CASES = FINDINGS_CASES
+ALL_CASES = (ROW1_CASES + ROW2_CASES + ROW3_CASES + ROW4_CASES + ROW5_CASES + ROW6_CASES
+             + ROW7_CASES + ROW8_CASES)

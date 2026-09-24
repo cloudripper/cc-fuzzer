@@ -45,7 +45,6 @@ e89113b9b0fc64bce8819b57aea5386f  scripts/_lib/ceiling_probe.py
 728a80eba881d2adbf3cbce07400125b  scripts/_lib/cve_sources.py
 673a8bb1cbe6bcd0597282c642225ba1  scripts/_lib/derive-tick-state.py
 6de2ca6bede1f2f79d828e29b3feda9b  scripts/_lib/enums.py
-b0c4a8a3cf4d38f9be995c5651203ad8  scripts/_lib/findings_ops.py
 fd143692dde7ec039a8eaecb7c02673f  scripts/_lib/fuzz-config.sh
 459abfe39165788d2819f690d648c52f  scripts/_lib/harness-path.sh
 82eeb2ea02a3f9c2c6e9acdd2fbc113f  scripts/_lib/nix-tools.sh
@@ -78,7 +77,7 @@ ded9c4697f621e5f3380f94944c803fe  scripts/dictionaries.sh
 beae5002de6e2da68b1f86f5bc0cdee1  scripts/events.sh
 1992fa37320b36a29cc05571f3bfca94  scripts/extract-cmplog-dict.sh
 cacc5a59d298712867b9927141a06d7c  scripts/find-delta-targets.sh
-a61f43dfcfe2063ccf3a02c4be0d9068  scripts/findings.sh
+5ab312f3a9d99a8939f4ea41b80b3fcf  scripts/findings.sh
 a7ab9088aedd216954d468722f471a4e  scripts/gen-manifest.sh
 5ef36dfdbee7f51b7a48c03a7fe0b29e  scripts/harness-set.sh
 8472ac9fe8dfe6c2af7a0d238d98b3d4  scripts/install-symcc.sh
@@ -131,7 +130,7 @@ e290baf96ab206f60000850d6b4a9891  skills/report/SKILL.md
 b6243c453ddf3c899989d80db09f886a  skills/yolo/SKILL.md
 7a0c7c6f7ff94edcf52f367204c63f55  src/cc_fuzzer_core/__init__.py
 81df487b0971d3b41a1613371d67df65  src/cc_fuzzer_core/__main__.py
-e37915d50dfcd67a292fabc1e94a3256  src/cc_fuzzer_core/cli.py
+2d89fba762d6f7dcc7f66577dc32cd1b  src/cc_fuzzer_core/cli.py
 469a377361b4e66687778c46beab2b39  src/cc_fuzzer_core/cmplog.py
 b72bfbf569f1d0c6aded6b744fc93529  src/cc_fuzzer_core/config.py
 8adf2efc95fbdc25aaf4734d6f775831  src/cc_fuzzer_core/coverage.py
@@ -142,6 +141,7 @@ d8b8695c4bd96bd7df2ea0eaf287c67b  src/cc_fuzzer_core/crash/detect.py
 96647041941d2e3a73c59f26581a607b  src/cc_fuzzer_core/delta.py
 5aac804d28e009a87237b76ae01fa930  src/cc_fuzzer_core/enums.py
 c5ee48ee7ee87d0c5cfa6f8ce69343e4  src/cc_fuzzer_core/events.py
+352b016e26c5f2c8f02bc7caf8a65acd  src/cc_fuzzer_core/findings.py
 6c6e7c26c58a8beba9cbf6a46f659595  src/cc_fuzzer_core/manifest.py
 64b2fb995297d08aecc0499a1172ed03  src/cc_fuzzer_core/models.py
 e886a95f3444ff5e6fcce0985a0ef253  src/cc_fuzzer_core/paths.py

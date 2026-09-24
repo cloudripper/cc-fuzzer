@@ -1,0 +1,19 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/findings.sh",
+    "drop",
+    "fuzz/crashes/new/parser__deadbeefcafe0001.bin",
+    "vibes",
+    "meh"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "ERROR: drop: invalid stage 'vibes'",
+    "       valid: artifact_filter | deterministic_replay | target_realistic_reproducer"
+  ],
+  "stdout": []
+}

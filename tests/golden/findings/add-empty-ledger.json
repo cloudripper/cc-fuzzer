@@ -1,0 +1,27 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/findings.sh",
+    "add",
+    "abcdef0123456789",
+    "heap-buffer-overflow",
+    "parse_chunk@src/parser.c:14",
+    "likely",
+    "chunk length not bounded",
+    "fuzz/crashes/known/f003/repro.bin"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {
+    "fuzz/state/findings.jsonl": {
+      "lines": [
+        "{\"schema\":\"finding/v2\",\"id\":\"f001\",\"status\":\"candidate\",\"stack_hash\":\"abcdef0123456789\",\"category\":\"heap-buffer-overflow\",\"location\":\"parse_chunk@src/parser.c:14\",\"exploitability\":\"likely\",\"root_cause\":\"chunk length not bounded\",\"reproducer\":\"fuzz/crashes/known/f003/repro.bin\",\"verified_against_build\":\"9cae851ce5d6b416\",\"first_seen\":\"2026-09-21T14:13:20Z\",\"last_seen\":\"2026-09-21T14:13:20Z\",\"dedup_count\":1,\"harnesses\":[\"parser\"]}"
+      ]
+    }
+  },
+  "stderr": [],
+  "stdout": [
+    "f001"
+  ]
+}
