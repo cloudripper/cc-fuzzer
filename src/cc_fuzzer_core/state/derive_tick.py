@@ -27,7 +27,7 @@ import time
 from dataclasses import dataclass
 
 from cc_fuzzer_core import config as _config
-from cc_fuzzer_core import models
+from cc_fuzzer_core import ledger, models
 from cc_fuzzer_core.state import yolo_evaluate
 from cc_fuzzer_core.state._common import load_json as _load
 from cc_fuzzer_core.state.yolo_state import YoloSettings
@@ -109,34 +109,19 @@ def compute_yolo_state(state_dir, snaps_dir, tick_n, now, doc=None, fuzz_dir=Non
     ticks_used = max(0, tick_n - enabled_at_tick)
     tick_remaining = max(0, max_ticks - ticks_used)
 
-    # Cost estimate: agent_call tokens since enable, each priced at its own
-    # model's rate (cc_fuzzer_core.models). Advisory, not billing.
+    # Cost estimate: ledger.spend() since enable -- agent_call rows only, each
+    # priced at its own model's rate (cc_fuzzer_core.models), host-measured
+    # rows superseding the orchestrator's. Advisory, not billing.
     try:
         mm, models_error = models.load(state_dir), None
     except models.ModelsError as e:
         # A broken override must not silence the halt gate: price with the
         # packaged mapping and say so.
         mm, models_error = models.load(None, env={}), str(e)
-    cost_used = 0.0
-    events_path = os.path.join(state_dir, "events.jsonl")
-    if os.path.exists(events_path):
-        try:
-            with open(events_path) as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        e = json.loads(line)
-                    except Exception:
-                        continue
-                    if e.get("event") != "agent_call":
-                        continue
-                    if int(e.get("ts") or 0) < enabled_at_ts:
-                        continue
-                    cost_used += mm.event_cost(e)
-        except Exception:
-            pass
+    try:
+        cost_used = ledger.spend(state_dir, since_ts=enabled_at_ts, model_map=mm).usd
+    except Exception:
+        cost_used = 0.0
     cost_remaining = max(0.0, max_cost - cost_used)
 
     # No-progress: weighted_pct flat across the last stop_no_prog roundups

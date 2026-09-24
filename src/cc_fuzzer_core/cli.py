@@ -36,6 +36,8 @@ SUBSYSTEMS = (
     "cc_fuzzer_core.tools",
     "cc_fuzzer_core.models",
     "cc_fuzzer_core.manifest",
+    "cc_fuzzer_core.events",
+    "cc_fuzzer_core.ledger",
 )
 
 

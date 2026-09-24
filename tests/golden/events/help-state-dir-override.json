@@ -1,0 +1,27 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/events.sh",
+    "help"
+  ],
+  "created_dirs": [
+    "fuzz/alt"
+  ],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {},
+  "stderr": [],
+  "stdout": [
+    "events.sh - the canonical writer for fuzz/alt/events.jsonl",
+    "",
+    "Commands:",
+    "  tick <branch> <reason> <duration_ms> [agent]",
+    "  agent_call <agent> <tokens_in> <tokens_out>",
+    "  campaign_start | campaign_resume | campaign_stop",
+    "  corpus_quarantine <count> <details>",
+    "  error <message>",
+    "",
+    "Per STATE_SCHEMA.md, this is the ONLY tool that should write to events.jsonl.",
+    "Always sets schema: event/v1."
+  ]
+}

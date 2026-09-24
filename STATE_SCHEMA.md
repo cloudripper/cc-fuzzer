@@ -29,6 +29,7 @@ fuzz/
 │   ├── findings.jsonl              # APPEND ONLY for new findings; in-place edit allowed for dedup count
 │   ├── FINDINGS-REPORT-<target>.md    # REWRITABLE markdown; rewritten by /cc-fuzzer:report
 │   ├── events.jsonl                # APPEND ONLY, never edited
+│   ├── ledger-hook.log             # APPEND ONLY; SubagentStop ledger hook failures (plain text, optional)
 │   ├── budget.json                 # replaced atomically
 │   ├── cmplog-dict-<harness>-<ts>.dict  # IMMUTABLE per timestamp; cmplog runtime observations
 │   ├── fuzz-config.json            # REWRITABLE; user-editable launch config (harnesses[] + fuzzer_slots[])
@@ -336,7 +337,7 @@ The single file the orchestrator reads on warm ticks. Schema is **`cc-fuzzer-cur
 
 **Optional fields**: `last_report_at` (integer unix timestamp, set by reporting-agent after writing `FINDINGS-REPORT-<target>.md`).
 
-**`yolo_state` block** (v0.18+) — computed by `update-current.sh` from `fuzz-config.json:yolo` + campaign signals (coverage roundups, events.jsonl token totals, findings.jsonl). Drives the end-of-tick decision: the orchestrator (a subagent) reads it and emits a `YOLO_NEXT:` directive; the main-thread `/cc-fuzzer:tick` skill turns that into a `ScheduleWakeup` for the next tick (the orchestrator never calls `ScheduleWakeup` itself — a subagent's wakeup can't re-fire the main conversation):
+**`yolo_state` block** (v0.18+) — computed by `update-current.sh` from `fuzz-config.json:yolo` + campaign signals (coverage roundups, spend from the events.jsonl `agent_call` ledger, findings.jsonl). Drives the end-of-tick decision: the orchestrator (a subagent) reads it and emits a `YOLO_NEXT:` directive; the main-thread `/cc-fuzzer:tick` skill turns that into a `ScheduleWakeup` for the next tick (the orchestrator never calls `ScheduleWakeup` itself — a subagent's wakeup can't re-fire the main conversation):
 ```json
 "yolo_state": {
   "active": true,
@@ -579,7 +580,7 @@ Toggled via `/fuzz-review [--deep] [--refresh] [--delta]`. Auto-runs at COLD bet
 - `aggressiveness` — `conservative` / `balanced` / `aggressive`; how readily a tick acts vs waits, decoupled from `mode`. Defaults from `mode` when absent (guided→conservative, hybrid→balanced, self_loop→aggressive). Under `aggressive`: a self-climbing fuzzer never forces `wait`; an empty/`sleep` gap-branch maps to `act` (pursue the strategic toolbox the gap engine can't see — harness/CVE/review/PoC/plan); the wait-backoff does not compound; and the `soft_cost_fraction` default rises to 0.8. Written by `scripts/yolo-state.sh enable` (from `--aggressiveness` or derived from `--mode`).
 - `interval_seconds` — base delay between auto-scheduled ticks (default 1800 = 30 min). Hard floor: 60s. Under `hybrid`/`self_loop` a `wait` disposition applies adaptive backoff up to `max_backoff_multiplier × interval_seconds` — except under `aggressiveness: aggressive`, where the backoff does not compound (stays at `interval_seconds`) so priorities never go stale across a long idle stretch.
 - `max_ticks` — hard tick cap (default 24 ≈ 12 hours at the 30-min interval). Counted from `enabled_at_tick`.
-- `max_cost_usd` — soft cost cap (default 10.0). Estimated from `events.jsonl:agent_call` token totals, each call priced at its agent's model rate (`cc_fuzzer_core/data/models.json` `pricing`, see the `models` block); not a billing source of truth. The hard halt fires at 100%.
+- `max_cost_usd` — soft cost cap (default 10.0). Estimated by `ledger.spend()` from the `events.jsonl:agent_call` rows (host-measured rows superseding the orchestrator's; `tick` rows never bill), each call priced at its reported model's rate, else its agent's (`cc_fuzzer_core/data/models.json` `pricing`, see the `models` block); not a billing source of truth. The hard halt fires at 100%.
 - `stop_on_no_progress_ticks` — halt after N consecutive zero-delta tick-coverage roundups (default 30 ≈ 15 hours stuck). **Under `guided`/`balanced` this is a direct flat-count halt. Under `self_loop`/`aggressive` it is gated by the escalation ladder** (see `plateau_escalate_ticks` and `yolo_state.evaluation.ceiling_probe`): a plateau does not halt directly — it first triggers structural reshapes (rewrite entry / new harness / mock / engine swap) and a pre-halt consult, and the `no_progress` halt fires only when the ladder reaches stage 3 (avenues attempted AND a consult returned nothing). The honest `halt_reason` then names what was tried.
 - `plateau_escalate_ticks` — (`self_loop`) number of flat-coverage ticks before the reshape→consult→halt escalation ladder begins (default 8). Auto-clamped to `< stop_on_no_progress_ticks` by `yolo-state.sh enable`. Smaller = react to plateaus sooner; the ladder then runs structural moves while still flat, so the campaign keeps breaking through ceilings instead of idling to the no-progress cap.
 - `crash_storm_threshold` — halt when one interval yields ≥ N new findings (default 10).
@@ -605,7 +606,7 @@ Toggled via `/cc-fuzzer:yolo on [--mode ...] [--aggressiveness ...]|off|status` 
 ```
 - `tiers` — tier → model id (`deep` → `opus`, `standard` → `sonnet`, `fast` → `haiku` by default).
 - `agents` — agent → tier name, or a literal model id. Unknown agents run on `default_tier`.
-- `pricing` — model id → USD per million input/output tokens. Advisory: drives `yolo_state.estimated_cost_usd`, the `cost_cap` halt and `evaluation.cost` (whose `opus_usd` / `opus_calls` count the **deep** tier). An unpriced model is charged at the default tier's rate.
+- `pricing` — model id → USD per million input/output tokens, plus optional `cache_read_per_mtok` / `cache_write_per_mtok` (default 0.1× / 1.25× the input rate). Advisory: drives `yolo_state.estimated_cost_usd`, the `cost_cap` halt and `evaluation.cost` (whose `opus_usd` / `opus_calls` count the **deep** tier). An unpriced model is charged at the default tier's rate.
 - Every key is a partial overlay on the packaged mapping; a JSON file named by `$CC_FUZZER_MODELS` (same shape) is layered on top of this block and wins.
 
 **Lifecycle**: REWRITABLE. Single canonical version. Replaced atomically.
@@ -727,13 +728,20 @@ Beyond this dedup case, the only other permitted in-place mutations are: promoti
 ### `state/events.jsonl` — APPEND-ONLY (strict)
 
 ```json
-{"schema":"event/v1","ts":1714789234,"tick":14,"event":"tick","branch":"concolic","reason":"plateau, 2 concolic-eligible gaps","duration_ms":3540,"agent_called":"concolic-executor","tokens_in":2104,"tokens_out":487}
+{"schema":"event/v1","ts":1714789234,"tick":14,"event":"tick","branch":"concolic","reason":"plateau, 2 concolic-eligible gaps","duration_ms":3540,"agent_called":"concolic-executor"}
+{"schema":"event/v1","ts":1714789290,"tick":14,"event":"agent_call","agent_called":"concolic-executor","tokens_in":2104,"tokens_out":487,"source":"orchestrator"}
+{"schema":"event/v1","ts":1714789291,"tick":14,"event":"agent_call","agent_called":"concolic-executor","tokens_in":1830,"tokens_out":512,"cache_read":40210,"cache_write":6100,"model":"claude-haiku-4-5-20251001","source":"host-hook","call_id":"a1b2c3d4e5f6"}
 ```
 
 **Required**: schema, ts, tick, event.
 **Conditionally required by `event` value**:
-- `event="tick"`: branch, reason, duration_ms.
-- `event="agent_call"`: agent_called, tokens_in, tokens_out.
+- `event="tick"`: branch, reason, duration_ms. Optional `agent_called` (the dispatch this tick made). A tick row is **not billable**: any `tokens_in`/`tokens_out` on it (older campaigns wrote them) are ignored by spend.
+- `event="agent_call"`: agent_called, tokens_in, tokens_out. These rows are the **spend ledger** (`cc_fuzzer_core.ledger`, `cc-fuzzer ledger append|spend|show`):
+  - `source` — who recorded the call (`enums.py` `LEDGER_SOURCE`): `orchestrator` (the model's own `events.sh agent_call`; advisory), `host-hook` (the plugin's `SubagentStop` hook, `hooks/ledger-append.sh`, measured from the subagent transcript) or `driver` (the §7 loop driver, from its `AgentResult`). **Absent = `orchestrator`** (rows written before the field existed; event/v1 is unchanged).
+  - `call_id` — the host's id for the call (the Claude Code `agent_id` for `host-hook`). Required for `host-hook` / `driver`, absent on orchestrator rows. Appends are idempotent on it: a second row with a recorded `call_id` is never written.
+  - optional `cache_read`, `cache_write` (prompt-cache tokens; written when non-zero) and `model` (the model id the host reported; priced by family, e.g. `claude-opus-4-1` → `opus`).
+  - **Precedence**: when a `host-hook` or `driver` row exists for an agent and `tick`, the `orchestrator` rows for that same agent and tick are superseded — spend ignores them. A row with no tokens at all is a dispatch marker, not a billable call.
+  - `ledger.spend()` is the only spend reader: `yolo_state.estimated_cost_usd`, the `cost_cap` halt and `evaluation.cost` all come from it.
 - `event="error"`: error_message.
 - `event="campaign_start"`, `event="campaign_resume"`, `event="campaign_stop"`: no extra fields required.
 
@@ -1955,9 +1963,9 @@ Phases 1–4 are shipped (v0.23.0): the schema + finding fields + prescan `oracl
 
 ## Concurrency Rules
 
-- **Single writer per file.** Every state file has exactly one writer (one script or one agent). No locking needed because there are no concurrent writers by design.
+- **Single writer per file.** Every state file has exactly one writer (one script or one agent). No locking needed because there are no concurrent writers by design — except `events.jsonl`, whose one writer (`cc_fuzzer_core.events`) is called from several processes (`events.sh`, the `SubagentStop` ledger hook, core subsystems) and holds an exclusive `flock` on the file for each append.
 - **Atomic replacements.** REWRITABLE files are written to `<file>.tmp` then `mv`'d into place.
-- **Append safety.** APPEND-ONLY files use `>>` from a single process. The orchestrator is the only writer of `events.jsonl`; `crash-triager` is the only writer of `findings.jsonl`.
+- **Append safety.** APPEND-ONLY files use `>>` from a single process. `events.jsonl` is written only through `cc_fuzzer_core.events` (`events.sh` for the orchestrator, `cc-fuzzer ledger append` for the host hook); `crash-triager` is the only writer of `findings.jsonl`.
 - **No subagent ever writes to another's files.** `crash-triager` doesn't touch `events.jsonl`; the orchestrator doesn't touch `findings.jsonl`.
 
 ## Nix Build Backend
@@ -2131,7 +2139,7 @@ Every subagent prompt must be updated to reference this document. Specifically:
 - **coverage-analyst** writes `gaps-<harness>-<ts>.json` to `fuzz/state/snapshots/`. Filename ts must equal the `timestamp` field; the filename prefix and the `harness` field must agree.
 - **concolic-executor** writes to `fuzz/harnesses/<name>/corpus-quarantine/` first, validates, then promotes to `fuzz/harnesses/<name>/corpus/`. Status JSON to `fuzz/state/snapshots/concolic-<harness>-<ts>.json`.
 - **crash-triager** is the only writer of `findings.jsonl`. Moves crash files between `fuzz/crashes/new/`, `fuzz/crashes/known/<id>/`, and `fuzz/crashes/flaky/` per the lifecycle above.
-- **fuzz-orchestrator** is the only writer of `events.jsonl`. Reads `current.json` only on warm ticks.
+- **fuzz-orchestrator** writes `events.jsonl` (via `events.sh` only). The host's `SubagentStop` hook (`hooks/ledger-append.sh`) also appends `agent_call` rows (`source: host-hook`) through `cc-fuzzer ledger append`. Reads `current.json` only on warm ticks.
 - **reporting-agent** is the only writer of `fuzz/state/FINDINGS-REPORT-<target>.md`. It must also invoke `${CLAUDE_PLUGIN_ROOT}/scripts/update-current.sh` after writing.
 
 If a subagent needs to write somewhere this document doesn't permit, the document must be updated first, then the agent. Not the other way around.

@@ -464,7 +464,9 @@ def _plateau_rich(sb):
 
 
 def _warm_yolo_throttle(sb):
-    _yolo(sb, enabled=True, mode="hybrid", max_cost_usd=0.2, soft_cost_fraction=0.5,
+    # §10: only agent_call rows bill (the warm fixture's tick rows repeat the
+    # same tokens), so the cap is half what it was when spend double-counted.
+    _yolo(sb, enabled=True, mode="hybrid", max_cost_usd=0.1, soft_cost_fraction=0.5,
           enabled_at_ts=0, enabled_at_tick=0)
 
 
@@ -1018,3 +1020,39 @@ ROW4_CASES = CLASSIFY_CASES + DETECT_CASES
 ROW5_CASES = LAUNCH_CASES + LIVENESS_CASES
 ROW6_CASES = CMPLOG_CASES + COVERAGE_CASES + QUARANTINE_CASES + SAFETY_CASES + DELTA_CASES
 ALL_CASES = ROW1_CASES + ROW2_CASES + ROW3_CASES + ROW4_CASES + ROW5_CASES + ROW6_CASES
+
+# ---------------------------------------------------------------------------
+# §10: events.sh (-> cc-fuzzer events <cmd>, agent_call via cc_fuzzer_core.ledger)
+# ---------------------------------------------------------------------------
+EV = "scripts/events.sh"
+
+
+def _ev(name, fixture, *args, setup=None, env=None, cwd=None):
+    return Case(f"events/{name}", fixture, bash(EV, *args), core("events", *args),
+                setup=setup, env=env or {}, cwd=cwd)
+
+
+EVENTS_CASES = [
+    _ev("tick", "campaign-warm", "tick", "analyze_gaps", "gap 3 unreached", "4200", "coverage-analyst"),
+    _ev("tick-no-agent", "campaign-warm", "tick", "sleep", "nothing to do", "10"),
+    _ev("tick-bad-duration", "campaign-warm", "tick", "sleep", "x", "soon"),
+    _ev("agent_call", "campaign-warm", "agent_call", "crash-triager", "12000", "900"),
+    _ev("agent_call-defaults", "campaign-cold", "agent_call", "mutator"),
+    _ev("agent_call-bad-tokens", "campaign-cold", "agent_call", "mutator", "12", "lots"),
+    _ev("campaign_start", "campaign-cold", "campaign_start"),
+    _ev("campaign_stop", "campaign-warm", "campaign_stop"),
+    _ev("corpus_quarantine", "campaign-warm", "corpus_quarantine", "3", "2 hang, 1 destructive"),
+    _ev("error", "campaign-warm", "error", 'slot "m" died'),
+    _ev("help", "campaign-warm", "help"),
+    Case("events/no-args", "campaign-warm", bash(EV), core("events", "help")),
+    Case("events/unknown", "campaign-warm", bash(EV, "bogus", "x"), core("events", "help")),
+    _ev("state-dir-override", "campaign-warm", "campaign_resume",
+        setup=lambda sb: shutil.move(str(sb.path("fuzz/state")), str(sb.path("fuzz/alt"))),
+        env={"FUZZ_STATE_DIR": "fuzz/alt"}),
+    _ev("help-state-dir-override", "campaign-warm", "help", env={"FUZZ_STATE_DIR": "fuzz/alt"}),
+    _ev("from-subdir", "campaign-warm", "campaign_resume", cwd="src"),
+    _ev("recursive-fuzz", "campaign-warm", "campaign_start",
+        setup=lambda sb: sb.path("fuzz/fuzz").mkdir()),
+]
+
+ALL_CASES = ALL_CASES + EVENTS_CASES

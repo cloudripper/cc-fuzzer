@@ -1,0 +1,17 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/events.sh",
+    "campaign_start"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "ERROR: recursive fuzz/fuzz/ detected at <PROJECT>/fuzz/fuzz/",
+    "       this is state corruption - run /cc-fuzzer:doctor to diagnose and fix",
+    "       (most likely: a script ran with cwd inside fuzz/, creating nested copies)"
+  ],
+  "stdout": []
+}

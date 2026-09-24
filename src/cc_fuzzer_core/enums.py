@@ -202,6 +202,14 @@ SNAPSHOT_PREFIXES = frozenset({
     "ceiling-probe", "planner-consult", "cve-context", "plan",
 })
 
+# ---------------------------------------------------------------------------
+# Who wrote an events.jsonl `agent_call` row (the §10 spend ledger `source`).
+# A row without `source` (written before §10) is `orchestrator`.
+# ---------------------------------------------------------------------------
+LEDGER_SOURCE = frozenset({"orchestrator", "host-hook", "driver"})
+# The measured sources: their rows need a call_id and supersede orchestrator rows.
+LEDGER_HOST_SOURCES = frozenset({"host-hook", "driver"})
+
 
 # ---------------------------------------------------------------------------
 # Registry + CLI
@@ -228,6 +236,7 @@ _REGISTRY = {
     "yolo_verbs": YOLO_VERBS,
     "cr_lens_tokens": CR_LENS_TOKENS,
     "snapshot_prefixes": SNAPSHOT_PREFIXES,
+    "ledger_source": LEDGER_SOURCE,
 }
 
 
