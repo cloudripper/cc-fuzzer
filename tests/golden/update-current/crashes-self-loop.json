@@ -179,7 +179,7 @@
         "        \"opus_calls\": 4,",
         "        \"fraction_of_cap\": 0.081,",
         "        \"posture\": \"normal\",",
-        "        \"soft_cost_fraction\": 0.6,",
+        "        \"soft_cost_fraction\": 0.8,",
         "        \"cost_cap_enabled\": true",
         "      },",
         "      \"agent_ledger\": {",

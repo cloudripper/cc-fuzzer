@@ -14,19 +14,8 @@
 # on disk (e.g. for the pre-halt planner-consult briefing).
 #
 # Usage: ceiling-probe.sh   (reads fuzz/state/current.json)
-set -u
+#
+# Shim onto `cc-fuzzer state ceiling-probe` (cc_fuzzer_core.state.ceiling.probe).
 
 . "$(dirname "${BASH_SOURCE[0]}")/_lib/root.sh"
-SCRIPT_DIR="$CC_FUZZER_ROOT/scripts"
-. "$SCRIPT_DIR/_lib/path-anchor.sh"
-
-STATE_DIR="${FUZZ_STATE_DIR:-$FUZZ_ROOT/state}"
-CUR="$STATE_DIR/current.json"
-
-if [ ! -f "$CUR" ]; then
-  echo "ceiling-probe: no current.json at $CUR — run a tick first." >&2
-  exit 1
-fi
-
-PYTHONPATH="$SCRIPT_DIR/_lib${PYTHONPATH:+:$PYTHONPATH}" \
-  python3 "$SCRIPT_DIR/_lib/ceiling_probe.py" "$CUR"
+exec python3 -m cc_fuzzer_core state ceiling-probe

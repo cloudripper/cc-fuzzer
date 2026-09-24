@@ -26,6 +26,7 @@ SUBSYSTEMS = (
     "cc_fuzzer_core.enums",
     "cc_fuzzer_core.config",
     "cc_fuzzer_core.schema",
+    "cc_fuzzer_core.state",
     "cc_fuzzer_core.manifest",
 )
 

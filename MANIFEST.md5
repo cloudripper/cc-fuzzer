@@ -10,7 +10,7 @@
 # refreshed out of band), so drift there is expected and must not trip the
 # integrity check. The SAST driver scripts/_lib/sast_scan.py IS tracked.
 95fc52ef9ab27fb6b44c133450defa86  .claude-plugin/plugin.json
-e9b0b211535233b891e2d91fe9b9b4c5  STATE_SCHEMA.md
+47ecc5b9612fdce3ca9fe68738fa60da  STATE_SCHEMA.md
 c05485b772d32ee68ba123de7bdf4c0d  agents/campaign-planner.md
 db8b420f1ff14d5c16673a2543a4da6d  agents/code-reviewer-deep.md
 2ac8e75500155efff720afbabae5fd5d  agents/code-reviewer.md
@@ -38,15 +38,14 @@ b99712ee3981a324df6427e2054be27f  references/nix-monolithic.md
 f7398068a97e6a4ee7edb221e3555f52  references/threat-model.md
 066bd65b855aee33346442db6cda7e47  references/verifier-template.sh
 f5d4b70a155dc3bd4d7880909ba7e88e  references/yolo-ceiling-breaking.md
-84c96bbbf25fdf66bdce9f79a22dc97d  scripts/_lib/build_current_multi.py
-f0af64be49401f6d7b3375e7cf3ecea3  scripts/_lib/ceiling_probe.py
+e89113b9b0fc64bce8819b57aea5386f  scripts/_lib/ceiling_probe.py
 8ee093d18d0fa1b41e34bffee858333d  scripts/_lib/code_review_merge.py
 4d594125cdbf15b166b0151357708e59  scripts/_lib/code_review_prescan.py
 22c769a6e9f32585d73ddd1b14639526  scripts/_lib/cve-context-builder.py
 0ecb7ba1b53bc7158b009e6ae71fb9e9  scripts/_lib/cve_patterns.py
 3e5421f0c317575da597fe7089b5aa80  scripts/_lib/cve_poc_trust.py
 728a80eba881d2adbf3cbce07400125b  scripts/_lib/cve_sources.py
-9f6c3020234fd9db75ea05f924d84a0c  scripts/_lib/derive-tick-state.py
+673a8bb1cbe6bcd0597282c642225ba1  scripts/_lib/derive-tick-state.py
 6de2ca6bede1f2f79d828e29b3feda9b  scripts/_lib/enums.py
 b0c4a8a3cf4d38f9be995c5651203ad8  scripts/_lib/findings_ops.py
 fd143692dde7ec039a8eaecb7c02673f  scripts/_lib/fuzz-config.sh
@@ -58,16 +57,16 @@ e961fa87edde123666067ba55c6f762e  scripts/_lib/nix-tools.sh
 69464c019c4c8a87398396e5a3cef6c6  scripts/_lib/sast_scan.py
 14658ee22469e166d1746a4e0ed07bc7  scripts/_lib/snapshot_helpers.py
 345e05d2a813f79850d357544e5c8c50  scripts/_lib/state_checks.py
-c9b8897ce16e770929cee07e6ec370ae  scripts/_lib/toolbox_eval.py
+4f979087652359ea435273a8c69aa34a  scripts/_lib/toolbox_eval.py
 924d449b5136599bbfb690a2ce9faa25  scripts/_lib/write_harness_built.py
-86a4e71d9ff6938e904cd80bfd93ac5a  scripts/_lib/yolo_evaluate.py
+f0ba4408d6f973b954fb309473027b4b  scripts/_lib/yolo_evaluate.py
 e1a3276c0afa42c0de335fe8c03b3901  scripts/blame-finding.sh
 4f3a8b5052cc8cb4b7e80cc06fd95144  scripts/build-poc-repro.sh
 864224389db58d2099e5a0e506dff87f  scripts/build-symcc-target.sh
 5abaaf2ddafe299750ecec22037a597b  scripts/campaign-header.sh
 019e02fb2b073afb3493c49b54c6c46e  scripts/campaign-init.sh
 6c4bc141f432d09e3f39118ab7c73cb5  scripts/capture-nix-env.sh
-d2d6a18064ff45c92609fc898473e2bf  scripts/ceiling-probe.sh
+97fd627fa9a9a6842c390e8ab5bdf8ec  scripts/ceiling-probe.sh
 66ed7f387b20dc65953b04d7732b0dea  scripts/check-campaign-state.sh
 c56862d7be535e8650131a1349afcaa8  scripts/check-seed-safety.sh
 7d8c6757b35c28f88f347c623926dcde  scripts/check-slot-liveness.sh
@@ -106,12 +105,12 @@ d5a306732a71a55481fe8a3a0377faf7  scripts/run-concolic.sh
 bfdc1ca59252ee9bc6f5ec16686c721c  scripts/status.sh
 cc472daddbbcaf2ccd1727e0fbbce637  scripts/stop-fuzzer.sh
 3859ef11abb6fe0fc057d4a28a4b02cc  scripts/tick-briefing.sh
-7975d0fbec9b07585261e74d2fa59dcf  scripts/tick-coverage-roundup.sh
-14e91cbe9caf5141dbb0aedce59bc1e7  scripts/update-current.sh
+fb4b69a64e237630bc843fc4f3da335f  scripts/tick-coverage-roundup.sh
+66eea33324630e35cbef70f4cb85c615  scripts/update-current.sh
 b31fd19c17b10ca9c3604e67289155a0  scripts/validate-state.sh
 5640fc3377abbde4d5954e71f94b7230  scripts/write-harness-built.sh
 16c2e934e2a033b535601df6cde657ff  scripts/yolo-route.sh
-635ba61b24ee3d5eea2770215eeab8c4  scripts/yolo-state.sh
+767ab4f0522d6d8e429608cc5cb11717  scripts/yolo-state.sh
 ab92fe31f7dd65857e74edaa3656f909  skills/campaign/SKILL.md
 75b89d0d8054fb0c949c834a9586e2bc  skills/concolic/SKILL.md
 a9fe23066680c4d5d9d0bc0223eb26df  skills/coverage/SKILL.md
@@ -137,7 +136,7 @@ e290baf96ab206f60000850d6b4a9891  skills/report/SKILL.md
 b6243c453ddf3c899989d80db09f886a  skills/yolo/SKILL.md
 7a0c7c6f7ff94edcf52f367204c63f55  src/cc_fuzzer_core/__init__.py
 81df487b0971d3b41a1613371d67df65  src/cc_fuzzer_core/__main__.py
-f715c20d32fe74a99fe5dc5edb80053b  src/cc_fuzzer_core/cli.py
+fe8061731a7fdcc0da61b2c21022da3e  src/cc_fuzzer_core/cli.py
 b72bfbf569f1d0c6aded6b744fc93529  src/cc_fuzzer_core/config.py
 5aac804d28e009a87237b76ae01fa930  src/cc_fuzzer_core/enums.py
 82c7724d8024f81554ebcd34959503e0  src/cc_fuzzer_core/manifest.py
@@ -146,6 +145,15 @@ b72bfbf569f1d0c6aded6b744fc93529  src/cc_fuzzer_core/config.py
 740dbc48bba9183097c85c378f1fbd18  src/cc_fuzzer_core/schema/checks.py
 a667de70b6a9a9e937db60babc96d2e8  src/cc_fuzzer_core/schema/fields.py
 4812bd8dec710013a4dedb9f7077cd35  src/cc_fuzzer_core/schema/validate.py
+761b0d1cf9326ad83f68dbae84257807  src/cc_fuzzer_core/state/__init__.py
+acce6c2b090cf8507636eab3e8e282b2  src/cc_fuzzer_core/state/_common.py
+5aa3c188a71b6f388d15e6070ddeca99  src/cc_fuzzer_core/state/build_current.py
+8a343f50047240b03b31b1ccc87ef590  src/cc_fuzzer_core/state/ceiling.py
+664959709e00e38d1e35aef249e11c99  src/cc_fuzzer_core/state/derive_tick.py
+5597175efa4cf65e80a2ec4b7152228d  src/cc_fuzzer_core/state/roundup.py
+3a111e48e1c59304464fb6a4d3b418f2  src/cc_fuzzer_core/state/toolbox.py
+0596ad8638b1ef5376bd511c9931e190  src/cc_fuzzer_core/state/yolo_evaluate.py
+705eb14b7954b6469f0f25e05b3d9365  src/cc_fuzzer_core/state/yolo_state.py
 a012158cbac7a2b368f75bde83f60060  templates/authorization.json
 bf357df6f228d472aeb6c36cef77e3fc  templates/fuzz.gitignore
 888fb1d7211167477ca0a398adf6613d  templates/guidance.md

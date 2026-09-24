@@ -1,37 +1,56 @@
-#!/usr/bin/env python3
-"""build_current_multi.py — compose current.json (cc-fuzzer-current/v2).
+"""cc_fuzzer_core.state.build_current (was scripts/_lib/build_current_multi.py) —
+compose current.json (cc-fuzzer-current/v2).
 
 Every campaign is multi-harness (schema v12). This walks declared harnesses,
 computes per-harness coverage / fuzzer_stats / gaps / recommendation, picks
-active_harness from a fixed priority table, writes current/v2 with the
-flat-mirror compatibility fields, and prints the output path.
+active_harness from a fixed priority table, and returns current/v2 with the
+flat-mirror compatibility fields. The derived tick_coverage/consult/yolo blocks
+are merged afterward by derive_tick.derive(), exactly as before.
 
-Reads from the environment:
-  STATE_DIR SNAPSHOTS_DIR DECLARED (newline-list) NOW (epoch) TMP OUT
-
-This module was lifted verbatim from update-current.sh's inline heredoc; the
-derived tick_coverage/consult/yolo blocks are merged afterward by
-derive-tick-state.py, exactly as before.
+Paths recorded in the doc (findings.file, coverage.snapshot_file,
+gaps.latest_report) are project-relative when the state dir is inside the
+project (the documented "fuzz/state/..." form), absolute otherwise.
 """
+import glob
 import json
 import os
-import sys
-import glob
-import re  # noqa: F401 (kept for parity with the original heredoc imports)
+from dataclasses import dataclass
+from pathlib import Path
 
-# SSOT for all state enums. A sibling import: every _lib module runs as a
-# script (python3 scripts/_lib/<x>.py), so the interpreter already puts this
-# directory first on sys.path; the plugin root itself comes from _lib/root.sh.
-import enums  # type: ignore  # noqa: E402
+from cc_fuzzer_core import enums
+from cc_fuzzer_core.paths import Campaign
 
 
-def main():
-    state_dir = os.environ['STATE_DIR']
-    snaps_dir = os.environ['SNAPSHOTS_DIR']
-    declared = [n for n in os.environ['DECLARED'].splitlines() if n.strip()]
-    now = int(os.environ['NOW'])
-    tmp_path = os.environ['TMP']
-    out_path = os.environ['OUT']
+def display_dir(c: Campaign, p: Path) -> str:
+    """p relative to the project root when inside it, else absolute."""
+    try:
+        return os.path.relpath(p, c.project_root) if Path(p).is_relative_to(c.project_root) else str(p)
+    except ValueError:
+        return str(p)
+
+
+@dataclass(frozen=True)
+class CurrentResult:
+    path: Path
+    doc: dict
+
+
+def build(c: Campaign, now: int, declared=None) -> dict:
+    """The cc-fuzzer-current/v2 document for campaign c at time `now`
+    (declared defaults to fuzz-config.json harnesses[])."""
+    declared = list(c.layout().declared_harnesses() if declared is None else declared)
+    state_dir = display_dir(c, c.state_dir)
+    snaps_dir = os.path.join(state_dir, "snapshots")
+    base = str(c.project_root)
+
+    def real(p):
+        """A displayed (possibly project-relative) path -> the file on disk."""
+        return p if os.path.isabs(p) else os.path.join(base, p)
+
+    def glob_disp(pattern):
+        """glob in the real snapshots dir, results in the displayed form."""
+        return [os.path.join(snaps_dir, os.path.basename(f))
+                for f in glob.glob(os.path.join(glob.escape(str(c.snapshots_dir)), pattern))]
 
     # Priority table (highest first). Determines which harness becomes
     # active_harness when multiple have actionable recommendations. This is an
@@ -51,7 +70,7 @@ def main():
             return default
 
     # 1. Slot manifest (live)
-    manifest = safe_read_json(os.path.join(state_dir, 'fuzzers.json'), {})
+    manifest = safe_read_json(os.path.join(real(state_dir), 'fuzzers.json'), {})
     slots = manifest.get('slots', [])
 
     def slot_alive(s):
@@ -68,13 +87,13 @@ def main():
         return [s for s in slots if s.get('harness') == h]
 
     # 2. Harness binaries / symcc availability (from harnesses.json)
-    hset = safe_read_json(os.path.join(state_dir, 'harnesses.json'), {})
+    hset = safe_read_json(os.path.join(real(state_dir), 'harnesses.json'), {})
     records = {h.get('name'): h for h in hset.get('harnesses', []) if isinstance(h, dict)}
 
     # 3. Findings counts by harness
     by_harness = {h: 0 for h in declared}
     total_findings = 0
-    findings_path = os.path.join(state_dir, 'findings.jsonl')
+    findings_path = os.path.join(real(state_dir), 'findings.jsonl')
     if os.path.isfile(findings_path):
         with open(findings_path) as f:
             for line in f:
@@ -93,11 +112,11 @@ def main():
     # 4. Per-harness state collection
     def collect(harness):
         # Coverage snapshot — pick the one with the highest timestamp field
-        cov_files = glob.glob(os.path.join(snaps_dir, f'coverage-{harness}-*.json'))
+        cov_files = glob_disp(f'coverage-{harness}-*.json')
         best_cov = None
         best_ts = -1
         for f in cov_files:
-            d = safe_read_json(f, {})
+            d = safe_read_json(real(f), {})
             ts = d.get('timestamp', 0)
             if ts > best_ts:
                 best_ts = ts
@@ -111,9 +130,11 @@ def main():
         line_pct = c.get('line_pct', 0)
 
         # Plateau: 3 most recent snapshots, <1% growth = plateau
+        # (sorted on the timestamp alone: equal timestamps used to make the
+        # tuple sort compare the snapshot dicts and crash)
         cov_sorted = sorted(
-            ((d.get('timestamp', 0), d) for d in (safe_read_json(f, {}) for f in cov_files)),
-            reverse=True
+            ((d.get('timestamp', 0), d) for d in (safe_read_json(real(f), {}) for f in cov_files)),
+            key=lambda t: t[0], reverse=True
         )
         plateau = False
         last_progress_ts = cov_ts
@@ -140,9 +161,9 @@ def main():
         new_crashes = len(cov_doc.get('new_crashes_since_previous', []))
 
         # Latest gap report
-        gap_files = sorted(glob.glob(os.path.join(snaps_dir, f'gaps-{harness}-*.json')))
+        gap_files = sorted(glob_disp(f'gaps-{harness}-*.json'))
         gap_file = gap_files[-1] if gap_files else ''
-        gap_doc = safe_read_json(gap_file, {}) if gap_file else {}
+        gap_doc = safe_read_json(real(gap_file), {}) if gap_file else {}
         gaps = gap_doc.get('gaps', []) if gap_file else []
         gap_total = len(gaps)
         gap_direct = sum(1 for g in gaps if g.get('reason') == 'direct_compare')
@@ -158,7 +179,8 @@ def main():
         # SymCC availability — read per-harness record
         rec = records.get(harness, {})
         symcc_bin = rec.get('symcc_binary') or ''
-        symcc_avail = bool(symcc_bin) and os.path.isfile(symcc_bin) and os.access(symcc_bin, os.X_OK)
+        symcc_avail = (bool(symcc_bin) and os.path.isfile(real(symcc_bin))
+                       and os.access(real(symcc_bin), os.X_OK))
 
         # Per-harness recommendation
         if my_slots and not any_alive:
@@ -241,7 +263,7 @@ def main():
 
     # Tick number
     tick_n = 0
-    events_path = os.path.join(state_dir, 'events.jsonl')
+    events_path = os.path.join(real(state_dir), 'events.jsonl')
     if os.path.isfile(events_path):
         with open(events_path) as f:
             for line in f:
@@ -304,12 +326,14 @@ def main():
         'multi_fuzzer': True,
     }
 
-    with open(tmp_path, 'w') as f:
+    return doc
+
+
+def write(c: Campaign, doc: dict) -> Path:
+    """Atomically write doc to state_dir/current.json (via .current.json.tmp)."""
+    out = c.state_dir / "current.json"
+    tmp = c.state_dir / ".current.json.tmp"
+    with open(tmp, "w") as f:
         json.dump(doc, f, indent=2)
-    os.replace(tmp_path, out_path)
-    print(out_path)
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+    os.replace(tmp, out)
+    return out
