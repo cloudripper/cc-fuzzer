@@ -605,20 +605,28 @@ def _slot_live(sb):
 
 
 def _crash_files(sb):
-    """Crash-like files in every engine location detect-crashes.sh scans."""
+    """Crash files in the engine output locations the launcher uses, plus
+    crash-like names elsewhere (source files, stray artifacts) that must be
+    ignored."""
     real = sb.now
     lf = "fuzz/harnesses/parser/.libfuzzer-cwd"
     sb.write(f"{lf}/crash-aaa", b"CRASH-A payload")
     sb.write(f"{lf}/leak-bbb", b"leak payload")
-    sb.write("crash-at-root", b"unattributed")
+    sb.write("crash-at-root", b"unattributed")               # not a launcher location
     sb.write("fuzz/harnesses/encoder/aflpp-out/default/crashes/id:000000,sig:11", b"afl crash")
+    sb.write("fuzz/harnesses/encoder/aflpp-out/encoder-afl/crashes/id:000001,sig:06", b"afl crash 2")
+    sb.write("fuzz/harnesses/encoder/aflpp-out/encoder-afl/crashes/README.txt", b"afl readme")
+    sb.write("fuzz/harnesses/encoder/aflpp-out/encoder-afl/hangs/id:000000", b"afl hang")
+    sb.write("src/crash-handler.c", b"void crash_handler(void) {}\n")   # source files
+    sb.write("fuzz/harnesses/parser/harness/crash-test.c", b"int main(void) { return 0; }\n")
+    sb.write(f"{lf}/nested/crash-deeper", b"not where libFuzzer writes")
     # identical to a known finding's repro -> skipped
     sb.write(f"{lf}/timeout-ccc", sb.path("fuzz/crashes/known/f001/repro.bin").read_bytes())
     # already queued -> skipped
     dup = b"already queued"
     sb.write(f"{lf}/oom-ddd", dup)
     sb.write(f"fuzz/crashes/new/parser__{_sha(dup)[:16]}.bin", dup)
-    # too old (10 min) and too deep (depth 7) -> skipped
+    # too old (10 min) -> skipped; outside fuzz/harnesses -> never scanned
     old = sb.write(f"{lf}/crash-old", b"old crash")
     os.utime(old, (real - 600, real - 600))
     sb.write("a/b/c/d/e/f/crash-deep", b"deep")

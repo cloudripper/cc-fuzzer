@@ -8,8 +8,15 @@ harness comes from the path (fuzz/harnesses/<harness>/...), "unknown" when it
 can't be derived. Files already queued, or byte-identical to a known finding's
 repro / duplicate, are skipped.
 
-Scanned (find . -maxdepth 6 under the project root, as before):
-  */crashes/id:*   AFL++          crash-* leak-* oom-* timeout-*   libFuzzer
+Scanned: only the output locations the slot launcher (slots/launcher.py) gives
+the engines, for every fuzz/harnesses/<h>/:
+  <h>/.libfuzzer-cwd/{crash,leak,oom,timeout}-*   libFuzzer (its cwd; artifacts
+                                                  land directly in it)
+  <h>/aflpp-out/<instance>/crashes/id:*           AFL++ (-o <h>/aflpp-out; the
+                                                  instance is the -M/-S name or
+                                                  "default")
+(This used to be a depth-6 `find` over the whole project, which never reached
+the AFL++ crashes (depth 7) and matched crash-*-named source files anywhere.)
 
 The core only returns data; telling the host about queued crashes (the plugin's
 PostToolUse hook JSON) is the caller's job.
@@ -28,9 +35,11 @@ from pathlib import Path
 
 from cc_fuzzer_core.paths import Campaign, HarnessLayout
 
-MAX_DEPTH = 6
 RECENT_SECONDS = 5 * 60
-_NAME_PATTERNS = ("crash-*", "leak-*", "oom-*", "timeout-*")
+LIBFUZZER_DIR = ".libfuzzer-cwd"
+AFL_OUT_DIR = "aflpp-out"
+LIBFUZZER_PATTERNS = ("crash-*", "leak-*", "oom-*", "timeout-*")
+AFL_CRASH_PATTERN = "id:*"
 _HARNESS_IN_PATH_RE = re.compile(r"^(.*/)?fuzz/harnesses/([a-z0-9][a-z0-9_-]{0,31})/")
 
 
@@ -92,37 +101,44 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def _is_candidate(rel: str, name: str) -> bool:
-    return fnmatch.fnmatchcase(rel, "*/crashes/id:*") or any(
-        fnmatch.fnmatchcase(name, p) for p in _NAME_PATTERNS)
+def _subdirs(d: Path) -> list[os.DirEntry]:
+    try:
+        return sorted((e for e in os.scandir(d) if e.is_dir(follow_symlinks=False)), key=lambda e: e.name)
+    except OSError:
+        return []
 
 
-def candidates(root: Path, *, now: float, exclude=()) -> list[str]:
-    """Crash-like files under root (depth <= MAX_DEPTH, symlinks not followed)
-    modified within RECENT_SECONDS of `now` (or later), as "./rel" paths in
-    directory order, excluding anything under an `exclude` dir."""
-    excl = [os.path.abspath(e) for e in exclude]
-    out: list[str] = []
-
-    def walk(d: str, rel: str, depth: int):
+def _recent_files(d: Path, patterns, now: float) -> list[str]:
+    """Names of regular files (symlinks not followed) directly in d matching
+    one of `patterns` and modified within RECENT_SECONDS of `now` (or later)."""
+    out = []
+    try:
+        entries = sorted(os.scandir(d), key=lambda e: e.name)
+    except OSError:
+        return out
+    for e in entries:
         try:
-            entries = list(os.scandir(d))
+            if (e.is_file(follow_symlinks=False) and any(fnmatch.fnmatchcase(e.name, p) for p in patterns)
+                    and e.stat(follow_symlinks=False).st_mtime > now - RECENT_SECONDS):
+                out.append(e.name)
         except OSError:
-            return
-        for e in entries:
-            r = f"{rel}/{e.name}"
-            if any(e.path == x or e.path.startswith(x + os.sep) for x in excl):
-                continue
-            try:
-                if e.is_file(follow_symlinks=False):
-                    if _is_candidate(r, e.name) and e.stat(follow_symlinks=False).st_mtime > now - RECENT_SECONDS:
-                        out.append(r)
-                elif e.is_dir(follow_symlinks=False) and depth < MAX_DEPTH:
-                    walk(e.path, r, depth + 1)
-            except OSError:
-                continue
+            continue
+    return out
 
-    walk(str(root), ".", 1)
+
+def candidates(c: Campaign, *, now: float) -> list[str]:
+    """Recent crash files in the engines' output locations (module
+    docstring), as project-relative paths, harness by harness."""
+    out: list[str] = []
+    for h in _subdirs(c.harnesses_dir):
+        root = Path(h.path)
+        rel = os.path.relpath(root, c.project_root)
+        for name in _recent_files(root / LIBFUZZER_DIR, LIBFUZZER_PATTERNS, now):
+            out.append(f"{rel}/{LIBFUZZER_DIR}/{name}")
+        for inst in _subdirs(root / AFL_OUT_DIR):
+            crashes = Path(inst.path) / "crashes"
+            for name in _recent_files(crashes, (AFL_CRASH_PATTERN,), now):
+                out.append(f"{rel}/{AFL_OUT_DIR}/{inst.name}/crashes/{name}")
     return out
 
 
@@ -144,13 +160,13 @@ def detect(c: Campaign, *, now: float | None = None) -> DetectResult:
     """Queue recent crash files for triage (see module docstring)."""
     now = time.time() if now is None else now
     crashes = c.crashes_dir
-    new_dir, known, flaky = crashes / "new", crashes / "known", crashes / "flaky"
+    new_dir, known = crashes / "new", crashes / "known"
     result = DetectResult(new_dir=new_dir, alive=any_slot_alive(c.state_dir))
     if not result.alive:
         return result
     new_dir.mkdir(parents=True, exist_ok=True)
-    for rel in candidates(c.project_root, now=now, exclude=(new_dir, known, flaky)):
-        src = c.project_root / rel[2:]
+    for rel in candidates(c, now=now):
+        src = c.project_root / rel
         try:
             digest = _sha256(src)
         except OSError:
@@ -169,5 +185,5 @@ def detect(c: Campaign, *, now: float | None = None) -> DetectResult:
                 shutil.copy(src, target)
             except OSError:
                 continue
-        result.queued.append((rel[2:], os.path.relpath(target, c.project_root)))
+        result.queued.append((rel, os.path.relpath(target, c.project_root)))
     return result

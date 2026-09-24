@@ -5,6 +5,8 @@ cc_fuzzer_core.crash.
     and tests/support/cases.py); `cc-fuzzer crash detect` stages the same files
     as detect-crashes.sh (its stdout is data, not hook JSON)
   - the is-crash top-frame fix: frames are filled, whatever awk is installed
+  - detection scans only the launcher's engine output locations (AFL++
+    instance crashes/ are reached; crash-*-named source files are not)
   - is-crash.sh / detect-crashes.sh are shims; hook JSON stays in the plugin
 """
 from __future__ import annotations
@@ -50,8 +52,8 @@ class TestRow4Parity(GoldenTestCase):
         self.assertTrue(doc["alive"])
         self.assertEqual(doc["queued"], 4)
         self.assertEqual(doc["new_dir"], "<PROJECT>/fuzz/crashes/new")
-        self.assertIn({"source": "crash-at-root", "staged": "fuzz/crashes/new/unknown__1532a206699ec079.bin"},
-                      doc["files"])
+        self.assertIn({"source": "fuzz/harnesses/encoder/aflpp-out/encoder-afl/crashes/id:000001,sig:06",
+                       "staged": "fuzz/crashes/new/encoder__842c0168ff613838.bin"}, doc["files"])
         case = next(c for c in DETECT_CASES if c.name == "detect-crashes/no-live-slot")
         doc = json.loads(run_case(self, case, case.core_argv).stdout)
         self.assertEqual((doc["alive"], doc["queued"]), (False, 0))
@@ -105,14 +107,72 @@ class TestDetectApi(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             (root / "fuzz" / "state").mkdir(parents=True)
-            (root / "crash-1").write_bytes(b"x")
+            lf = root / "fuzz" / "harnesses" / "h" / ".libfuzzer-cwd"
+            lf.mkdir(parents=True)
+            (lf / "crash-1").write_bytes(b"x")
             c = Campaign(root, root / "fuzz", root / "fuzz" / "state")
             r = dt.detect(c)
             self.assertFalse(r.alive)
             self.assertFalse((root / "fuzz" / "crashes" / "new").exists())
             (root / "fuzz" / "state" / "fuzzer.pid").write_text(f"{os.getpid()}\n")
             r = dt.detect(c)
-            self.assertEqual([s for s, _ in r.queued], ["crash-1"])
+            self.assertEqual([s for s, _ in r.queued], ["fuzz/harnesses/h/.libfuzzer-cwd/crash-1"])
+
+
+class TestDetectLocations(unittest.TestCase):
+    """Fixes: AFL++ crashes (fuzz/harnesses/<h>/aflpp-out/<inst>/crashes/id:*,
+    depth 7) were never queued by the old depth-6 scan, and crash-*-named files
+    anywhere in the project (source files included) were."""
+
+    def _campaign(self, d):
+        root = Path(d)
+        (root / "fuzz" / "state").mkdir(parents=True)
+        (root / "fuzz" / "state" / "fuzzer.pid").write_text(f"{os.getpid()}\n")  # a live "slot"
+        return Campaign(root, root / "fuzz", root / "fuzz" / "state")
+
+    def _write(self, c, rel, data=b"x"):
+        p = c.project_root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(data)
+
+    def test_only_launcher_locations(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            c = self._campaign(d)
+            queued = {
+                "fuzz/harnesses/h1/aflpp-out/default/crashes/id:000000,sig:11": b"a1",
+                "fuzz/harnesses/h1/aflpp-out/h1-sec/crashes/id:000003,sig:06": b"a2",
+                "fuzz/harnesses/h2/.libfuzzer-cwd/crash-0a1b": b"l1",
+                "fuzz/harnesses/h2/.libfuzzer-cwd/timeout-0a1b": b"l2",
+            }
+            ignored = {
+                "src/crash-handler.c": b"s1",
+                "src/lib/oom-guard.h": b"s2",
+                "crash-at-root": b"s3",
+                "fuzz/harnesses/h2/harness/crash-test.c": b"s4",
+                "fuzz/harnesses/h2/.libfuzzer-cwd/sub/crash-nested": b"s5",
+                "fuzz/harnesses/h1/aflpp-out/default/crashes/README.txt": b"s6",
+                "fuzz/harnesses/h1/aflpp-out/default/hangs/id:000000": b"s7",
+                "fuzz/harnesses/h1/aflpp-out/crashes/id:000009": b"s8",
+            }
+            for rel, data in {**queued, **ignored}.items():
+                self._write(c, rel, data)
+            r = dt.detect(c)
+            self.assertTrue(r.alive)
+            self.assertEqual(sorted(src for src, _ in r.queued), sorted(queued))
+            self.assertEqual(sorted(os.path.basename(dst).split("__")[0] for _, dst in r.queued),
+                             ["h1", "h1", "h2", "h2"])
+
+    def test_old_files_skipped(self):
+        import tempfile
+        import time
+        with tempfile.TemporaryDirectory() as d:
+            c = self._campaign(d)
+            rel = "fuzz/harnesses/h1/aflpp-out/default/crashes/id:000000"
+            self._write(c, rel)
+            old = time.time() - dt.RECENT_SECONDS - 60
+            os.utime(c.project_root / rel, (old, old))
+            self.assertEqual(dt.detect(c).queued, [])
 
 
 class TestShims(unittest.TestCase):

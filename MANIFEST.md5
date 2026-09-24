@@ -69,7 +69,7 @@ ba2c91c8bd488a392fb2a616c6f9d324  scripts/corpus-quarantine.sh
 35c17145b16a684bfcc73d0f9c9c4cd8  scripts/cross-ref-findings.sh
 6a66deb96c7d17997853e63683e1d9a9  scripts/cve-context-build.sh
 6cc42ad94c0d4c4fa38189aace915f9e  scripts/cve-lookup.py
-8a20285877557788f2a83e6237f8050d  scripts/detect-crashes.sh
+2064ec5a38f5f635e1638e1c9c3cb807  scripts/detect-crashes.sh
 ded9c4697f621e5f3380f94944c803fe  scripts/dictionaries.sh
 430f103a67bfe4b0594ac1b14202b9d0  scripts/doctor.sh
 8e692cae3d9f755ef8cf5a7dac1cf4fb  scripts/enforce-readonly.sh
@@ -136,7 +136,7 @@ b72bfbf569f1d0c6aded6b744fc93529  src/cc_fuzzer_core/config.py
 8adf2efc95fbdc25aaf4734d6f775831  src/cc_fuzzer_core/coverage.py
 6f02bd68429cf3b878ca461b07752beb  src/cc_fuzzer_core/crash/__init__.py
 edd2ef13c1a14be5d257860ed72a34e8  src/cc_fuzzer_core/crash/classify.py
-d8b8695c4bd96bd7df2ea0eaf287c67b  src/cc_fuzzer_core/crash/detect.py
+16996fd420eeee27bbf1fd8ea9906bd2  src/cc_fuzzer_core/crash/detect.py
 126ddcd5c81cf200d43f5b54d3c7bebf  src/cc_fuzzer_core/data/models.json
 96647041941d2e3a73c59f26581a607b  src/cc_fuzzer_core/delta.py
 5aac804d28e009a87237b76ae01fa930  src/cc_fuzzer_core/enums.py

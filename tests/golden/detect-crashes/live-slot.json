@@ -7,6 +7,18 @@
   "deleted": [],
   "exit_code": 0,
   "files": {
+    "fuzz/crashes/new/encoder__842c0168ff613838.bin": {
+      "lines": [
+        "afl crash 2"
+      ],
+      "trailing_newline": false
+    },
+    "fuzz/crashes/new/encoder__bd1da9dc2b1f7737.bin": {
+      "lines": [
+        "afl crash"
+      ],
+      "trailing_newline": false
+    },
     "fuzz/crashes/new/parser__9f6f6262d3690070.bin": {
       "lines": [
         "CRASH-A payload"
@@ -16,18 +28,6 @@
     "fuzz/crashes/new/parser__e190de1acc718eeb.bin": {
       "lines": [
         "leak payload"
-      ],
-      "trailing_newline": false
-    },
-    "fuzz/crashes/new/unknown__1532a206699ec079.bin": {
-      "lines": [
-        "unattributed"
-      ],
-      "trailing_newline": false
-    },
-    "fuzz/crashes/new/unknown__c433d9bb45718237.bin": {
-      "lines": [
-        "depth six"
       ],
       "trailing_newline": false
     }

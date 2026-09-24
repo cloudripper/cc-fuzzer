@@ -5,8 +5,9 @@
 # from STATE_SCHEMA.md:
 #   - When a fuzzer-discovered crash file appears, hard-link it into
 #     fuzz/crashes/new/<harness>__<sha256[:16]>.bin so it's queued for triage.
-#   - Crashes from libFuzzer (./crash-*) and AFL++ (out/default/crashes/id:*)
-#     are both handled.
+#   - Crashes from libFuzzer (fuzz/harnesses/<h>/.libfuzzer-cwd/crash-*, and
+#     leak-/oom-/timeout-) and AFL++ (fuzz/harnesses/<h>/aflpp-out/<instance>/
+#     crashes/id:*) are both handled: the locations launch-fuzzer-slot.sh uses.
 #
 # Stays silent if no campaign is active.
 #
