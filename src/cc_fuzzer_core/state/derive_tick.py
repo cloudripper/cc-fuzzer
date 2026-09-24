@@ -27,6 +27,7 @@ import time
 from dataclasses import dataclass
 
 from cc_fuzzer_core import config as _config
+from cc_fuzzer_core import models
 from cc_fuzzer_core.state import yolo_evaluate
 from cc_fuzzer_core.state._common import load_json as _load
 from cc_fuzzer_core.state.yolo_state import YoloSettings
@@ -108,7 +109,14 @@ def compute_yolo_state(state_dir, snaps_dir, tick_n, now, doc=None, fuzz_dir=Non
     ticks_used = max(0, tick_n - enabled_at_tick)
     tick_remaining = max(0, max_ticks - ticks_used)
 
-    # Cost estimate: sum agent_call tokens since enable. Coarse blended rate.
+    # Cost estimate: agent_call tokens since enable, each priced at its own
+    # model's rate (cc_fuzzer_core.models). Advisory, not billing.
+    try:
+        mm, models_error = models.load(state_dir), None
+    except models.ModelsError as e:
+        # A broken override must not silence the halt gate: price with the
+        # packaged mapping and say so.
+        mm, models_error = models.load(None, env={}), str(e)
     cost_used = 0.0
     events_path = os.path.join(state_dir, "events.jsonl")
     if os.path.exists(events_path):
@@ -126,9 +134,7 @@ def compute_yolo_state(state_dir, snaps_dir, tick_n, now, doc=None, fuzz_dir=Non
                         continue
                     if int(e.get("ts") or 0) < enabled_at_ts:
                         continue
-                    ti = int(e.get("tokens_in") or 0)
-                    to = int(e.get("tokens_out") or 0)
-                    cost_used += (ti * 5e-6) + (to * 25e-6)
+                    cost_used += mm.event_cost(e)
         except Exception:
             pass
     cost_remaining = max(0.0, max_cost - cost_used)
@@ -185,7 +191,7 @@ def compute_yolo_state(state_dir, snaps_dir, tick_n, now, doc=None, fuzz_dir=Non
     try:
         evaluation = yolo_evaluate.evaluate(
             state_dir, snaps_dir, yolo_cfg, doc,
-            enabled_at_ts, enabled_at_tick, tick_n, now, fuzz_dir=fuzz_dir,
+            enabled_at_ts, enabled_at_tick, tick_n, now, fuzz_dir=fuzz_dir, model_map=mm,
         )
     except Exception:
         evaluation = None
@@ -250,6 +256,8 @@ def compute_yolo_state(state_dir, snaps_dir, tick_n, now, doc=None, fuzz_dir=Non
         "halt_reason": halt_reason,
         "interval_seconds": interval,
     }
+    if models_error:
+        out["models_error"] = models_error
     # Reuse the evaluation block computed above (single ceiling/ladder computation
     # per tick, so the halt gate and the disposition can never disagree).
     if evaluation is not None:

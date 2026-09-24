@@ -8,7 +8,9 @@
 # plugin reads it. The wheel force-includes those paths under
 # cc_fuzzer_core/data/ so an installed core finds them via
 # importlib.resources.files("cc_fuzzer_core") / "data" — no duplicated tree
-# and no symlinks in the repo.
+# and no symlinks in the repo. Core-owned data (models.json) is a real file in
+# src/cc_fuzzer_core/data/ and ships as ordinary package data; the
+# force-included names never collide with it. paths.data() finds both.
 
 [build-system]
 requires = ["hatchling>=1.18"]

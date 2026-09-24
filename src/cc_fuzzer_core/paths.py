@@ -80,9 +80,26 @@ def plugin_root(env: Mapping[str, str] | None = None) -> Path:
         f"cannot locate cc-fuzzer data: set {ENV_ROOT}, or install the package with its data")
 
 
+def package_data_dir() -> Path:
+    """cc_fuzzer_core/data inside the package itself. It always carries the
+    core-owned data (models.json); an installed wheel adds the shared data
+    force-included from the repo root (STATE_SCHEMA.md, rules/, ...)."""
+    return Path(__file__).resolve().parent / "data"
+
+
 def data(*parts: str, env: Mapping[str, str] | None = None) -> Path:
-    """Path of a shared data file/dir, e.g. data("rules"), data("STATE_SCHEMA.md")."""
-    return plugin_root(env).joinpath(*parts)
+    """Path of a data file/dir, e.g. data("rules"), data("STATE_SCHEMA.md"),
+    data("models.json"). Looked up under plugin_root() first; core-owned files
+    that only the package ships (models.json) fall back to package_data_dir(),
+    so they resolve in a checkout, under CC_FUZZER_ROOT and when installed."""
+    own = package_data_dir().joinpath(*parts)
+    try:
+        p = plugin_root(env).joinpath(*parts)
+    except RootNotFound:
+        if own.exists():
+            return own
+        raise
+    return own if not p.exists() and own.exists() else p
 
 
 # ---------------------------------------------------------------------------

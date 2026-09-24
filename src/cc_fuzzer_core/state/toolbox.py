@@ -31,32 +31,30 @@ import glob
 import os
 
 from cc_fuzzer_core import config as _config
-from cc_fuzzer_core import enums
+from cc_fuzzer_core import enums, models
 from cc_fuzzer_core.state._common import load_json as _load_json, load_jsonl as _load_jsonl
 
 
-# lever -> the model tier its dispatch costs (for throttle-aware suggestion).
+# lever -> cost tier (cc_fuzzer_core.models tiers: deep | standard | fast, or
+# `none` for a deterministic lever that dispatches no model). Agent-backed
+# levers take their agent's tier from the model mapping (so an agent-level
+# override moves its lever too); this table covers the levers with no agent.
 COST_TIER = {
-    "instrumentation":      "cheap",
-    "coverage_reanalysis":  "sonnet",
-    "seedgen":              "haiku",
-    "concolic":             "haiku",
-    "mutator":              "haiku",
-    "dictionary":           "cheap",
-    "harness_extend":       "sonnet",
-    "harness_rewrite":      "sonnet",
-    "harness_new":          "sonnet",
-    "mock_env":             "sonnet",
-    "engine_swap":          "sonnet",
-    "cve_refresh":          "sonnet",
-    "code_review":          "sonnet",
-    "impact_review":        "opus",
-    "verification_fill":    "opus",
-    "poc_build":            "opus",
-    "poc_upgrade":          "opus",
-    "plan_revise":          "opus",
-    "slot_engine":          "cheap",
+    "instrumentation":      models.TIER_NONE,
+    "dictionary":           models.TIER_NONE,
+    "slot_engine":          models.TIER_NONE,
+    "cve_refresh":          models.STANDARD,
+    "code_review":          models.STANDARD,
 }
+
+
+def lever_tier(lever, mm):
+    """The cost tier of a lever under model mapping `mm`."""
+    agent = LEVER_AGENT.get(lever)
+    if agent:
+        return mm.tier_of(agent) or mm.default_tier
+    return COST_TIER.get(lever, models.STANDARD)
+
 
 # lever -> the agent whose dispatch counts as "using" it (for idle tracking).
 # File-backed levers (cve/code_review/dictionary/plan) track recency by mtime
@@ -177,7 +175,7 @@ def _weak_poc(f, n_confirmed):
 
 def compute(state_dir, snaps_dir, cfg, doc, events, findings,
             enabled_at_ts, posture, suppressed, redundancy_threshold, now,
-            ceiling=None, fuzz_dir=None):
+            ceiling=None, fuzz_dir=None, model_map=None):
     """Build the `evaluation.toolbox` block. Inputs are the same ones
     yolo_evaluate already has in hand, so this is cheap. `ceiling` is the
     ceiling-probe block (ceiling_probe.compute) — when present, its
@@ -186,6 +184,7 @@ def compute(state_dir, snaps_dir, cfg, doc, events, findings,
     plateau hands the orchestrator a concrete reshape to take instead of parking.
     `fuzz_dir` defaults to the state dir's parent (the default layout)."""
     fuzz_dir = str(fuzz_dir) if fuzz_dir is not None else os.path.dirname(os.path.abspath(state_dir))
+    mm = model_map if model_map is not None else models.load(state_dir)
     gaps = (doc or {}).get("gaps") or {}
     harness = (doc or {}).get("harness") or {}
     cov = (doc or {}).get("coverage") or {}
@@ -373,8 +372,8 @@ def compute(state_dir, snaps_dir, cfg, doc, events, findings,
         idle, _ = _lever_idle(lever, file_recency.get(lever))
         agent = LEVER_AGENT.get(lever)
         is_sup = bool(agent and agent in suppressed)
-        tier = COST_TIER.get(lever, "sonnet")
-        affordable = not (posture == "throttle" and tier == "opus")
+        tier = lever_tier(lever, mm)
+        affordable = not (posture == "throttle" and tier == models.DEEP)
         levers.append({
             "lever": lever,
             "agent": agent or "infra/skill",

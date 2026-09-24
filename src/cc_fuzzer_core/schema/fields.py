@@ -62,7 +62,7 @@ BUDGET = FileSchema(
 FUZZ_CONFIG = FileSchema(
     "fuzz-config/v3",
     _f("fuzz_forks,harnesses,fuzzer_slots"),
-    _f("fuzz_forks,harnesses,fuzzer_slots,tick,cve,yolo,code_review"))
+    _f("fuzz_forks,harnesses,fuzzer_slots,tick,cve,yolo,code_review,models"))
 FUZZERS = FileSchema("fuzzers/v2", ("slots",), ("slots",))
 
 # Snapshot files, in the order validate-state.sh checks them: (glob, schema).

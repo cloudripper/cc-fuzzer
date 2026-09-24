@@ -63,7 +63,7 @@ class TestPluginRoot(unittest.TestCase):
         shutil.copytree(REPO / "src" / "cc_fuzzer_core", site / "cc_fuzzer_core",
                         ignore=shutil.ignore_patterns("__pycache__"))
         if with_data:
-            (site / "cc_fuzzer_core" / "data").mkdir()
+            (site / "cc_fuzzer_core" / "data").mkdir(exist_ok=True)  # already holds models.json
             (site / "cc_fuzzer_core" / "data" / "STATE_SCHEMA.md").write_text("# schema\n")
         return site
 

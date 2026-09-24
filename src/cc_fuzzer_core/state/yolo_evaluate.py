@@ -29,6 +29,7 @@ from __future__ import annotations
 import glob
 import os
 
+from cc_fuzzer_core import models
 from cc_fuzzer_core.state import ceiling as ceiling_probe
 from cc_fuzzer_core.state import toolbox as toolbox_eval
 from cc_fuzzer_core.state._common import (iso_to_ts as _iso_to_ts, last_gain_ts as _last_gain_ts,
@@ -37,13 +38,14 @@ from cc_fuzzer_core.state._common import (iso_to_ts as _iso_to_ts, last_gain_ts 
 from cc_fuzzer_core.state.yolo_state import YoloSettings
 
 
-# Agents dispatched at each model tier. Opus agents are the cost/spam risk YOLO
-# must watch; the per-model estimate below is advisory (the hard cost_cap in
-# compute_yolo_state still uses the legacy blended rate, unchanged).
-OPUS_AGENTS = {
-    "planner-consult", "poc-builder", "campaign-planner",
-    "reporting-agent", "crash-triager", "code-reviewer-deep",
-}
+# Which agents are "deep" (the Opus-class cost/spam risk YOLO must watch) and
+# what a call costs come from cc_fuzzer_core.models (data/models.json +
+# overrides): deep_agents() replaces the old hard-coded Opus agent set, and
+# every spend estimate — the posture here and the hard cost_cap in
+# compute_yolo_state — prices each call at its own model's rate.
+def deep_agents(mm) -> frozenset:
+    return mm.agents_in_tier(models.DEEP)
+
 
 # Coverage-driving specialists whose redundancy is judged against coverage gain.
 COVERAGE_AGENTS = {"seed-generator", "mutator", "coverage-analyst", "concolic-executor"}
@@ -58,20 +60,12 @@ BRANCH_AGENT = {
     "mutator": "mutator",
 }
 
-# Advisory per-model rates ($/token), in/out. Coarse — a spam signal, not billing.
-_RATE = {
-    "opus":   (15e-6, 75e-6),
-    "sonnet": (3e-6, 15e-6),
-    "haiku":  (0.8e-6, 4e-6),
-}
-
-
 def _agent_of(evt):
     return evt.get("agent_called") or evt.get("agent") or ""
 
 
 def evaluate(state_dir, snaps_dir, cfg, doc, enabled_at_ts, enabled_at_tick, tick_n, now,
-             fuzz_dir=None):
+             fuzz_dir=None, model_map=None):
     """Compute the advisory evaluation block. `cfg` is the fuzz-config yolo dict;
     `doc` is the current.json being written (for recommendation/gaps)."""
     ys = YoloSettings(cfg)
@@ -96,7 +90,10 @@ def evaluate(state_dir, snaps_dir, cfg, doc, enabled_at_ts, enabled_at_tick, tic
     series = _roundup_series(snaps_dir, enabled_at_ts)
     gain_ts = _last_gain_ts(series, enabled_at_ts)
 
-    # ---- cost (total uses legacy blended rate; per-model advisory) ----------
+    # ---- cost (each call at its model's rate; deep-tier share advisory) -----
+    # opus_usd / opus_calls keep their schema names: they are the deep tier.
+    mm = model_map if model_map is not None else models.load(state_dir)
+    deep = deep_agents(mm)
     total_usd = 0.0
     opus_usd = 0.0
     opus_calls = 0
@@ -109,11 +106,10 @@ def evaluate(state_dir, snaps_dir, cfg, doc, enabled_at_ts, enabled_at_tick, tic
         to = int(e.get("tokens_out") or 0)
         if not (ti or to):
             continue
-        total_usd += (ti * 5e-6) + (to * 25e-6)   # legacy blended — keep cost_cap stable
-        agent = _agent_of(e)
-        if agent in OPUS_AGENTS:
-            ri, ro = _RATE["opus"]
-            opus_usd += (ti * ri) + (to * ro)
+        usd = mm.event_cost(e)
+        total_usd += usd
+        if _agent_of(e) in deep:
+            opus_usd += usd
             opus_calls += 1
     fraction = (total_usd / max_cost) if max_cost > 0 else 0.0
     if not cost_cap_enabled:
@@ -217,7 +213,7 @@ def evaluate(state_dir, snaps_dir, cfg, doc, enabled_at_ts, enabled_at_tick, tic
         toolbox = toolbox_eval.compute(
             state_dir, snaps_dir, yolo, doc, events, findings,
             enabled_at_ts, posture, suppressed, redundancy_threshold, now,
-            ceiling=ceiling, fuzz_dir=fuzz_dir,
+            ceiling=ceiling, fuzz_dir=fuzz_dir, model_map=mm,
         )
     except Exception:
         toolbox = None
@@ -256,7 +252,7 @@ def evaluate(state_dir, snaps_dir, cfg, doc, enabled_at_ts, enabled_at_tick, tic
     branch = rec.get("branch") or ""
     branch_agent = BRANCH_AGENT.get(branch, "")
     branch_suppressed = branch_agent in suppressed
-    branch_is_opus = branch_agent in OPUS_AGENTS
+    branch_is_opus = branch_agent in deep
     # The gap-closing recommendation engine only covers triage/coverage/seed/
     # concolic/mutator. When it has no move (`sleep`/empty), the *strategic*
     # toolbox (harness extension, CVE intel, code review, PoC, plan revision) is
