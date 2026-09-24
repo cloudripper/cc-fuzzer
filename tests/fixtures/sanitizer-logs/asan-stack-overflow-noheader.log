@@ -1,0 +1,3 @@
+==31337==ERROR: AddressSanitizer: stack-overflow on address 0x7ffe7a3b8ff8 (pc 0x4f1a2b bp 0x7ffe sp 0x7ffe T0)
+    #0 0x4f1a2b in recurse_node /src/target/src/tree.c:40:1
+    #1 0x4f1b3c in recurse_node /src/target/src/tree.c:44:12

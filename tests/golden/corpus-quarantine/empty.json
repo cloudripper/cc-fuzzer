@@ -1,0 +1,19 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/corpus-quarantine.sh",
+    "--harness",
+    "parser"
+  ],
+  "created_dirs": [
+    "fuzz/harnesses/parser/corpus-quarantine",
+    "fuzz/harnesses/parser/corpus-quarantine/rejected"
+  ],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {},
+  "stderr": [],
+  "stdout": [
+    "(no inputs to quarantine)"
+  ]
+}

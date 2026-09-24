@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/validate-state.sh"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {},
+  "stderr": [],
+  "stdout": [
+    "WARNINGS (1):",
+    "  no FINDINGS-REPORT-*.md in <PROJECT>/fuzz/state (run /cc-fuzzer:report to generate)",
+    "ok"
+  ]
+}

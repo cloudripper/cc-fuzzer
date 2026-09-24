@@ -1,0 +1,31 @@
+#!/usr/bin/env python3
+"""Test-only strings(1) stand-in so goldens don't depend on binutils being
+installed: prints runs of >= N printable ASCII chars (default 4) from each
+file, one per line. Supports the subset the plugin scripts use: -n N, --."""
+import re
+import sys
+
+args = sys.argv[1:]
+n = 4
+files = []
+i = 0
+while i < len(args):
+    a = args[i]
+    if a == "-n":
+        n = int(args[i + 1]); i += 2; continue
+    if a.startswith("-n") and a[2:].isdigit():
+        n = int(a[2:]); i += 1; continue
+    if a == "--":
+        files.extend(args[i + 1:]); break
+    files.append(a); i += 1
+
+pat = re.compile(rb"[\x20-\x7e\t]{%d,}" % n)
+out = sys.stdout.buffer
+for path in files or ["-"]:
+    try:
+        data = sys.stdin.buffer.read() if path == "-" else open(path, "rb").read()
+    except OSError as e:
+        sys.stderr.write(f"strings: {path}: {e.strerror}\n")
+        continue
+    for m in pat.finditer(data):
+        out.write(m.group(0) + b"\n")

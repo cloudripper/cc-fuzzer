@@ -1,0 +1,36 @@
+{
+  "schema": "harness-set/v1",
+  "harnesses": [
+    {
+      "schema": "harness-built/v7",
+      "name": "parser",
+      "build_backend": "legacy",
+      "build_backend_decided_at": "2026-09-21T13:43:20Z",
+      "build_backend_decided_by": "write-harness-built",
+      "harness_source": "fuzz/harnesses/parser/harness/parser_fuzzer.c",
+      "harness_binary": "fuzz/harnesses/parser/harness/parser_fuzzer",
+      "coverage_binary": "fuzz/harnesses/parser/harness/parser_fuzzer_cov",
+      "coverage_tracking": true,
+      "verify_binary": "fuzz/harnesses/parser/harness/parser_fuzzer_verify",
+      "cmplog_binary": null,
+      "cmplog_enabled": false,
+      "symcc_binary": null,
+      "build_script": "fuzz/harnesses/parser/harness/build.sh",
+      "entry_function": "parse_chunk",
+      "input_encoding": "passthrough",
+      "sanitizers": [
+        "address",
+        "undefined",
+        "fuzzer"
+      ],
+      "fuzzing_mode": "in_process",
+      "dict_files": [],
+      "target_source": "src/parser.c",
+      "target_source_hash": "a84984f0339e70d8",
+      "build_command_hash": "9cae851ce5d6b416",
+      "harness_attempts": 1,
+      "built_at": "2026-09-21T13:43:20Z",
+      "cmplog_disabled_reason": "libFuzzer-only harness (no AFL++ slot)"
+    }
+  ]
+}

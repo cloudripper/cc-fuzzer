@@ -1,0 +1,29 @@
+{
+  "schema": "coverage-snapshot/v2",
+  "timestamp": 1789996500,
+  "harness": "encoder",
+  "engine": "aflpp",
+  "fuzzer_stats": {
+    "execs": 90000,
+    "paths": 13,
+    "crashes": 0,
+    "hangs": 0,
+    "execs_per_sec": 500
+  },
+  "coverage": {
+    "lines_covered": 40,
+    "lines_total": 90,
+    "line_pct": 44.44
+  },
+  "instrumentation": {
+    "tracking_enabled": true,
+    "coverage_build_present": true,
+    "llvm_cov_available": true,
+    "coverage_run_ok": true,
+    "parsed_engine_log": true,
+    "fork_mode": false,
+    "ok": true,
+    "errors": []
+  },
+  "top_unreached_functions": []
+}

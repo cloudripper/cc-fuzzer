@@ -1,0 +1,12 @@
+{
+  "schema": "budget/v1",
+  "campaign_started": "2026-09-20T14:13:20Z",
+  "limit_usd": 25.0,
+  "spent_usd": 8.1,
+  "spent_per_model": {
+    "sonnet": 8.1
+  },
+  "tokens_in": 120000,
+  "tokens_out": 30000,
+  "last_updated": "2026-09-21T14:03:20Z"
+}

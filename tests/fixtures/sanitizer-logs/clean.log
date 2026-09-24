@@ -1,0 +1,8 @@
+INFO: Running with entropic power schedule (0xFF, 100).
+INFO: Seed: 1234567
+Running: fuzz/harnesses/parser/corpus/seed-minimal.bin
+Executed fuzz/harnesses/parser/corpus/seed-minimal.bin in 0 ms
+***
+*** NOTE: fuzzing was not performed, you have only
+***       executed the target code on a fixed set of inputs.
+***

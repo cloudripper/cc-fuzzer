@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Test-only `date` shim (see tests/support/golden.py): when CC_FUZZER_TEST_NOW
+# is set and the caller asks for the current time, answer with the frozen
+# epoch instead. Explicit -d/--date/-r/--reference/-f/--file calls and every
+# other use pass straight through to the real date(1).
+real="${CC_FUZZER_REAL_DATE:-/usr/bin/date}"
+[ -x "$real" ] || real=/bin/date
+if [ -n "${CC_FUZZER_TEST_NOW:-}" ]; then
+  for a in "$@"; do
+    case "$a" in
+      -d|-d*|--date|--date=*|-r|-r*|--reference|--reference=*|-f|-f*|--file|--file=*|-s|-s*|--set|--set=*)
+        exec "$real" "$@" ;;
+    esac
+  done
+  exec "$real" -d "@$CC_FUZZER_TEST_NOW" "$@"
+fi
+exec "$real" "$@"

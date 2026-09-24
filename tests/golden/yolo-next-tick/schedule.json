@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/yolo-state.sh",
+    "next-tick"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {},
+  "stderr": [],
+  "stdout": [
+    "YOLO_NEXT: schedule delay=1800 prompt=/cc-fuzzer:tick reason=\"yolo tick 12/24 (recovered: orchestrator omitted YOLO_NEXT)\""
+  ]
+}

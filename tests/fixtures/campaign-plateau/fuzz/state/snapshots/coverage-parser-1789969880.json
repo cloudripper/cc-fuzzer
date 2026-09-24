@@ -1,0 +1,34 @@
+{
+  "schema": "coverage-snapshot/v2",
+  "timestamp": 1789969880,
+  "harness": "parser",
+  "engine": "libfuzzer",
+  "fuzzer_stats": {
+    "execs": 1400000,
+    "paths": 51,
+    "crashes": 0,
+    "hangs": 0,
+    "execs_per_sec": 500
+  },
+  "coverage": {
+    "lines_covered": 154,
+    "lines_total": 400,
+    "line_pct": 38.5
+  },
+  "instrumentation": {
+    "tracking_enabled": true,
+    "coverage_build_present": true,
+    "llvm_cov_available": true,
+    "coverage_run_ok": true,
+    "parsed_engine_log": true,
+    "fork_mode": false,
+    "ok": true,
+    "errors": []
+  },
+  "top_unreached_functions": [
+    "parse_exif",
+    "free_chunk"
+  ],
+  "previous_snapshot_ts": 1789966000,
+  "new_crashes_since_previous": []
+}

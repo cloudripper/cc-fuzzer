@@ -1,0 +1,23 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/corpus-quarantine.sh"
+  ],
+  "created_dirs": [
+    "fuzz/harnesses/parser/corpus-quarantine/rejected"
+  ],
+  "deleted": [
+    "fuzz/harnesses/parser/corpus-quarantine/new-seed.bin"
+  ],
+  "exit_code": 0,
+  "files": {
+    "fuzz/harnesses/parser/corpus/new-seed.bin": {
+      "sha256": "3b62ec082ae01d43e1bf46edb90265debc35d4c20033b84d0883a755bb192604",
+      "size": 9
+    }
+  },
+  "stderr": [],
+  "stdout": [
+    "promoted=1   crashed=0 (-> crashes/new/)   hung=0 (-> flaky/)   rejected=0 (-> corpus-quarantine/rejected/)"
+  ]
+}

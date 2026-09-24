@@ -1,0 +1,55 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/yolo-state.sh",
+    "next-tick"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {
+    "fuzz/state/fuzz-config.json": {
+      "lines": [
+        "{",
+        "  \"schema\": \"fuzz-config/v3\",",
+        "  \"fuzz_forks\": 2,",
+        "  \"harnesses\": [",
+        "    {",
+        "      \"name\": \"parser\",",
+        "      \"entry_function\": \"parse_chunk\"",
+        "    }",
+        "  ],",
+        "  \"fuzzer_slots\": [",
+        "    {",
+        "      \"slot\": \"main\",",
+        "      \"harness\": \"parser\",",
+        "      \"engine\": \"libfuzzer\"",
+        "    }",
+        "  ],",
+        "  \"yolo\": {",
+        "    \"enabled\": false,",
+        "    \"mode\": \"self_loop\",",
+        "    \"aggressiveness\": \"aggressive\",",
+        "    \"interval_seconds\": 1800,",
+        "    \"max_ticks\": 24,",
+        "    \"max_cost_usd\": 10.0,",
+        "    \"stop_on_no_progress_ticks\": 10,",
+        "    \"plateau_escalate_ticks\": 4,",
+        "    \"crash_storm_threshold\": 10,",
+        "    \"redundancy_threshold\": 2,",
+        "    \"soft_cost_fraction\": 0.8,",
+        "    \"cost_cap_enabled\": true,",
+        "    \"max_backoff_multiplier\": 4,",
+        "    \"enabled_at_ts\": 1789970000,",
+        "    \"enabled_at_tick\": 1,",
+        "    \"last_halt_reason\": \"no_progress: ladder stage 3 ('consult' returned nothing)\"",
+        "  }",
+        "}"
+      ]
+    }
+  },
+  "stderr": [],
+  "stdout": [
+    "YOLO_NEXT: halt reason=\"no_progress: ladder stage 3 ('consult' returned nothing)\""
+  ]
+}

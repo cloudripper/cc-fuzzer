@@ -1,0 +1,58 @@
+# cc_fuzzer_core — the host-independent core of cc-fuzzer (see UPDATE_ROADMAP.md).
+#
+# The Claude Code plugin (agents/, skills/, hooks/) is NOT part of this package;
+# it consumes the core through scripts/*.sh shims and bin/cc-fuzzer.
+#
+# Package data: the repo keeps ONE copy of the shared data (STATE_SCHEMA.md,
+# rules/, dictionaries/, templates/, references/) at the repo root, where the
+# plugin reads it. The wheel force-includes those paths under
+# cc_fuzzer_core/data/ so an installed core finds them via
+# importlib.resources.files("cc_fuzzer_core") / "data" — no duplicated tree
+# and no symlinks in the repo.
+
+[build-system]
+requires = ["hatchling>=1.18"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cc-fuzzer-core"
+version = "0.31.0"
+description = "Host-independent core of cc-fuzzer: campaign state, crash triage plumbing and loop logic for LLM-in-the-loop fuzzing."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "cloudripper" }]
+requires-python = ">=3.10"
+dependencies = []  # stdlib only; optional extras are imported defensively
+
+[project.urls]
+Homepage = "https://github.com/cloudripper/cc-fuzzer"
+
+[project.scripts]
+cc-fuzzer = "cc_fuzzer_core.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cc_fuzzer_core"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"STATE_SCHEMA.md" = "cc_fuzzer_core/data/STATE_SCHEMA.md"
+"rules" = "cc_fuzzer_core/data/rules"
+"dictionaries" = "cc_fuzzer_core/data/dictionaries"
+"templates" = "cc_fuzzer_core/data/templates"
+"references" = "cc_fuzzer_core/data/references"
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/src",
+  "/tests",
+  "/STATE_SCHEMA.md",
+  "/rules",
+  "/dictionaries",
+  "/templates",
+  "/references",
+  "/README.md",
+  "/LICENSE",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

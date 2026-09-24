@@ -1,0 +1,6 @@
+==5555== ERROR: libFuzzer: out-of-memory (malloc(4294967295))
+   To change the out-of-memory limit use -rss_limit_mb=<N>
+    #0 0x4f1a2b in malloc
+    #1 0x4f1b3c in parse_chunk /src/target/src/parser.c:13:17
+SUMMARY: libFuzzer: out-of-memory
+==5555== out of memory: allocation of 4294967295 bytes failed

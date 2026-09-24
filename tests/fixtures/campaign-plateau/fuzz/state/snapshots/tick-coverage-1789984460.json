@@ -1,0 +1,27 @@
+{
+  "schema": "tick-coverage/v1",
+  "timestamp": 1789984460,
+  "mode": "multi",
+  "harnesses": [
+    {
+      "name": "parser",
+      "lines_covered": 162,
+      "lines_total": 400,
+      "pct": 40.5,
+      "delta_since_last_tick": 0,
+      "first_seen": false,
+      "instrumentation_ok": true,
+      "snapshot_file": "fuzz/state/snapshots/coverage-parser-1789996280.json",
+      "snapshot_ts": 1789996280,
+      "snapshot_age_seconds": -11820,
+      "stale": false
+    }
+  ],
+  "overall": {
+    "lines_covered": 162,
+    "lines_total": 400,
+    "weighted_pct": 40.5
+  },
+  "stale_harnesses": [],
+  "stale_threshold_seconds": 600
+}

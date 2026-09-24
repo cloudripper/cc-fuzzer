@@ -1,0 +1,34 @@
+{
+  "schema": "gaps-report/v1",
+  "timestamp": 1789996340,
+  "harness": "parser",
+  "snapshot_file": "fuzz/state/snapshots/coverage-parser-1789996280.json",
+  "gaps": [
+    {
+      "id": "g001",
+      "file": "src/parser.c",
+      "function": "parse_exif",
+      "line_range": [
+        22,
+        30
+      ],
+      "reason": "deep_path_condition",
+      "hint": "Needs len-consistent eXIf chunk with 0xff terminator",
+      "recommended_agent": "concolic-executor"
+    },
+    {
+      "id": "g002",
+      "file": "src/parser.c",
+      "function": "free_chunk",
+      "line_range": [
+        32,
+        35
+      ],
+      "reason": "harness_gap",
+      "hint": "Unreachable from parse-only harness; add a lifecycle harness",
+      "recommended_agent": "harness-writer",
+      "harness_action": "new_harness",
+      "proposed_entry": "free_chunk"
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+/src/target/src/encoder.c:12:20: runtime error: shift exponent 40 is too large for 32-bit type 'unsigned int'
+    in encode_chunk /src/target/src/encoder.c:12

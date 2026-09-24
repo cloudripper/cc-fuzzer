@@ -1,0 +1,20 @@
+{
+  "schema": "gaps-report/v1",
+  "timestamp": 1789998350,
+  "harness": "encoder",
+  "snapshot_file": "fuzz/state/snapshots/coverage-encoder-1789998300.json",
+  "gaps": [
+    {
+      "id": "g001",
+      "file": "src/encoder.c",
+      "function": "encode_chunk",
+      "line_range": [
+        7,
+        8
+      ],
+      "reason": "direct_compare",
+      "hint": "0x7d/0x7e escape bytes already seen by cmplog",
+      "recommended_agent": "none"
+    }
+  ]
+}

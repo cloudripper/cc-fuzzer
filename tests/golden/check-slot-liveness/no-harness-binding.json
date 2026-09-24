@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/check-slot-liveness.sh"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {},
+  "stderr": [],
+  "stdout": [
+    "slot=parser-main engine=libfuzzer state=dead launch_failed=no-harness-binding (slot has no harness)",
+    "slot=encoder-afl engine=aflpp state=dead launch_failed=no-harness-binding (slot has no harness)"
+  ]
+}

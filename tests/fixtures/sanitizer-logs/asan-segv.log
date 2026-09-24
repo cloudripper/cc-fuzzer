@@ -1,0 +1,9 @@
+AddressSanitizer:DEADLYSIGNAL
+=================================================================
+==777==ERROR: AddressSanitizer: SEGV on unknown address 0x000000000000 (pc 0x4f1a2b bp 0x7ffc sp 0x7ffc T0)
+==777==The signal is caused by a READ memory access.
+==777==Hint: address points to the zero page.
+    #0 0x4f1a2b in encode_chunk /src/target/src/encoder.c:9:13
+    #1 0x4f2000 in LLVMFuzzerTestOneInput /src/fuzz/encoder_fuzzer.c:5:5
+AddressSanitizer can not provide additional info.
+SUMMARY: AddressSanitizer: SEGV /src/target/src/encoder.c:9:13 in encode_chunk
