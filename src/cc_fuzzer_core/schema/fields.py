@@ -154,6 +154,10 @@ DROPPED_STAGES = frozenset(_f("artifact_filter,deterministic_replay,target_reali
 
 EVENT_SCHEMA = "event/v1"
 EVENT_REQUIRED = frozenset(_f("schema,ts,tick,event"))
+# agent_call rows are the spend ledger (§10). `source` (enums.LEDGER_SOURCE)
+# and `call_id` were added within event/v1: a row without `source` is an
+# orchestrator row; host-sourced rows (enums.LEDGER_HOST_SOURCES) must carry call_id.
+EVENT_AGENT_CALL_FIELDS = _f("agent_called,tokens_in,tokens_out,cache_read,cache_write,model,source,call_id,transcript")
 
 SLOT_ENGINES = ("libfuzzer", "aflpp")
 SLOT_ROLES = ("master", "secondary")

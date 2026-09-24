@@ -29,7 +29,7 @@ from __future__ import annotations
 import glob
 import os
 
-from cc_fuzzer_core import models
+from cc_fuzzer_core import ledger as spend_ledger, models
 from cc_fuzzer_core.state import ceiling as ceiling_probe
 from cc_fuzzer_core.state import toolbox as toolbox_eval
 from cc_fuzzer_core.state._common import (iso_to_ts as _iso_to_ts, last_gain_ts as _last_gain_ts,
@@ -92,25 +92,14 @@ def evaluate(state_dir, snaps_dir, cfg, doc, enabled_at_ts, enabled_at_tick, tic
 
     # ---- cost (each call at its model's rate; deep-tier share advisory) -----
     # opus_usd / opus_calls keep their schema names: they are the deep tier.
+    # Spend comes only from the ledger (agent_call rows, host-measured rows
+    # superseding the orchestrator's); `tick` rows are not billable.
     mm = model_map if model_map is not None else models.load(state_dir)
     deep = deep_agents(mm)
-    total_usd = 0.0
-    opus_usd = 0.0
-    opus_calls = 0
-    for e in events:
-        if e.get("event") not in ("agent_call", "tick"):
-            continue
-        if int(e.get("ts") or 0) < enabled_at_ts:
-            continue
-        ti = int(e.get("tokens_in") or 0)
-        to = int(e.get("tokens_out") or 0)
-        if not (ti or to):
-            continue
-        usd = mm.event_cost(e)
-        total_usd += usd
-        if _agent_of(e) in deep:
-            opus_usd += usd
-            opus_calls += 1
+    spent = spend_ledger.spend(state_dir, since_ts=enabled_at_ts, model_map=mm, rows=events)
+    total_usd = spent.usd
+    opus_usd = spent.usd_for(deep)
+    opus_calls = spent.calls_for(deep)
     fraction = (total_usd / max_cost) if max_cost > 0 else 0.0
     if not cost_cap_enabled:
         posture = "normal"   # --no-cap: cost never throttles or halts
@@ -123,8 +112,9 @@ def evaluate(state_dir, snaps_dir, cfg, doc, enabled_at_ts, enabled_at_tick, tic
 
     # ---- per-agent redundancy ledger ----------------------------------------
     dispatch_ts = {}   # agent -> [ts, ...] since enable
+    ignored = spend_ledger.dropped(events)   # superseded / duplicate agent_call rows
     for e in events:
-        if int(e.get("ts") or 0) < enabled_at_ts:
+        if int(e.get("ts") or 0) < enabled_at_ts or id(e) in ignored:
             continue
         a = _agent_of(e)
         if a:

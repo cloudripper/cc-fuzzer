@@ -524,6 +524,13 @@ def jsonl_events(path) -> list[str]:
         missing = F.EVENT_REQUIRED - set(d.keys())
         if missing:
             out.append(f"events.jsonl line {ln}: missing {sorted(missing)}")
+        if d.get("event") == "agent_call" and "source" in d:
+            src = d.get("source")
+            if src not in enums.LEDGER_SOURCE:
+                out.append(f"events.jsonl line {ln}: agent_call source {src!r} not one of "
+                           f"{', '.join(sorted(enums.LEDGER_SOURCE))}")
+            elif src in enums.LEDGER_HOST_SOURCES and not d.get("call_id"):
+                out.append(f"events.jsonl line {ln}: {src} agent_call without call_id")
     return out
 
 

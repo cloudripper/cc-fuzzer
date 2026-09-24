@@ -10,7 +10,7 @@
   "exit_code": 2,
   "files": {},
   "stderr": [
-    "enums.py: unknown enum 'bogus'. Known: categories, categories_crash, categories_logic, confidence, cr_lens_tokens, cr_pattern_classes, cr_review_mode, cr_status, engines, exploitability, finding_source, finding_status, gap_reasons, harness_actions, high_impact_categories, high_impact_oracle_kinds, oracle_kind, oracle_type, rec_branches, snapshot_prefixes, yolo_verbs"
+    "enums.py: unknown enum 'bogus'. Known: categories, categories_crash, categories_logic, confidence, cr_lens_tokens, cr_pattern_classes, cr_review_mode, cr_status, engines, exploitability, finding_source, finding_status, gap_reasons, harness_actions, high_impact_categories, high_impact_oracle_kinds, ledger_source, oracle_kind, oracle_type, rec_branches, snapshot_prefixes, yolo_verbs"
   ],
   "stdout": []
 }

@@ -1,0 +1,26 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/events.sh",
+    "campaign_stop"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {
+    "fuzz/state/events.jsonl": {
+      "lines": [
+        "{\"schema\":\"event/v1\",\"ts\":1789980000,\"tick\":0,\"event\":\"campaign_start\"}",
+        "{\"schema\":\"event/v1\",\"ts\":1789994700,\"tick\":1,\"event\":\"tick\",\"branch\":\"analyze_gaps\",\"reason\":\"fixture tick 1\",\"duration_ms\":4000,\"agent_called\":\"coverage-analyst\",\"tokens_in\":8000,\"tokens_out\":1500}",
+        "{\"schema\":\"event/v1\",\"ts\":1789994705,\"tick\":1,\"event\":\"agent_call\",\"agent_called\":\"coverage-analyst\",\"tokens_in\":8000,\"tokens_out\":1500}",
+        "{\"schema\":\"event/v1\",\"ts\":1789996500,\"tick\":2,\"event\":\"tick\",\"branch\":\"generate_seeds\",\"reason\":\"fixture tick 2\",\"duration_ms\":4000,\"agent_called\":\"seed-generator\",\"tokens_in\":6000,\"tokens_out\":1200}",
+        "{\"schema\":\"event/v1\",\"ts\":1789996505,\"tick\":2,\"event\":\"agent_call\",\"agent_called\":\"seed-generator\",\"tokens_in\":6000,\"tokens_out\":1200}",
+        "{\"schema\":\"event/v1\",\"ts\":1789998300,\"tick\":3,\"event\":\"tick\",\"branch\":\"analyze_gaps\",\"reason\":\"fixture tick 3\",\"duration_ms\":4000,\"agent_called\":\"coverage-analyst\",\"tokens_in\":7000,\"tokens_out\":1400}",
+        "{\"schema\":\"event/v1\",\"ts\":1789998305,\"tick\":3,\"event\":\"agent_call\",\"agent_called\":\"coverage-analyst\",\"tokens_in\":7000,\"tokens_out\":1400}",
+        "{\"schema\":\"event/v1\",\"ts\":1790000000,\"tick\":3,\"event\":\"campaign_stop\"}"
+      ]
+    }
+  },
+  "stderr": [],
+  "stdout": []
+}

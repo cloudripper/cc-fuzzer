@@ -6,8 +6,12 @@ The mapping lives in data/models.json (package data, found via paths.data()):
   default_tier  the tier of an agent the mapping does not know
   agents        agent -> tier (or a literal model id); preserves each agent's
                 current frontmatter `model:`
-  pricing       model id -> {input_per_mtok, output_per_mtok} in USD. Advisory
-                (a spend signal for the YOLO cost cap), not billing.
+  pricing       model id -> {input_per_mtok, output_per_mtok[, cache_read_per_mtok,
+                cache_write_per_mtok]} in USD. Advisory (a spend signal for the
+                YOLO cost cap), not billing. Cache rates default to 0.1x / 1.25x
+                the input rate. A full model id the host reports for a call
+                (e.g. "claude-sonnet-4-5-20250929", a ledger row's `model`) is
+                priced under the longest pricing key it contains ("sonnet").
 
 Overrides, lowest to highest precedence, each a partial document of the same
 shape (tier-level and agent-level entries are both allowed):
@@ -20,8 +24,9 @@ shape (tier-level and agent-level entries are both allowed):
     m = models.load(campaign); m.tier_of("mutator")  -> "fast"
     m.cost(tokens_in, tokens_out, agent="poc-builder")
 
-Consumers: the YOLO evaluator (deep-tier spend, the cost cap), the lever
-board's cost tiers, and (§3) the rendered agent frontmatter.
+Consumers: ledger.spend() (the one spend reader behind the YOLO evaluator and
+the cost cap), the lever board's cost tiers, and (§3) the rendered agent
+frontmatter.
 """
 from __future__ import annotations
 
@@ -37,6 +42,8 @@ DATA_FILE = "models.json"
 DEEP, STANDARD, FAST = "deep", "standard", "fast"
 # Cost tier of a deterministic lever that dispatches no model at all.
 TIER_NONE = "none"
+# Default prompt-cache rates as a multiple of the input rate (read, write).
+CACHE_READ_FACTOR, CACHE_WRITE_FACTOR = 0.1, 1.25
 
 
 class ModelsError(RuntimeError):
@@ -50,6 +57,7 @@ class ModelMap:
     pricing: dict            # model id -> (usd per input token, usd per output token)
     default_tier: str = STANDARD
     sources: tuple = field(default=(), compare=False)
+    cache_pricing: dict = field(default_factory=dict)   # model id -> (usd/cache-read token, usd/cache-write token)
 
     # -- resolution ----------------------------------------------------------
     def resolve(self, agent: str) -> str:
@@ -80,23 +88,57 @@ class ModelMap:
             return self.pricing[model]
         return self.pricing.get(self.tiers.get(self.default_tier), (0.0, 0.0))
 
-    def cost(self, tokens_in: int, tokens_out: int, *, agent: str = "", model: str | None = None) -> float:
-        """USD for one call: an explicit (priced) model wins, else the agent's."""
-        m = model if model and model in self.pricing else self.resolve(agent or "")
+    def price_key(self, model: str | None) -> str | None:
+        """The pricing entry a model id is charged under: an exact key, else
+        the longest key the id contains ("claude-opus-4-1" -> "opus"); None
+        when nothing matches."""
+        if not model:
+            return None
+        if model in self.pricing:
+            return model
+        hits = [k for k in self.pricing if k and k in model]
+        return max(hits, key=len) if hits else None
+
+    def cache_rate(self, model: str) -> tuple[float, float]:
+        """(usd/cache-read token, usd/cache-write token); like rate(), an
+        unpriced model falls back to the default tier's model."""
+        if model in self.cache_pricing:
+            return self.cache_pricing[model]
+        if model not in self.pricing:
+            dm = self.tiers.get(self.default_tier)
+            if dm in self.cache_pricing:
+                return self.cache_pricing[dm]
+        ri, _ro = self.rate(model)
+        return ri * CACHE_READ_FACTOR, ri * CACHE_WRITE_FACTOR
+
+    def cost(self, tokens_in: int, tokens_out: int, *, agent: str = "", model: str | None = None,
+             cache_read: int = 0, cache_write: int = 0) -> float:
+        """USD for one call: an explicit model the pricing knows (exactly, or
+        by family via price_key: a host-reported "claude-opus-4-1" is priced
+        as "opus") wins, else the agent's resolved model."""
+        m = self.price_key(model) or self.resolve(agent or "")
         ri, ro = self.rate(m)
-        return tokens_in * ri + tokens_out * ro
+        usd = tokens_in * ri + tokens_out * ro
+        if cache_read or cache_write:
+            cr, cw = self.cache_rate(m)
+            usd += cache_read * cr + cache_write * cw
+        return usd
 
     def event_cost(self, e: dict) -> float:
-        """Cost of an events.jsonl record carrying tokens_in/tokens_out."""
+        """Cost of an events.jsonl record carrying tokens_in/tokens_out (and
+        optionally cache_read/cache_write)."""
         return self.cost(int(e.get("tokens_in") or 0), int(e.get("tokens_out") or 0),
-                         agent=e.get("agent_called") or e.get("agent") or "", model=e.get("model"))
+                         agent=e.get("agent_called") or e.get("agent") or "", model=e.get("model"),
+                         cache_read=int(e.get("cache_read") or 0), cache_write=int(e.get("cache_write") or 0))
 
     def as_dict(self) -> dict:
         return {
             "tiers": dict(self.tiers),
             "default_tier": self.default_tier,
             "agents": {a: {"tier": self.tier_of(a), "model": self.resolve(a)} for a in sorted(self.agents)},
-            "pricing": {m: {"input_per_mtok": round(i * 1e6, 6), "output_per_mtok": round(o * 1e6, 6)}
+            "pricing": {m: {"input_per_mtok": round(i * 1e6, 6), "output_per_mtok": round(o * 1e6, 6),
+                            "cache_read_per_mtok": round(self.cache_rate(m)[0] * 1e6, 6),
+                            "cache_write_per_mtok": round(self.cache_rate(m)[1] * 1e6, 6)}
                         for m, (i, o) in sorted(self.pricing.items())},
             "sources": list(self.sources),
         }
@@ -128,14 +170,18 @@ def _layer(base: dict, over, source: str) -> None:
         base["default_tier"] = over["default_tier"]
 
 
-def _pricing(raw: dict, source: str) -> dict:
-    out = {}
+def _pricing(raw: dict, source: str) -> tuple[dict, dict]:
+    """(model -> (in, out), model -> (cache read, cache write)) in USD/token."""
+    out, cache = {}, {}
     for model, p in raw.items():
         try:
-            out[model] = (float(p["input_per_mtok"]) / 1e6, float(p["output_per_mtok"]) / 1e6)
-        except (TypeError, KeyError, ValueError):
+            ri = float(p["input_per_mtok"]) / 1e6
+            out[model] = (ri, float(p["output_per_mtok"]) / 1e6)
+            cache[model] = (float(p.get("cache_read_per_mtok", ri * 1e6 * CACHE_READ_FACTOR)) / 1e6,
+                            float(p.get("cache_write_per_mtok", ri * 1e6 * CACHE_WRITE_FACTOR)) / 1e6)
+        except (TypeError, KeyError, ValueError, AttributeError):
             raise ModelsError(f"{source}: pricing[{model!r}] needs numeric input_per_mtok/output_per_mtok")
-    return out
+    return out, cache
 
 
 def _config_block(config) -> dict | None:
@@ -172,9 +218,9 @@ def load(config=None, env: Mapping[str, str] | None = None) -> ModelMap:
     default_tier = doc.get("default_tier") or STANDARD
     if default_tier not in tiers:
         raise ModelsError(f"default_tier {default_tier!r} is not one of the tiers {sorted(tiers)}")
-    return ModelMap(tiers=tiers, agents=dict(doc.get("agents") or {}),
-                    pricing=_pricing(doc.get("pricing") or {}, "pricing"),
-                    default_tier=default_tier, sources=tuple(sources))
+    pricing, cache_pricing = _pricing(doc.get("pricing") or {}, "pricing")
+    return ModelMap(tiers=tiers, agents=dict(doc.get("agents") or {}), pricing=pricing,
+                    default_tier=default_tier, sources=tuple(sources), cache_pricing=cache_pricing)
 
 
 def resolve(agent: str, config=None, env: Mapping[str, str] | None = None) -> str:
