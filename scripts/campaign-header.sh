@@ -21,7 +21,8 @@
 
 set -u
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/_lib/root.sh"
+SCRIPT_DIR="$CC_FUZZER_ROOT/scripts"
 # path-anchor is best-effort: a header dispatched before campaign init has no
 # fuzz/ to anchor on. path-anchor.sh exits 2 when nothing is found, so we run
 # it in a subshell to detect the failure without dying ourselves.
@@ -46,7 +47,7 @@ SCHEMA_VERSION_FILE="$STATE_DIR/schema-version"
 
 STATE_DIR="$STATE_DIR" CURRENT="$CURRENT" FINDINGS="$FINDINGS" CONFIG="$CONFIG" \
 AUTHZ="$AUTHZ" SCHEMA_VERSION_FILE="$SCHEMA_VERSION_FILE" \
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-}" \
+PLUGIN_ROOT="$CC_FUZZER_ROOT" \
 python3 - <<'PY'
 import glob
 import json

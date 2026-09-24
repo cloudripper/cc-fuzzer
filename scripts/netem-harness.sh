@@ -85,10 +85,11 @@ Exit codes:
 USAGE
 }
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/_lib/root.sh"
+SCRIPT_DIR="$CC_FUZZER_ROOT/scripts"
 . "$SCRIPT_DIR/_lib/path-anchor.sh" 2>/dev/null || true
 FUZZ_ROOT="${FUZZ_ROOT:-fuzz}"
-CFG="$FUZZ_ROOT/state/fuzz-config.json"
+CFG="${FUZZ_STATE_DIR:-$FUZZ_ROOT/state}/fuzz-config.json"
 
 # Read a dot-key from fuzz-config.json. Returns "" if absent.
 _cfg() {

@@ -27,7 +27,8 @@
 
 set -u
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/_lib/root.sh"
+SCRIPT_DIR="$CC_FUZZER_ROOT/scripts"
 . "$SCRIPT_DIR/_lib/path-anchor.sh"
 
 if [ $# -lt 2 ]; then
@@ -107,7 +108,7 @@ B_FILE_FIRST=$(git -C "$PROJECT_ROOT" log --diff-filter=A --format='%cd' --date=
 # In-delta check: only meaningful when a delta artifact exists.
 B_IN_DELTA="unknown"
 B_DELTA_RANGE=""
-DELTA_FILE=$(ls -t "$PROJECT_ROOT/fuzz/state/snapshots"/delta-*.json 2>/dev/null | head -1)
+DELTA_FILE=$(ls -t "${FUZZ_STATE_DIR:-$PROJECT_ROOT/fuzz/state}/snapshots"/delta-*.json 2>/dev/null | head -1)
 if [ -n "$DELTA_FILE" ]; then
   B_DELTA_RANGE=$(python3 -c "
 import json

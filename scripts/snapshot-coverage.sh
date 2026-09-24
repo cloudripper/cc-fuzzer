@@ -20,7 +20,8 @@
 set -u
 
 # Path anchor - refuses cwd inside fuzz/, refuses recursive fuzz/fuzz/
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/_lib/root.sh"
+SCRIPT_DIR="$CC_FUZZER_ROOT/scripts"
 . "$SCRIPT_DIR/_lib/path-anchor.sh"
 . "$SCRIPT_DIR/_lib/harness-path.sh"
 . "$SCRIPT_DIR/_lib/nix-tools.sh"
@@ -41,7 +42,7 @@ if [ -z "$HARNESS" ]; then
   RC=0
   while IFS= read -r h; do
     [ -n "$h" ] || continue
-    bash "$0" --harness "$h" || RC=$?
+    bash "$SCRIPT_DIR/snapshot-coverage.sh" --harness "$h" || RC=$?
   done < <(declared_harnesses)
   exit "$RC"
 fi

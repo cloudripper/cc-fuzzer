@@ -76,10 +76,12 @@ class TestValidateState(GoldenTestCase):
 
     def test_state_dir_override(self):
         # State moved to a non-default dir named by FUZZ_STATE_DIR (relative
-        # to the project root). Recorded before §1 fixed validate-state.sh to
-        # honour FUZZ_STATE_DIR.
+        # to the project root) and given a wrong schema-version. Before §1,
+        # validate-state.sh ignored FUZZ_STATE_DIR (saw no state: "ok"); it
+        # now validates the named dir and reports the mismatch.
         def move(sb):
             shutil.move(str(sb.path("fuzz/state")), str(sb.path("fuzz/alt-state")))
+            sb.write("fuzz/alt-state/schema-version", "v11\n")
         self._run("campaign-warm", "state-dir-override", setup=move,
                   env={"FUZZ_STATE_DIR": "fuzz/alt-state"})
 
@@ -291,6 +293,14 @@ class TestExtractCmplogDict(GoldenTestCase):
         sb = self.sandbox("campaign-cold")
         self.assertGolden("extract-cmplog-dict/no-afl-output", sb.run(bash("scripts/extract-cmplog-dict.sh")))
 
+    def test_state_dir_override(self):
+        # Dicts land in $FUZZ_STATE_DIR (ignored before §1: fuzz/state/).
+        sb = self.sandbox("campaign-warm")
+        shutil.move(str(sb.path("fuzz/state")), str(sb.path("alt-state")))
+        self.assertGolden("extract-cmplog-dict/state-dir-override",
+                          sb.run(bash("scripts/extract-cmplog-dict.sh", "--harness", "encoder"),
+                                 env={"FUZZ_STATE_DIR": "alt-state"}))
+
     def test_unknown_arg(self):
         sb = self.sandbox("campaign-cold")
         self.assertGolden("extract-cmplog-dict/unknown-arg",
@@ -318,6 +328,16 @@ class TestCorpusQuarantine(GoldenTestCase):
         sb.write("fuzz/harnesses/parser/corpus-quarantine/new-seed.bin", "eXIf\x01\x00\x00\x00z")
         self.assertGolden("corpus-quarantine/active-harness-fallback",
                           sb.run(bash("scripts/corpus-quarantine.sh")))
+
+    def test_state_dir_override(self):
+        # The active-harness fallback reads $FUZZ_STATE_DIR/current.json
+        # (ignored before §1, which read fuzz/state/ and found nothing).
+        sb = self.sandbox("campaign-crashes")
+        shutil.move(str(sb.path("fuzz/state")), str(sb.path("fuzz/alt-state")))
+        sb.write("fuzz/harnesses/parser/corpus-quarantine/new-seed.bin", "eXIf\x01\x00\x00\x00z")
+        self.assertGolden("corpus-quarantine/state-dir-override",
+                          sb.run(bash("scripts/corpus-quarantine.sh"),
+                                 env={"FUZZ_STATE_DIR": "fuzz/alt-state"}))
 
     def test_nothing_to_do(self):
         sb = self.sandbox("campaign-crashes")

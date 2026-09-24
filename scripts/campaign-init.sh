@@ -18,9 +18,12 @@
 #      attrs (cap CCFUZZER_INIT_CAP). Runs when the deps list is EMPTY or --force.
 #   3. `nix flake lock`, then print the launch + shell commands. (No launch.)
 #
-# Env (set by apps.init): CCFUZZER_SRC, CCFUZZER_SYSTEM, CCFUZZER_INIT_CAP.
+# Env (set by apps.init): CC_FUZZER_ROOT (the pinned plugin source; _lib/root.sh
+# falls back to this script's own tree), CCFUZZER_SYSTEM, CCFUZZER_INIT_CAP.
 
 set -euo pipefail
+
+. "$(dirname "${BASH_SOURCE[0]}")/_lib/root.sh"
 
 usage() {
   cat <<'USAGE'
@@ -37,7 +40,7 @@ to open the dev shell alone.
 USAGE
 }
 
-SRC="${CCFUZZER_SRC:?CCFUZZER_SRC not set (run via 'nix run <cc-fuzzer>#init')}"
+SRC="$CC_FUZZER_ROOT"
 SYS="${CCFUZZER_SYSTEM:-x86_64-linux}"
 CAP="${CCFUZZER_INIT_CAP:-10}"
 
@@ -95,7 +98,7 @@ deps_nonempty() {
 # 1. Scaffold
 # ---------------------------------------------------------------------------
 # flake.nix is a GENERATED artifact — always (re)write it so a re-run refreshes
-# the pinned plugin source (CCFUZZER_SRC) and picks up app/structure changes (a
+# the pinned plugin source (CC_FUZZER_ROOT) and picks up app/structure changes (a
 # re-run after a plugin update repairs an old project flake). Resolved deps in
 # fuzz/nix-deps.nix are PRESERVED unless --force.
 mkdir -p "$PROJECT_ROOT/fuzz"
@@ -107,7 +110,7 @@ if [ ! -f "$PROJECT_ROOT/fuzz/.gitignore" ] && [ -f "$SRC/templates/fuzz.gitigno
   echo "wrote $PROJECT_ROOT/fuzz/.gitignore (keeps findings/ tracked by default)"
 fi
 
-sed -e "s|@CCFUZZER_SRC@|$SRC|g" -e "s|@SYSTEM@|$SYS|g" \
+sed -e "s|@CC_FUZZER_ROOT@|$SRC|g" -e "s|@SYSTEM@|$SYS|g" \
   "$SRC/templates/project-flake.nix" > "$FLAKE"
 echo "wrote $FLAKE (ccfuzzer input: $SRC)"
 

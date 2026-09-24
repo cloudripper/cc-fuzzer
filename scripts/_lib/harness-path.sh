@@ -34,8 +34,12 @@
 #   slot_to_harness <slot>                # read fuzzers.json:slots[<slot>].harness
 #   afl_instances <out_dir>               # AFL++ instance dirs under out_dir (default first)
 #
-# CLI dispatch (when invoked directly, for testing): same names as the
-# functions. Run `bash _lib/harness-path.sh help` for the full list.
+# CLI dispatch (when invoked directly — agents do this): same names as the
+# functions. Run `bash _lib/harness-path.sh help` for the full list. The CLI is
+# a shim onto the core's port, `cc-fuzzer paths <verb>`
+# (cc_fuzzer_core.paths.HarnessLayout); the sourced functions above stay bash
+# so hot loops in the scripts don't pay a python start-up per call. The two are
+# held to identical output by tests/test_paths.py.
 
 # Internal cache so we don't re-read fuzz-config.json on every helper call
 _HP_MODE=""
@@ -236,32 +240,22 @@ afl_instances() {
 #------------------------------------------------------------------------------
 
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  . "$(dirname "${BASH_SOURCE[0]}")/root.sh"
   cmd="${1:-help}"
   shift || true
+  # Arity is fixed per verb (missing args pass as ""; extras are ignored), as
+  # the pre-port CLI did. `--` keeps a leading-dash name positional.
   case "$cmd" in
-    is_multi)
-      is_multi && echo "multi"
+    is_multi|declared_harnesses|default_harness)
+      exec python3 -m cc_fuzzer_core paths "$cmd"
       ;;
-    declared_harnesses)
-      declared_harnesses
-      ;;
-    is_known_harness)
-      is_known_harness "${1:-}" && echo "yes" || { echo "no"; exit 1; }
-      ;;
-    default_harness)
-      default_harness
-      ;;
-    harness_root|harness_dir|corpus_dir|quarantine_dir|coverage_dir)
-      "$cmd" "${1:-}"
-      ;;
-    coverage_snapshot_name|gaps_snapshot_name|concolic_snapshot_name|cmplog_dict_name|crash_filename)
-      "$cmd" "${1:-}" "${2:-}"
-      ;;
+    is_known_harness|harness_root|harness_dir|corpus_dir|quarantine_dir|coverage_dir|\
     parse_crash_filename|harness_binary|slot_to_harness|afl_instances)
-      "$cmd" "${1:-}"
+      exec python3 -m cc_fuzzer_core paths "$cmd" -- "${1:-}"
       ;;
+    coverage_snapshot_name|gaps_snapshot_name|concolic_snapshot_name|cmplog_dict_name|crash_filename|\
     harness_field)
-      harness_field "${1:-}" "${2:-}"
+      exec python3 -m cc_fuzzer_core paths "$cmd" -- "${1:-}" "${2:-}"
       ;;
     help|--help|-h|*)
       cat <<EOF

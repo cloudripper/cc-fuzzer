@@ -14,9 +14,8 @@
 
 set -u
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(dirname "$SCRIPT_DIR")"
-export PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
+. "$(dirname "${BASH_SOURCE[0]}")/_lib/root.sh"
+ROOT="$CC_FUZZER_ROOT"
 
 PLUGIN_INCLUDES=(--include .claude-plugin --include agents --include skills)
 

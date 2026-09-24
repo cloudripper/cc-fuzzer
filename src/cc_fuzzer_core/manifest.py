@@ -49,11 +49,9 @@ HEADER = """\
 
 
 def default_root() -> Path:
-    """The tree to manifest: $CC_FUZZER_ROOT, else this source checkout."""
-    env = os.environ.get("CC_FUZZER_ROOT")
-    if env:
-        return Path(env)
-    return Path(__file__).resolve().parents[2]
+    """The tree to manifest: the plugin root (paths.plugin_root())."""
+    from cc_fuzzer_core.paths import plugin_root
+    return plugin_root()
 
 
 def tracked_files(root: Path, include=()) -> list[str]:

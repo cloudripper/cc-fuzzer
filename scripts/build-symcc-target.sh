@@ -8,7 +8,8 @@
 # Output: fuzz/symcc/<harness-name>_symcc
 
 set -u
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/_lib/root.sh"
+SCRIPT_DIR="$CC_FUZZER_ROOT/scripts"
 . "$SCRIPT_DIR/_lib/nix-tools.sh"
 
 HARNESS_INFO="${FUZZ_STATE_DIR:-fuzz/state}/harness-built.json"

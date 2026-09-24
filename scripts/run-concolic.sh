@@ -14,6 +14,8 @@
 
 set -u
 
+. "$(dirname "${BASH_SOURCE[0]}")/_lib/root.sh"
+
 # SymCC PATH fallback: if symcc not in PATH, search /nix/store.
 # This is needed when SymCC is installed via Nix but the shell profile
 # hasn't been sourced (e.g. when invoked from a subprocess).

@@ -21,7 +21,7 @@
 
 set -u
 
-CONFIG_FILE="${FUZZ_ROOT:-fuzz}/state/fuzz-config.json"
+CONFIG_FILE="${FUZZ_STATE_DIR:-${FUZZ_ROOT:-fuzz}/state}/fuzz-config.json"
 
 # Compute the cap: nproc - 1, with a floor of 1
 _compute_fork_cap() {

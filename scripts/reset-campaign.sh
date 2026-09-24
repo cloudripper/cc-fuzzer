@@ -22,10 +22,10 @@
 set -u
 
 # Path anchor - refuses cwd inside fuzz/, refuses recursive fuzz/fuzz/
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/_lib/root.sh"
+SCRIPT_DIR="$CC_FUZZER_ROOT/scripts"
 . "$SCRIPT_DIR/_lib/path-anchor.sh"
 FUZZ_ROOT="${FUZZ_ROOT:-fuzz}"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [ ! -d "$FUZZ_ROOT" ]; then
   echo "Nothing to reset: $FUZZ_ROOT does not exist."

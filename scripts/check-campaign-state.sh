@@ -14,11 +14,11 @@
 set -u
 
 # Path anchor - refuses cwd inside fuzz/, refuses recursive fuzz/fuzz/
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/_lib/root.sh"
+SCRIPT_DIR="$CC_FUZZER_ROOT/scripts"
 . "$SCRIPT_DIR/_lib/path-anchor.sh"
 FUZZ_ROOT="${FUZZ_ROOT:-fuzz}"
-STATE_DIR="$FUZZ_ROOT/state"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+STATE_DIR="${FUZZ_STATE_DIR:-$FUZZ_ROOT/state}"
 
 # 1. No state at all. A campaign exists once a harness has been built — the
 # harness-built.json mirror (of harnesses.json[0]) is present. fuzz-config.json

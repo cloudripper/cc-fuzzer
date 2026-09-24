@@ -12,8 +12,8 @@ CLI (bash) so they can never drift again.
 Two interfaces, one definition:
 
   Python:  from enums import CATEGORIES, EXPLOITABILITY, ...
-           (consumers use the project's _LIB_DIR / sys.path.insert pattern,
-            same as cve-context-builder.py imports its siblings.)
+           (consumers are sibling _lib scripts: the interpreter puts
+            scripts/_lib first on sys.path, so a plain import works.)
 
   CLI:     python3 enums.py print <name> [--sep <s>]   # members, newline-sep
            python3 enums.py check <name> <value>       # exit 0 if member else 1
@@ -307,10 +307,11 @@ def _doc_drift(path):
 
 def _main(argv):
     if len(argv) >= 1 and argv[0] == "doc-drift":
-        path = argv[1] if len(argv) > 1 else os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-            "STATE_SCHEMA.md",
-        )
+        # Default: the plugin root's schema doc ($CC_FUZZER_ROOT, set by
+        # _lib/root.sh; a bare manual run falls back to this checkout).
+        root = os.environ.get("CC_FUZZER_ROOT") or os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        path = argv[1] if len(argv) > 1 else os.path.join(root, "STATE_SCHEMA.md")
         return _doc_drift(path)
     if len(argv) < 2:
         sys.stderr.write(

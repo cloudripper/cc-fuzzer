@@ -36,6 +36,8 @@
 
 set -euo pipefail
 
+. "$(dirname "${BASH_SOURCE[0]}")/_lib/root.sh"
+
 EXIT_CODE=""
 INPUT_PATH=""
 

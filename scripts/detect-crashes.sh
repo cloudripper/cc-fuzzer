@@ -12,31 +12,26 @@
 
 set -u
 
+. "$(dirname "${BASH_SOURCE[0]}")/_lib/root.sh"
+SCRIPT_DIR="$CC_FUZZER_ROOT/scripts"
+
 # Fast project-presence check. If there's no fuzz/ anywhere in our parent
 # chain, this is a Bash call outside any cc-fuzzer project — silently
 # no-op. We do this BEFORE sourcing path-anchor.sh because that library
 # exits 2 with a stderr message in this case, which the PostToolUse hook
-# framework surfaces as a blocking error on every Bash call. Duplicates
-# ~6 lines of detection logic from path-anchor.sh on purpose: the hook is
-# the only caller that should silently no-op outside a project, while every
-# other consumer of path-anchor.sh should keep its fail-loud semantics.
-_d="$PWD"
-while [ "$_d" != "/" ]; do
-  if [ -d "$_d/fuzz" ] && [ "$(basename "$_d")" != "fuzz" ]; then
-    break
-  fi
-  _d=$(dirname "$_d")
-done
-[ "$_d" = "/" ] && exit 0
+# framework surfaces as a blocking error on every Bash call. The hook is the
+# only caller that should silently no-op outside a project (paths.campaign
+# --missing-ok), while every other consumer of path-anchor.sh keeps its
+# fail-loud semantics.
+python3 -m cc_fuzzer_core paths campaign --lenient --missing-ok >/dev/null 2>&1 || exit 0
 
 # Path anchor - refuses cwd inside fuzz/, refuses recursive fuzz/fuzz/
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/_lib/path-anchor.sh"
 . "$SCRIPT_DIR/_lib/harness-path.sh"
 cat >/dev/null || true   # consume stdin to avoid SIGPIPE
 
 FUZZ_ROOT="${FUZZ_ROOT:-fuzz}"
-STATE_DIR="$FUZZ_ROOT/state"
+STATE_DIR="${FUZZ_STATE_DIR:-$FUZZ_ROOT/state}"
 NEW_DIR="$FUZZ_ROOT/crashes/new"
 KNOWN_DIR="$FUZZ_ROOT/crashes/known"
 FLAKY_DIR="$FUZZ_ROOT/crashes/flaky"

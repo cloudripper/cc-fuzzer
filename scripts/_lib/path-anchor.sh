@@ -13,6 +13,12 @@
 #     the canonical project root (parent that contains fuzz/ but is not named fuzz).
 #   - Refuses to operate if a recursive fuzz/fuzz/ exists (state corruption).
 #   - cd's to PROJECT_ROOT so all relative paths resolve consistently.
+#
+# The core's port is cc_fuzzer_core.paths.campaign() (`cc-fuzzer paths
+# campaign`): same resolution and messages, no cd. Scripts that must not exit
+# or cd (doctor, the session-start/hook probes) use that instead of this file.
+# State dir rule, shared by both: ${FUZZ_STATE_DIR:-$FUZZ_ROOT/state}, a
+# relative FUZZ_STATE_DIR resolving against PROJECT_ROOT (the cwd after this).
 
 # Walk up from $PWD looking for a directory that contains fuzz/ but is itself
 # NOT named "fuzz". That's the canonical project root.

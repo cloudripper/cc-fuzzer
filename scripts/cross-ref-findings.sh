@@ -51,6 +51,8 @@
 
 set -euo pipefail
 
+. "$(dirname "${BASH_SOURCE[0]}")/_lib/root.sh"
+
 LOCATION=""
 
 while [[ $# -gt 0 ]]; do

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# bin/cc-fuzzer — the plugin's `cc-fuzzer` command.
+#
+# Where the core is pip-installed the console script of the same name is on
+# PATH; the plugin ships this wrapper instead: resolve the plugin root (and put
+# its src/ on PYTHONPATH) via scripts/_lib/root.sh, then run the core CLI.
+#
+#   cc-fuzzer <subsystem> <verb> [args]      e.g. cc-fuzzer paths campaign
+
+_cc_self="${BASH_SOURCE[0]}"
+while [ -L "$_cc_self" ]; do   # follow a symlink onto PATH back to the checkout
+  _cc_link="$(readlink "$_cc_self")"
+  case "$_cc_link" in
+    /*) _cc_self="$_cc_link" ;;
+    *)  _cc_self="$(dirname "$_cc_self")/$_cc_link" ;;
+  esac
+done
+. "$(dirname "$_cc_self")/../scripts/_lib/root.sh"
+unset _cc_self _cc_link
+exec python3 -m cc_fuzzer_core "$@"
