@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/events.sh",
+    "agent_call",
+    "mutator"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {
+    "fuzz/state/events.jsonl": {
+      "lines": [
+        "{\"schema\":\"event/v1\",\"ts\":1789998300,\"tick\":0,\"event\":\"campaign_start\"}",
+        "{\"schema\":\"event/v1\",\"ts\":1790000000,\"tick\":0,\"event\":\"agent_call\",\"agent_called\":\"mutator\",\"tokens_in\":0,\"tokens_out\":0,\"source\":\"orchestrator\"}"
+      ]
+    }
+  },
+  "stderr": [],
+  "stdout": []
+}

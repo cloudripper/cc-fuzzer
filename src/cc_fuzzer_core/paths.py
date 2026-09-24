@@ -80,9 +80,26 @@ def plugin_root(env: Mapping[str, str] | None = None) -> Path:
         f"cannot locate cc-fuzzer data: set {ENV_ROOT}, or install the package with its data")
 
 
+def package_data_dir() -> Path:
+    """cc_fuzzer_core/data inside the package itself. It always carries the
+    core-owned data (models.json); an installed wheel adds the shared data
+    force-included from the repo root (STATE_SCHEMA.md, rules/, ...)."""
+    return Path(__file__).resolve().parent / "data"
+
+
 def data(*parts: str, env: Mapping[str, str] | None = None) -> Path:
-    """Path of a shared data file/dir, e.g. data("rules"), data("STATE_SCHEMA.md")."""
-    return plugin_root(env).joinpath(*parts)
+    """Path of a data file/dir, e.g. data("rules"), data("STATE_SCHEMA.md"),
+    data("models.json"). Looked up under plugin_root() first; core-owned files
+    that only the package ships (models.json) fall back to package_data_dir(),
+    so they resolve in a checkout, under CC_FUZZER_ROOT and when installed."""
+    own = package_data_dir().joinpath(*parts)
+    try:
+        p = plugin_root(env).joinpath(*parts)
+    except RootNotFound:
+        if own.exists():
+            return own
+        raise
+    return own if not p.exists() and own.exists() else p
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +161,18 @@ def resolve_state_dir(project_root: Path, fuzz_root: Path,
         p = Path(override)
         return p if p.is_absolute() else project_root / p
     return fuzz_root / "state"
+
+
+def state_dir_text(c: "Campaign", env: Mapping[str, str] | None = None) -> str:
+    """The state dir as the path-anchored scripts print it:
+    ${FUZZ_STATE_DIR:-$FUZZ_ROOT/state} -- a relative override stays relative
+    (to the project root), the default is absolute. For messages and recorded
+    paths only; do I/O through Campaign.state_dir."""
+    env = os.environ if env is None else env
+    raw = env.get("FUZZ_STATE_DIR")
+    if raw and resolve_state_dir(c.project_root, c.fuzz_root, env) == c.state_dir:
+        return raw
+    return str(c.state_dir)
 
 
 def campaign(start: str | os.PathLike | None = None, *,

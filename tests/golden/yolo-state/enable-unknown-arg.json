@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/yolo-state.sh",
+    "enable",
+    "--turbo"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "ERROR: enable: unknown arg '--turbo'"
+  ],
+  "stdout": []
+}

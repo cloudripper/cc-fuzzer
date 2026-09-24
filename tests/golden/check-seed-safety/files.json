@@ -1,0 +1,17 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/check-seed-safety.sh",
+    "fuzz/harnesses/parser/corpus-quarantine/seed-a.bin",
+    "fuzz/harnesses/parser/corpus-quarantine/seed-destructive.sh",
+    "missing.bin"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 3,
+  "files": {},
+  "stderr": [],
+  "stdout": [
+    "UNSAFE fuzz/harnesses/parser/corpus-quarantine/seed-destructive.sh: rm -rf with absolute-path target"
+  ]
+}

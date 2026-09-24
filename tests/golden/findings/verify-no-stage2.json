@@ -1,0 +1,18 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/findings.sh",
+    "verify"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {},
+  "stderr": [],
+  "stdout": [
+    "f001\tok-no-stage2",
+    "f002\tok-no-stage2",
+    "f003\tstale",
+    "f004\tmissing"
+  ]
+}

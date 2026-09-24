@@ -36,6 +36,8 @@ src/cc_fuzzer_core/
   prescan/        # code_review_prescan.py, sast_scan.py, merge.py
   crash/          # classify.py (port of is-crash.sh), detect.py, pipeline.py, verifiers/ (§4)
   findings.py     # findings_ops.py + the findings.sh subcommand logic
+  ledger.py       # host-written agent_call ledger + spend (§10)
+  gate.py         # API-level refusals shared with the PreToolUse hooks (§11, §12)
   variants.py  builders/ (§6)
   query/          # §5
   loop.py         # §7 scheduler-free driver
@@ -43,7 +45,7 @@ src/cc_fuzzer_core/
   data/           # STATE_SCHEMA.md, rules/, dictionaries/, templates/, references/verifier-template.sh, models.json
   __main__.py     # argparse dispatcher: `cc-fuzzer <subsystem> <verb>`
 scripts/*.sh       # shims: source _lib/root.sh; exec python3 -m cc_fuzzer_core <cmd> "$@"
-agents/, skills/, hooks/  # plugin-only (Claude Code adapter)
+agents/, skills/, hooks/  # plugin-only (Claude Code adapter); hooks/ gains ledger-append.sh, gate-findings.sh, gate-verify-build.sh
 prompts/           # host-neutral prompt sources (§3); agents/*.md are rendered from these
 ```
 
@@ -217,17 +219,60 @@ Consequences:
     - This also fixes the missing `authorization.json.example` and the template copy.
 - **Prompt blocks:** `<!-- feature:X -->…<!-- /feature -->`, stripped by `prompts.render`. The committed plugin agents keep every block. At runtime `campaign-header` prints `Features disabled: …` so plugin agents skip those sections.
 
+## Rules out from under the prompt (§10–§12)
+
+§1–§9 move code out from under the host. §10–§12 move rules out from under the prompt. Each is a rule the plugin states in prose today, and prose has already failed here: `enforce-readonly.sh` exists because the plugin-read-only rule was broken four times across documented campaigns, each caught after the fact rather than at write time.
+
+**Enforce twice, state once.** The prompt states the rule once. The core refuses the action at its API (the authoritative layer, present everywhere). A plugin `PreToolUse` hook refuses it earlier, with a reason the model can act on (`permissionDecision: deny` plus the exact command to run instead). Both layers survive downstream: the run phase drives the model non-interactively and hooks fire there too. The hook scripts only translate; every decision is a core call (`cc-fuzzer gate ...`), so the hook and the API can't disagree.
+
+## §10 Ledger written by the host, not the orchestrator
+
+- **Gap:** `events.sh` says it is the only writer of `events.jsonl`, but nothing makes the orchestrator call `events.sh agent_call`. Across sixteen subagents the accounting is exactly as complete as the model's memory, so the hard cap is a declaration, not a measurement. (This also fixes the tick + agent_call double count in `yolo_evaluate`.)
+- **Core:** `cc_fuzzer_core.ledger`:
+  - `append(campaign, *, agent, usage: Usage{tokens_in, tokens_out, cache_read, cache_write, model}, source, call_id)` writes an `agent_call` event (event/v1 plus `source` and `call_id`). It is idempotent on `call_id`, so a hook and a driver reporting the same call don't count twice.
+  - `spend(campaign) -> Spend{by_agent, by_model, tokens, usd}`, priced by `models` (§8). This is the one reader.
+  - `events.sh` becomes a shim; `events.sh agent_call` stays and is marked `source=orchestrator` (advisory).
+- **Caps:** `yolo_evaluate`, the cost cap and `derive_tick` read spend only through `ledger.spend()`, which counts only `agent_call` events. `tick` events no longer carry billable tokens. If there are host-sourced rows, orchestrator rows for the same agent and tick are ignored.
+- **Plugin filler:** `hooks/ledger-append.sh` on `SubagentStop`. It reads the subagent transcript from the hook input, sums the per-message `usage` of the assistant turns, takes the model from the transcript, and calls `cc-fuzzer ledger append --source host-hook --call-id <agent_id>`. It is a no-op outside a campaign, and it never blocks (exit 0 always).
+- **Container filler:** §7's driver calls `ledger.append(..., source="driver")` from `AgentResult`. The graph node in the downstream repo does the same.
+- **CLI:** `cc-fuzzer ledger append|spend|show [--json]`.
+
+## §11 Promotion gated on verification, outside the prompt
+
+- **Rule:** nothing enters `fuzz/findings/` unless the promote path wrote a verification marker. The promote path writes it only after the crash classifier (`crash/classify`, the port of `is-crash.sh`) passes on the **verify** binary. Downstream this is the never-submit-an-unverified-PoV rule, where a false submission costs the accuracy multiplier directly.
+- **Core:**
+  - `pipeline.finalize(id)` (§4) is the only code that creates `fuzz/findings/<id>/`. It writes `<id>/.verified` (`verification-marker/v1`: finding id, crash input sha256, verify binary path and sha256, classify verdict, stack hash, verifier step and status, timestamp). The marker is written last, atomically.
+  - `gate.check_finding_dir(path)` returns ok or a refusal with a reason. A finding without a valid marker (missing, sha mismatch, or `status != confirmed`) is refused. `schema.validate` reports unmarked finding dirs as errors. Readers (report, status, cross-ref) skip unmarked dirs and warn.
+- **Plugin hook:** `hooks/gate-findings.sh` on `PreToolUse` for `Write|Edit|MultiEdit|Bash`. It denies any write under `fuzz/findings/` except through `cc-fuzzer findings promote`/`finalize`, and its reason names that command. Bash is matched on redirections, `cp`, `mv`, `mkdir`, `tee` and `install` that target `fuzz/findings`.
+- **Test:** a forced unverified promotion is refused at the API and by the hook, with a verdict of `rejected`, a classify failure on the verify binary, or a crash that only reproduces on the fuzz binary.
+- Stage placement: folded into §4, since it is the same promote path.
+
+## §12 Build variant selection owned by the core
+
+- **Rule:** which binary an action runs on is a core decision, not a prompt instruction. A crash reproduced on an instrumented binary (cmplog, symcc, coverage) is not evidence. Under time pressure a triager reaches for whichever binary is already built.
+- **Core:** `variants.select(campaign, harness, action) -> Selection{binary, variant, reason}`, where `action` is one of fuzz, cmplog, concolic, coverage, replay, verify or poc. Rules:
+  - `replay`, `verify` and `poc` → `verify_binary`, with `harness_binary` as a fallback only for `replay` (recorded as `evidence_grade: weak`). Never cmplog, symcc or coverage.
+  - `cmplog` and `concolic` → reachable only through `slots.launcher`. `select()` refuses them for any other caller.
+  - `crash replay`, `finalize` and the launcher resolve binaries only through `select()`. `crash replay --binary X` is refused if X isn't the selected binary.
+- **Plugin hook:** `hooks/gate-verify-build.sh` on `PreToolUse` for `Bash`.
+  - It denies direct execution of `*_cmplog`, `*_symcc` and coverage binaries outside `launch-fuzzer-slot.sh`/`run-concolic.sh`.
+  - It denies running a crash input against a non-verify binary, and points to `cc-fuzzer crash replay <file>`.
+  - Binary paths come from `harness_built` via `cc-fuzzer gate classify-command`, not from name globs alone.
+- Stage placement: after §6, so `select()` builds on the variant declarations. §4's replay consumes it.
+
+
 ## Stage order (for later implementation)
 
 0. Safety net
 1. §1 root
 2. §2 core ports, in table order, with §8 folded into the state port
-3. §9 flags
-4. §3 renderer and prompt cleanup
-5. §6 variants
-6. §4 verification
-7. §7 driver
-8. §5 query branch
+3. §10 host-written ledger
+4. §9 flags
+5. §3 renderer and prompt cleanup
+6. §6 variants, then §12 variant selection
+7. §4 verification, with §11 promotion gate
+8. §7 driver (fills the ledger from `AgentResult`)
+9. §5 query branch
 
 Each stage ends with `pytest`, `validate-state.sh` on the fixtures, `cc-fuzzer prompts check` and a regenerated manifest. The version goes to 0.31.0 when the package is introduced.
 
@@ -243,3 +288,7 @@ Each stage ends with `pytest`, `validate-state.sh` on the fixtures, `cc-fuzzer p
   - `CC_FUZZER_FEATURES=-advisory_lookup,-disclosure_reporting,-logic_oracles,-impact_tiering`: the tick still completes, with no CVE fetch and no oracle smoke.
   - The `oss-fuzz` builder against a prebuilt `$OUT` fills `harness_built` correctly.
   - The `query` branch is emitted on a plateau fixture and respects `max_queries_per_dispatch`.
+- **Rules (§10–§12):**
+  - A forced unverified promotion is refused by both `pipeline.finalize` and `gate-findings.sh`.
+  - The ledger accounts for every subagent call in a recorded campaign transcript: host-hook rows equal the transcript's SubagentStop count, and spend matches the transcript usage sum.
+  - Replay or verify against a cmplog, symcc or coverage binary is refused by both `variants.select` and `gate-verify-build.sh`.

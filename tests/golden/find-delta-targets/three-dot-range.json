@@ -1,0 +1,31 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/find-delta-targets.sh",
+    "--range",
+    "master...topic"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {
+    "fuzz/state/snapshots/delta-1790000000.json": {
+      "lines": [
+        "{",
+        "  \"schema\": \"delta-targets/v1\",",
+        "  \"timestamp\": 1790000000,",
+        "  \"range\": \"master...topic\",",
+        "  \"commits\": [\"e47d63c808ae9505a39b5a941be5f8691b431200\", \"c91838812ddf225c54c10b497242e4ec84b7dad2\"],",
+        "  \"files_changed\": 2,",
+        "  \"targets\": [{\"file\": \"src/encoder.c\", \"function_context\": null, \"lines_changed\": [0, 0], \"kind\": \"deleted\"}, {\"file\": \"src/parser.c\", \"function_context\": \"void free_chunk(struct chunk *c) {\", \"lines_changed\": [35, 35], \"kind\": \"modified\"}]",
+        "}"
+      ]
+    }
+  },
+  "stderr": [
+    "delta: 2 hunks across 2 files in master...topic"
+  ],
+  "stdout": [
+    "fuzz/state/snapshots/delta-1790000000.json"
+  ]
+}

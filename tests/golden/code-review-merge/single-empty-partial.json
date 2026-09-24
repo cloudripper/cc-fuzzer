@@ -1,0 +1,76 @@
+{
+  "argv": [
+    "/usr/bin/python3",
+    "-m",
+    "cc_fuzzer_core",
+    "prescan",
+    "merge",
+    "--prescan",
+    "fuzz/state/snapshots/code-review-prescan-1789999000.json",
+    "--out",
+    "fuzz/state/snapshots/code-review-1789999100.json",
+    "--md",
+    "fuzz/state/code-review.md",
+    "fuzz/state/snapshots/w.json"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {
+    "fuzz/state/code-review.md": {
+      "lines": [
+        "# Code review for `(target)`",
+        "",
+        "⚠ COVERAGE: reviewed 0 of 5 functions (0%). 5 functions were NOT reviewed. This is a capped starting map, not a complete audit — re-run `/cc-fuzzer:fuzz-review --sweep` for full coverage.",
+        "",
+        "Generated 2026-09-21T13:56:40Z. Scope: 4 files, 5 functions, 321 LOC. Reviewed 0 candidates (mode: capped). Tiers run: ['prescan', 'sonnet'].",
+        "",
+        "## Purpose",
+        "",
+        "This document identifies vulnerable PATTERNS in the target source that the campaign should investigate. It is INPUT for the fuzzer, not a security audit and not a list of bugs to verify. It's a starting map.",
+        "",
+        "## Top focus areas",
+        "",
+        "(none)",
+        "",
+        "## Top findings (high, medium, and any flagged needs_deep_pass)",
+        "",
+        "## Consumers",
+        "",
+        "`campaign-planner` reads the focus areas to populate `## Coverage Targets`. `harness-writer` biases entry-point selection. `seed-generator` pulls each finding's `fuzzing_recommendation`."
+      ]
+    },
+    "fuzz/state/snapshots/code-review-1789999100.json": {
+      "lines": [
+        "{",
+        "  \"schema\": \"code-review/v1\",",
+        "  \"ts\": 1789999000,",
+        "  \"target\": \"\",",
+        "  \"scope\": {",
+        "    \"files_scanned\": 4,",
+        "    \"functions_inventoried\": 5,",
+        "    \"loc_total\": 321,",
+        "    \"candidates_reviewed\": 0,",
+        "    \"not_reviewed\": 5,",
+        "    \"coverage_complete\": false,",
+        "    \"mode\": \"capped\",",
+        "    \"excluded_paths\": [",
+        "      \"tests/\"",
+        "    ]",
+        "  },",
+        "  \"tiers_run\": [",
+        "    \"prescan\",",
+        "    \"sonnet\"",
+        "  ],",
+        "  \"findings\": [],",
+        "  \"focus_areas\": []",
+        "}"
+      ]
+    }
+  },
+  "stderr": [],
+  "stdout": [
+    "⚠ COVERAGE: reviewed 0 of 5 functions (0%). 5 functions were NOT reviewed. This is a capped starting map, not a complete audit — re-run `/cc-fuzzer:fuzz-review --sweep` for full coverage.",
+    "fuzz/state/snapshots/code-review-1789999100.json"
+  ]
+}

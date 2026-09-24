@@ -1,0 +1,20 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/findings.sh",
+    "drop",
+    "x",
+    "deterministic_replay",
+    "r",
+    "--why",
+    "z"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "ERROR: drop: unknown flag '--why'"
+  ],
+  "stdout": []
+}

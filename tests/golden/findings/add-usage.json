@@ -1,0 +1,41 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/findings.sh",
+    "add",
+    "abcdef0123456789",
+    "oom"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "usage: findings.sh add <stack_hash> <category> <location> <exploitability> <root_cause> <reproducer> [sanitizer_excerpt]",
+    "",
+    "This is a POSITIONAL-ARGS interface, NOT a flag-style interface.",
+    "WRONG: findings.sh add --id f001 --category null-deref --location ...",
+    "RIGHT: findings.sh add \"abc123def456\" \"null-deref\" \"func\\@file.c:42\" \"medium\" \"off-by-one\" \"fuzz/crashes/known/f001/repro.bin\" \"\"",
+    "",
+    "The id is allocated by this script - do NOT pass --id. The argument order is:",
+    "  1. stack_hash         (16-hex-char sha256-prefix of the crash stack)",
+    "  2. category           (crash: heap-buffer-overflow heap-use-after-free stack-buffer-overflow",
+    "                                  global-buffer-overflow stack-overflow null-deref assertion-failure",
+    "                                  oom timeout harness-artifact, or ubsan-<kind>;",
+    "                          logic: invariant-violation roundtrip-mismatch differential-divergence",
+    "                                  parser-differential auth-bypass access-control incorrect-validation",
+    "                                  canonicalization state-confusion integer-truncation logic-error)",
+    "  3. location           (function@file:line of the actual bug, not the libc frame)",
+    "  4. exploitability     (one of: likely medium unlikely harness-artifact)",
+    "  5. root_cause         (one or two sentences)",
+    "  6. reproducer         (path to fuzz/crashes/known/<id>/repro.bin - placeholder until you mkdir+mv)",
+    "  7. sanitizer_excerpt  (optional - first ~10 lines of the sanitizer report)",
+    "",
+    "For a LOGIC finding (oracle-driven), additionally set in the ENVIRONMENT (not flags):",
+    "  ORACLE_TYPE=invariant|roundtrip|differential   and",
+    "  DIVERGENCE='{\"property_id\":\"...\",\"comparison\":\"...\",\"observed\":\"...\",\"expected\":\"...\"}'",
+    "The stack_hash for a logic finding is the property-divergence hash (sha256 prefix of",
+    "oracle_type|property_id|divergence_class) — the dedup machinery is unchanged."
+  ],
+  "stdout": []
+}

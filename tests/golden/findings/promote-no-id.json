@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/findings.sh",
+    "promote"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 1,
+  "files": {},
+  "stderr": [
+    "findings.sh: usage: findings.sh promote <id> --driver P --verifier P --boundary S --precondition S --projected S"
+  ],
+  "stdout": []
+}

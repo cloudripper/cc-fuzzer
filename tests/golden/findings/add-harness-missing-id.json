@@ -1,0 +1,17 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/findings.sh",
+    "add-harness",
+    "f099",
+    "encoder"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 1,
+  "files": {},
+  "stderr": [
+    "ERROR: no finding with id f099"
+  ],
+  "stdout": []
+}

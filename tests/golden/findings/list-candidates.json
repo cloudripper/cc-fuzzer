@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/findings.sh",
+    "list-candidates"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {},
+  "stderr": [],
+  "stdout": [
+    "f002\theap-buffer-overflow\tparse_exif@src/parser.c:25\t2026-09-21T13:58:20Z",
+    "f003\toom\ta@b.c:1\t2026-09-21T10:00:00Z"
+  ]
+}

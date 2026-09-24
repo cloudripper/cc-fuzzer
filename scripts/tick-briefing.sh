@@ -13,7 +13,7 @@
 #   fuzz/state/current.json        — tick_number, tick_coverage, recommendation, gaps
 #   fuzz/state/snapshots/tick-coverage-*.json — last N for the coverage trend
 #   fuzz/state/snapshots/gaps-*.json — latest for the active-gap mix
-#   fuzz/state/events.jsonl        — specialists dispatched since last consult
+#   fuzz/state/events.jsonl        — specialists dispatched since last consult (via cc_fuzzer_core.ledger)
 #   fuzz/state/findings.jsonl      — findings recorded since last consult
 #   fuzz/state/snapshots/planner-consult-*.json — last_consult_ts baseline
 #
@@ -117,29 +117,25 @@ if consult_paths:
         last_consult_tick = int(last.get("tick_number") or 0)
 
 # --- Specialists dispatched since last consult ---
+# From the spend ledger (cc_fuzzer_core.ledger), so precedence applies: an
+# orchestrator report superseded by the host's measurement of the same call,
+# or a host report replaced by a larger one for the same call_id, is not
+# listed (and its tokens are not shown twice).
 dispatched = []
 events_path = os.path.join(state_dir, "events.jsonl")
-if os.path.exists(events_path):
-    try:
-        with open(events_path) as f:
-            for line in f:
-                line = line.strip()
-                if not line: continue
-                try:
-                    e = json.loads(line)
-                except Exception:
-                    continue
-                if int(e.get("ts") or 0) < last_consult_ts:
-                    continue
-                if e.get("event") == "agent_call":
-                    dispatched.append({
-                        "agent": e.get("agent_called"),
-                        "tick": e.get("tick"),
-                        "tokens_in": e.get("tokens_in"),
-                        "tokens_out": e.get("tokens_out"),
-                    })
-    except Exception:
-        pass
+try:
+    from cc_fuzzer_core import events as _events, ledger as _ledger
+    for e, _status in _ledger.classify(_events.read(state_dir)):
+        if _status != _ledger.COUNTED or int(e.get("ts") or 0) < last_consult_ts:
+            continue
+        dispatched.append({
+            "agent": e.get("agent_called"),
+            "tick": e.get("tick"),
+            "tokens_in": e.get("tokens_in"),
+            "tokens_out": e.get("tokens_out"),
+        })
+except Exception:
+    pass
 
 # Compact dispatched: cap at 15 entries to keep the briefing small.
 if len(dispatched) > 15:

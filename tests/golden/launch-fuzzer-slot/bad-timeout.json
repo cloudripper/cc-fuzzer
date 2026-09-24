@@ -1,0 +1,22 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/launch-fuzzer-slot.sh",
+    "--harness",
+    "parser",
+    "--engine",
+    "libfuzzer",
+    "--timeout-ms",
+    "fast"
+  ],
+  "created_dirs": [
+    "out"
+  ],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "ERROR: --timeout-ms must be a positive integer (got 'fast')"
+  ],
+  "stdout": []
+}

@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/findings.sh",
+    "add",
+    "--id",
+    "f009",
+    "--category",
+    "oom",
+    "--location",
+    "x"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "ERROR: findings.sh uses POSITIONAL args, not flags. Got '--id'. See 'findings.sh help'."
+  ],
+  "stdout": []
+}

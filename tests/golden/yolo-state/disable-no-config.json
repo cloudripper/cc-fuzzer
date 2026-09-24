@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/yolo-state.sh",
+    "disable"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "ERROR: <PROJECT>/fuzz/state/fuzz-config.json not found. Initialize the campaign first."
+  ],
+  "stdout": []
+}

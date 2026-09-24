@@ -1,0 +1,14 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/is-crash.sh"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {},
+  "stderr": [],
+  "stdout": [
+    "{\"is_crash\":true,\"category\":\"null-deref\",\"summary_line\":\"SUMMARY: AddressSanitizer: SEGV /src/target/src/encoder.c:9:13 in encode_chunk\",\"top_frame\":\"encode_chunk @ /src/target/src/encoder.c:9\",\"exit_code\":null}"
+  ]
+}

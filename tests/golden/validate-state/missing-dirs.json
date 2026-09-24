@@ -1,0 +1,19 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/validate-state.sh"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {},
+  "stderr": [],
+  "stdout": [
+    "WARNINGS (4):",
+    "  missing required directory: <PROJECT>/fuzz/state/snapshots (will be created)",
+    "  missing required directory: <PROJECT>/fuzz/crashes/known (will be created)",
+    "  missing required directory: <PROJECT>/fuzz/crashes/flaky (will be created)",
+    "  no FINDINGS-REPORT-*.md in <PROJECT>/fuzz/state (run /cc-fuzzer:report to generate)",
+    "ok"
+  ]
+}

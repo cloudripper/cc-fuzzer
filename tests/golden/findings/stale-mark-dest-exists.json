@@ -1,0 +1,55 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/findings.sh",
+    "stale-mark",
+    "f002"
+  ],
+  "created_dirs": [
+    "fuzz/.trash",
+    "fuzz/.trash/20260921T141320Z",
+    "fuzz/.trash/20260921T141320Z/crashes",
+    "fuzz/.trash/20260921T141320Z/crashes/stale",
+    "fuzz/.trash/20260921T141320Z/crashes/stale/f002",
+    "fuzz/crashes/stale/f002/duplicates"
+  ],
+  "deleted": [
+    "fuzz/crashes/known/f002/duplicates/parser__1122334455667788.bin",
+    "fuzz/crashes/known/f002/harnesses.txt",
+    "fuzz/crashes/known/f002/repro.bin"
+  ],
+  "exit_code": 0,
+  "files": {
+    "fuzz/.trash/20260921T141320Z/crashes/stale/f002/repro.bin": {
+      "lines": [
+        "older stale copy"
+      ],
+      "trailing_newline": false
+    },
+    "fuzz/crashes/stale/f002/duplicates/parser__1122334455667788.bin": {
+      "sha256": "74e2697a1ccef0a22b443de3db5a018d24ff62d0dbaa10e6bd25feb719041753",
+      "size": 14
+    },
+    "fuzz/crashes/stale/f002/harnesses.txt": {
+      "lines": [
+        "parser"
+      ]
+    },
+    "fuzz/crashes/stale/f002/repro.bin": {
+      "sha256": "517cc972a91324bd8742a3c87b94e642af36b58d7f889c78586db1e0e2d53033",
+      "size": 18
+    },
+    "fuzz/state/findings.jsonl": {
+      "lines": [
+        "{\"schema\":\"finding/v2\",\"id\":\"f001\",\"stack_hash\":\"a1b2c3d4e5f60718\",\"harnesses\":[\"parser\"],\"category\":\"heap-buffer-overflow\",\"subcategory\":\"READ-1024B\",\"location\":\"parse_chunk@src/parser.c:14\",\"exploitability\":\"likely\",\"root_cause\":\"chunk length taken from input without bounding it by the buffer size\",\"reproducer\":\"fuzz/crashes/known/f001/repro.bin\",\"first_seen\":\"2026-09-21T05:53:20Z\",\"last_seen\":\"2026-09-21T13:06:40Z\",\"dedup_count\":3,\"status\":\"finding\",\"sanitizer_report_excerpt\":\"==4242==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x602000000011\",\"cwe_id\":\"CWE-125\",\"realism_attestation\":{\"driver\":\"poc.c (public-API program, no harness)\",\"verifier\":\"fuzz/findings/f001/repro/verify.sh\",\"boundary\":\"confidentiality: attacker reads adjacent heap past the chunk buffer\",\"precondition\":\"attacker-supplied file reaches parse_chunk via the public loader\",\"projected_vs_demonstrated\":\"demonstrated (verify.sh exits 0 on the crossing)\",\"verifier_lines\":31,\"verifier_tools\":[\"clang\",\"asan\"],\"promoted_at\":\"2026-09-21T08:40:00Z\"}}",
+        "{\"schema\":\"finding/v2\",\"id\":\"f002\",\"stack_hash\":\"0f1e2d3c4b5a6978\",\"harnesses\":[\"parser\"],\"category\":\"heap-buffer-overflow\",\"subcategory\":\"READ-1B\",\"location\":\"parse_exif@src/parser.c:25\",\"exploitability\":\"medium\",\"root_cause\":\"loop bound uses <= len, reading one byte past the exif buffer\",\"reproducer\":\"fuzz/crashes/stale/f002/repro.bin\",\"first_seen\":\"2026-09-21T13:58:20Z\",\"last_seen\":\"2026-09-21T14:08:20Z\",\"dedup_count\":2,\"status\":\"stale\",\"stale_against_build\":\"9cae851ce5d6b416\"}"
+      ]
+    }
+  },
+  "stderr": [
+    "stale-mark: prior <PROJECT>/fuzz/crashes/stale/f002 staged to <PROJECT>/fuzz/.trash/20260921T141320Z/crashes/stale/f002 (not hard-deleted)"
+  ],
+  "stdout": [
+    "f002 marked stale (was <PROJECT>/fuzz/crashes/known/f002, now <PROJECT>/fuzz/crashes/stale/f002)"
+  ]
+}

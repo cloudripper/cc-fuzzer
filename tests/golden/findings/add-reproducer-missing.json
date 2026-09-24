@@ -1,0 +1,22 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/findings.sh",
+    "add",
+    "abcdef0123456789",
+    "heap-buffer-overflow",
+    "parse_chunk@src/parser.c:14",
+    "likely",
+    "chunk length not bounded",
+    "fuzz/crashes/known/f003/repro.bin"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "ERROR: reproducer file missing: fuzz/crashes/known/f003/repro.bin",
+    "       create the file first, then call findings.sh add"
+  ],
+  "stdout": []
+}

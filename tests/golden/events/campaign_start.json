@@ -1,0 +1,20 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/events.sh",
+    "campaign_start"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {
+    "fuzz/state/events.jsonl": {
+      "lines": [
+        "{\"schema\":\"event/v1\",\"ts\":1789998300,\"tick\":0,\"event\":\"campaign_start\"}",
+        "{\"schema\":\"event/v1\",\"ts\":1790000000,\"tick\":0,\"event\":\"campaign_start\"}"
+      ]
+    }
+  },
+  "stderr": [],
+  "stdout": []
+}

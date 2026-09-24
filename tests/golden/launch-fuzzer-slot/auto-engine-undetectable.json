@@ -1,0 +1,18 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/launch-fuzzer-slot.sh",
+    "--harness",
+    "parser"
+  ],
+  "created_dirs": [
+    "out"
+  ],
+  "deleted": [],
+  "exit_code": 1,
+  "files": {},
+  "stderr": [
+    "ERROR: cannot auto-detect engine for fuzz/harnesses/parser/harness/parser_fuzzer (no LLVMFuzzerTestOneInput symbol and afl-fuzz not in PATH)"
+  ],
+  "stdout": []
+}

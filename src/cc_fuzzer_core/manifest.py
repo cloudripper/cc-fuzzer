@@ -44,7 +44,7 @@ HEADER = """\
 # tracking. Rule content is externally sourced and updated independently of
 # plugin releases (the submodule tracks upstream; the bundled pack may be
 # refreshed out of band), so drift there is expected and must not trip the
-# integrity check. The SAST driver scripts/_lib/sast_scan.py IS tracked.
+# integrity check. The SAST driver (src/cc_fuzzer_core/prescan/sast_scan.py) IS tracked.
 """
 
 

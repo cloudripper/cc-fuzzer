@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/extract-cmplog-dict.sh"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {},
+  "stderr": [],
+  "stdout": []
+}

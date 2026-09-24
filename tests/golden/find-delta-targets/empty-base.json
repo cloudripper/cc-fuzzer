@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/find-delta-targets.sh",
+    "--range",
+    "..HEAD"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "ERROR: base of range '' does not resolve - unknown ref or commit"
+  ],
+  "stdout": []
+}

@@ -1,0 +1,22 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/launch-fuzzer-slot.sh",
+    "--harness",
+    "parser",
+    "--engine",
+    "libfuzzer",
+    "--timeout-ms",
+    "<PID>"
+  ],
+  "created_dirs": [
+    "out"
+  ],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "ERROR: --timeout-ms below 100ms floor"
+  ],
+  "stdout": []
+}

@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/_lib/fuzz-config.sh",
+    "show"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {},
+  "stderr": [
+    "WARN: requested fuzz_forks=2 exceeds cap (nproc-1=<CAP>); using <CAP>"
+  ],
+  "stdout": [
+    "Resolved fuzz_forks: <CAP>",
+    "  cap (nproc-1):     <CAP>",
+    "  env FUZZ_FORKS:    (unset)",
+    "  config file value: 2",
+    "  config file:       fuzz/state/fuzz-config.json"
+  ]
+}

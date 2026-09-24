@@ -15,19 +15,12 @@ import shutil
 import subprocess
 import unittest
 
+from tests.support.cases import ALL_CASES, run_case
 from tests.support.golden import (FIXTURES, FROZEN_NOW, GoldenTestCase, bash,
                                   python_script, require_tools)
 
 N = FROZEN_NOW
 LOGS = FIXTURES / "sanitizer-logs"
-
-
-def _awk_is_gawk() -> bool:
-    try:
-        out = subprocess.run(["awk", "--version"], capture_output=True, text=True, timeout=5)
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    return "GNU Awk" in out.stdout
 
 
 # ---------------------------------------------------------------------------
@@ -197,9 +190,6 @@ class TestYoloNextTick(GoldenTestCase):
 # is-crash.sh
 # ---------------------------------------------------------------------------
 
-@unittest.skipUnless(_awk_is_gawk(),
-                     "is-crash.sh goldens were recorded with GNU awk; its top-frame "
-                     "awk program uses `func`, a gawk keyword, so output is awk-dependent")
 class TestIsCrash(GoldenTestCase):
     def _log(self, name, *args):
         sb = self.sandbox(None)
@@ -441,6 +431,21 @@ class TestCodeReviewPrescan(GoldenTestCase):
         self.assertEqual(first.exit_code, 0, first.stderr)
         self.assertGolden("code-review-prescan/warm-rerun",
                           sb.run(bash("scripts/code-review-run.sh", "--no-sast")))
+
+
+# ---------------------------------------------------------------------------
+# Extra cases for the §2 ports (tests/support/cases.py): fuzz-config.sh,
+# enums.py, validate-state.sh, yolo-state.sh, tick-coverage-roundup.sh,
+# ceiling-probe.sh, derive-tick-state.py, update-current.sh. Recorded from the
+# pre-port implementations; the ports are held to the same goldens by
+# tests/test_core_*.py.
+# ---------------------------------------------------------------------------
+
+class TestExtraCases(GoldenTestCase):
+    def test_bash_entry_points(self):
+        for case in ALL_CASES:
+            with self.subTest(case=case.name):
+                self.assertGolden(case.name, run_case(self, case, case.bash_argv))
 
 
 if __name__ == "__main__":

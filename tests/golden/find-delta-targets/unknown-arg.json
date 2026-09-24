@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/find-delta-targets.sh",
+    "--since",
+    "x"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "ERROR: unknown argument: --since"
+  ],
+  "stdout": []
+}

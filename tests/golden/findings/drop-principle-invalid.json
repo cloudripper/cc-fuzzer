@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/findings.sh",
+    "drop",
+    "fuzz/crashes/new/parser__deadbeefcafe0001.bin",
+    "artifact_filter",
+    "harness bug",
+    "--principle",
+    "vibes"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "ERROR: drop: --principle is required when stage=artifact_filter",
+    "       valid: harness_correctness | api_contract | public_api_reachability | entry_point_currency"
+  ],
+  "stdout": []
+}

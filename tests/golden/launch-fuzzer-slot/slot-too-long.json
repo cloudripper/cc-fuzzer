@@ -1,0 +1,18 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/launch-fuzzer-slot.sh",
+    "--slot",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "--harness",
+    "parser"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "ERROR: --slot too long (max 32 chars)"
+  ],
+  "stdout": []
+}

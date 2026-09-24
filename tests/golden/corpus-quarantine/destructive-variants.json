@@ -1,0 +1,53 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/corpus-quarantine.sh",
+    "--harness",
+    "parser"
+  ],
+  "created_dirs": [
+    "fuzz/harnesses/parser/corpus-quarantine/rejected"
+  ],
+  "deleted": [
+    "fuzz/harnesses/parser/corpus-quarantine/dd.sh",
+    "fuzz/harnesses/parser/corpus-quarantine/fork-bomb.sh",
+    "fuzz/harnesses/parser/corpus-quarantine/rm-quoted.sh",
+    "fuzz/harnesses/parser/corpus-quarantine/rm-split.sh",
+    "fuzz/harnesses/parser/corpus-quarantine/sysrq.txt"
+  ],
+  "exit_code": 0,
+  "files": {
+    "fuzz/harnesses/parser/corpus-quarantine/rejected/dd.sh": {
+      "sha256": "ac2caedba52c8be53d7cd5d885ec5cc0cf31bca037a430f968f025beb44d8277",
+      "size": 36
+    },
+    "fuzz/harnesses/parser/corpus-quarantine/rejected/fork-bomb.sh": {
+      "lines": [
+        ":(){ :|:& };:"
+      ]
+    },
+    "fuzz/harnesses/parser/corpus-quarantine/rejected/sysrq.txt": {
+      "lines": [
+        "echo b > /proc/sysrq-trigger"
+      ]
+    },
+    "fuzz/harnesses/parser/corpus/rm-quoted.sh": {
+      "lines": [
+        "rm -rf '/tmp/x'"
+      ]
+    },
+    "fuzz/harnesses/parser/corpus/rm-split.sh": {
+      "lines": [
+        "rm -rf",
+        "/etc"
+      ]
+    }
+  },
+  "stderr": [],
+  "stdout": [
+    "REJECTED: UNSAFE <PROJECT>/fuzz/harnesses/parser/corpus-quarantine/sysrq.txt: write to /proc/sysrq-trigger (kernel control)",
+    "REJECTED: UNSAFE <PROJECT>/fuzz/harnesses/parser/corpus-quarantine/fork-bomb.sh: fork bomb signature",
+    "REJECTED: UNSAFE <PROJECT>/fuzz/harnesses/parser/corpus-quarantine/dd.sh: dd writing to a real block device",
+    "promoted=2   crashed=0 (-> crashes/new/)   hung=0 (-> flaky/)   rejected=3 (-> corpus-quarantine/rejected/)"
+  ]
+}

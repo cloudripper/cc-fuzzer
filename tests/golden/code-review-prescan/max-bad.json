@@ -1,0 +1,22 @@
+{
+  "argv": [
+    "/usr/bin/python3",
+    "-m",
+    "cc_fuzzer_core",
+    "prescan",
+    "run",
+    "--max-functions",
+    "lots",
+    "--no-sast"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "[code-review] running prescan: target=<PROJECT>/src max=lots sast=off",
+    "ERROR: --max-functions must be an int or 'all', got 'lots'",
+    "ERROR: prescan failed"
+  ],
+  "stdout": []
+}

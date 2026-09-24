@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/findings.sh",
+    "import-cr"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "ERROR: import-cr: no code-review snapshot found in <PROJECT>/fuzz/state/snapshots/",
+    "       run /cc-fuzzer:fuzz-review first, or pass a snapshot path."
+  ],
+  "stdout": []
+}

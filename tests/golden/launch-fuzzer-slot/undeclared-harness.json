@@ -1,0 +1,18 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/launch-fuzzer-slot.sh",
+    "--harness",
+    "ghost",
+    "--engine",
+    "libfuzzer"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "ERROR: harness 'ghost' is not declared in fuzz-config.json:harnesses[]"
+  ],
+  "stdout": []
+}

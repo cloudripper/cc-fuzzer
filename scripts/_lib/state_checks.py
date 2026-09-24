@@ -1,684 +1,62 @@
 #!/usr/bin/env python3
-"""state_checks.py — content-validation primitives for validate-state.sh.
+"""state_checks.py — shim onto cc_fuzzer_core.schema.checks.
 
-validate-state.sh is the strict state gate; its exit code drives
-check-campaign-state.sh. It is fundamentally a bash orchestrator — directory
-layout, globbing, mode detection on the filesystem, BASH_REMATCH on filenames —
-but the per-file *content* validation used to be ~400 lines of inline
-`python3 <<PY` heredocs interleaved through the script. Those live here now,
-one subcommand per former heredoc, so the logic is testable in isolation and the
-driver stays readable.
-
-Each subcommand prints problem lines to stdout (one per line); the caller turns
-them into err()/warn() entries. Exit status is NOT used to signal problems
-(always 0 unless a usage error) — the presence of output is the signal, matching
-the original heredocs, which were captured with `$(... 2>&1)`.
-
-Inputs are passed via environment variables (documented per subcommand) to avoid
-interpolating shell values into Python source the way the old heredocs did.
+The content-validation primitives moved into the core package (UPDATE_ROADMAP.md
+§2 row 2; validate-state.sh is now `cc-fuzzer schema validate`). This keeps the
+old subcommand CLI for the remaining callers (findings.sh uses `field`), with
+the same environment-variable inputs and output.
 
 Subcommands:
   config-harness-names   CFG                      -> harness names, one per line
-  validate-json          FILE SCHEMA REQ ALLOW LEN-> OK | "WARN: ..." | error line
+  validate-json          FILE SCHEMA REQUIRED ALLOWED LENIENT -> OK | "WARN: ..." | error line
   field        <file> <dotted.path> [default]     -> single field value
   hash-check   <file>                             -> "<key>=<val>" for bad hashes
   harnesses-mirror       HARNESSES_PATH MIRROR_PATH DECLARED REQUIRED_V6 ALLOWED_V6 [EXPECTED_HARNESS_SCHEMA]
-  slots                  MODE DECLARED CFG
-  fuzzers-manifest       MODE DECLARED MANIFEST_PATH
-  findings               MODE DECLARED FINDINGS
-  code-review            FILE                            -> per-finding code-review/v1 problems
+  slots                  DECLARED CFG
+  fuzzers-manifest       DECLARED MANIFEST_PATH
+  findings               DECLARED FINDINGS
+  code-review            FILE
   jsonl-corrections      HCS
   jsonl-dropped          DROPS
   jsonl-events           EVENTS
   snapshot-multi         SNAPS_DIR DECLARED
   harness-bins           HS_PATH
+Relative paths inside state files resolve against the cwd, as before.
 """
-from __future__ import annotations
-import glob
-import json
 import os
-import re
 import sys
 
-# SSOT for all state enums. A sibling import: every _lib module runs as a
-# script (python3 scripts/_lib/<x>.py), so the interpreter already puts this
-# directory first on sys.path; the plugin root itself comes from _lib/root.sh.
-import enums  # type: ignore  # noqa: E402
+from cc_fuzzer_core.schema import checks as C
+from cc_fuzzer_core.schema import fields as F
 
+E = os.environ
 
-def _env_set(name):
-    """Newline-delimited env var -> set of non-empty values."""
-    return {n for n in os.environ.get(name, "").splitlines() if n.strip()}
 
+def _declared():
+    return [n for n in E.get("DECLARED", "").splitlines() if n.strip()]
 
-# ---------------------------------------------------------------------------
-# mode detection: harness names declared in fuzz-config.json
-# ---------------------------------------------------------------------------
-def cmd_config_harness_names():
-    try:
-        d = json.load(open(os.environ["CFG"]))
-        hs = d.get("harnesses") or []
-        if isinstance(hs, list):
-            for h in hs:
-                if isinstance(h, dict) and h.get("name"):
-                    print(h["name"])
-    except Exception:
-        pass
 
-
-# ---------------------------------------------------------------------------
-# the generic JSON schema validator (former validate_json() heredoc)
-# ---------------------------------------------------------------------------
-def cmd_validate_json():
-    file = os.environ["FILE"]
-    expected_schema = os.environ["SCHEMA"]
-    required_str = os.environ.get("REQUIRED", "")
-    allowed_str = os.environ.get("ALLOWED", "")
-    lenient = os.environ.get("LENIENT", "strict") == "lenient"
-
-    try:
-        with open(file) as f:
-            d = json.load(f)
-    except json.JSONDecodeError as e:
-        print(f"PARSE_ERROR: {e}")
-        return
-    except Exception as e:
-        print(f"READ_ERROR: {e}")
-        return
-
-    if not isinstance(d, dict):
-        print(f"NOT_OBJECT: top-level must be a JSON object, got {type(d).__name__}")
-        return
-
-    schema = d.get("schema")
-    if schema != expected_schema:
-        print(f"WRONG_SCHEMA: expected '{expected_schema}', got '{schema}'")
-        return
-
-    required = set(required_str.split(",")) if required_str else set()
-    allowed = set(allowed_str.split(",")) if allowed_str else set()
-    allowed.add("schema")
-
-    actual = set(d.keys())
-    missing = required - actual
-    unrecognized = actual - allowed
-
-    if missing:
-        print(f"MISSING_FIELDS: {sorted(missing)}")
-        return
-    if unrecognized:
-        # In lenient mode the validator still surfaces the extra fields, but as
-        # a warning so old snapshots don't block the campaign. The "WARN:"
-        # prefix is interpreted by the caller.
-        prefix = "WARN: " if lenient else ""
-        print(f"{prefix}UNRECOGNIZED_FIELDS: {sorted(unrecognized)}")
-        return
-
-    print("OK")
-
-
-# ---------------------------------------------------------------------------
-# field readers (former `python3 -c` one-liners)
-# ---------------------------------------------------------------------------
-def cmd_field(argv):
-    """field <file> <dotted.path> [default]
-
-    Traverses a dotted path into a JSON object. Prints the value (Python str:
-    booleans render as True/False), or the default if any key is missing or the
-    value is null. Mirrors the old `.get(...) or ''` / `.get(..., False)`
-    one-liners; on read error prints the default."""
-    file = argv[0]
-    dotted = argv[1]
-    default = argv[2] if len(argv) > 2 else ""
-    try:
-        cur = json.load(open(file))
-    except Exception:
-        print(default)
-        return
-    for key in dotted.split("."):
-        if isinstance(cur, dict) and key in cur:
-            cur = cur[key]
-        else:
-            cur = None
-            break
-    print(default if cur is None else cur)
-
-
-def cmd_hash_check(argv):
-    """hash-check <file> -> '<key>=<val>' lines for non-16-hex hash fields."""
-    file = argv[0]
-    try:
-        d = json.load(open(file))
-    except Exception as e:
-        print(f"parse_error={e}")
-        return
-    for k in ("target_source_hash", "build_command_hash"):
-        v = d.get(k, "")
-        if not re.match(r"^[0-9a-f]{16}$", v or ""):
-            print(f"{k}={v}")
-
-
-# ---------------------------------------------------------------------------
-# harnesses.json structural check + mirror-drift invariant
-# ---------------------------------------------------------------------------
-def cmd_harnesses_mirror():
-    SLUG = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
-    required = set(os.environ["REQUIRED_V6"].split(",")) | {"schema"}
-    allowed = set(os.environ["ALLOWED_V6"].split(",")) | {"schema"}
-    declared = [n for n in os.environ["DECLARED"].splitlines() if n.strip()]
-    expected_schema = os.environ.get("EXPECTED_HARNESS_SCHEMA", "harness-built/v7")
-
-    try:
-        doc = json.load(open(os.environ["HARNESSES_PATH"]))
-    except Exception as e:
-        print(f"harnesses.json: parse error: {e}")
-        return
-
-    hs = doc.get("harnesses") or []
-    if not hs:
-        print("harnesses.json: harnesses[] is empty (multi mode requires at least one entry)")
-        return
-
-    seen = set()
-    for i, h in enumerate(hs):
-        if not isinstance(h, dict):
-            print(f"harnesses.json: harnesses[{i}] is not an object")
-            continue
-        if h.get("schema") != expected_schema:
-            print(f"harnesses.json: harnesses[{i}].schema is '{h.get('schema')}' (expected {expected_schema})")
-        name = h.get("name", "")
-        if not SLUG.match(name or ""):
-            print(f"harnesses.json: harnesses[{i}].name '{name}' invalid (regex ^[a-z0-9][a-z0-9_-]{{0,31}}$)")
-        if name in seen:
-            print(f"harnesses.json: duplicate harness name '{name}'")
-        seen.add(name)
-        keys = set(h.keys())
-        missing = required - keys
-        unrec = keys - allowed
-        if missing:
-            print(f"harnesses.json: harnesses[{i}] ({name!r}) missing fields {sorted(missing)}")
-        if unrec:
-            print(f"harnesses.json: harnesses[{i}] ({name!r}) unrecognized fields {sorted(unrec)}")
-
-    # Cross-ref: harnesses.json names must equal fuzz-config.json:harnesses[] names
-    config_names = set(declared)
-    hs_names = {h.get("name") for h in hs if isinstance(h, dict)}
-    extra_in_hs = hs_names - config_names
-    missing_in_hs = config_names - hs_names
-    if extra_in_hs:
-        print(f"harnesses.json declares {sorted(extra_in_hs)} not in fuzz-config.json:harnesses[]")
-    if missing_in_hs:
-        print(f"fuzz-config.json:harnesses[] declares {sorted(missing_in_hs)} not in harnesses.json")
-
-    # Mirror invariant: state/harness-built.json must equal harnesses[0] field-by-field
-    mirror_path = os.environ["MIRROR_PATH"]
-    if os.path.isfile(mirror_path) and hs:
-        try:
-            mirror = json.load(open(mirror_path))
-        except Exception as e:
-            print(f"harness-built.json: parse error reading mirror: {e}")
-        else:
-            head = hs[0]
-            all_keys = set(mirror.keys()) | set(head.keys())
-            drift = [k for k in all_keys if mirror.get(k) != head.get(k)]
-            if drift:
-                print(f"harness-built.json: MIRROR DRIFT vs harnesses.json[0] on fields {sorted(drift)} (mirror file is read-only; writes must go to harnesses.json)")
-
-
-# ---------------------------------------------------------------------------
-# fuzz-config.json: fuzzer_slots[] + (multi) harnesses[]
-# ---------------------------------------------------------------------------
-def cmd_slots():
-    mode = os.environ.get("MODE", "multi")
-    declared = _env_set("DECLARED")
-    try:
-        d = json.load(open(os.environ["CFG"]))
-    except Exception:
-        return
-    slots = d.get("fuzzer_slots") or []
-    if not isinstance(slots, list):
-        print("fuzz-config.json: fuzzer_slots must be a list")
-        return
-    slot_re = re.compile(r"^[a-z0-9-]{1,32}$")
-    seen = set()
-    for i, s in enumerate(slots):
-        if not isinstance(s, dict):
-            print(f"fuzz-config.json: fuzzer_slots[{i}] is not an object")
-            continue
-        name = s.get("slot", "")
-        if not slot_re.match(name):
-            print(f'fuzz-config.json: fuzzer_slots[{i}].slot "{name}" invalid (regex ^[a-z0-9-]{{1,32}}$)')
-        if name in seen:
-            print(f'fuzz-config.json: duplicate slot name "{name}"')
-        seen.add(name)
-        engine = s.get("engine", "")
-        if engine not in ("libfuzzer", "aflpp"):
-            print(f'fuzz-config.json: fuzzer_slots[{i}].engine "{engine}" must be libfuzzer or aflpp')
-        role = s.get("role")
-        if role is not None and role not in ("master", "secondary"):
-            print(f'fuzz-config.json: fuzzer_slots[{i}].role "{role}" must be master, secondary, or null')
-        sched = s.get("afl_power_schedule")
-        if sched is not None and sched not in ("explore", "exploit", "fast", "coe", "quad", "lin", "seek", "rare"):
-            print(f'fuzz-config.json: fuzzer_slots[{i}].afl_power_schedule "{sched}" not a valid AFL++ schedule')
-        if mode == "multi":
-            h = s.get("harness", "")
-            if not h:
-                print(f"fuzz-config.json: fuzzer_slots[{i}] ({name!r}) missing required field harness (multi mode)")
-            elif h not in declared:
-                print(f'fuzz-config.json: fuzzer_slots[{i}] ({name!r}) references undeclared harness "{h}"')
-
-    if mode == "multi":
-        hs = d.get("harnesses") or []
-        if not isinstance(hs, list) or not hs:
-            print("fuzz-config.json: multi mode requires non-empty harnesses[]")
-        else:
-            slug = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
-            names = set()
-            for i, h in enumerate(hs):
-                if not isinstance(h, dict):
-                    print(f"fuzz-config.json: harnesses[{i}] is not an object")
-                    continue
-                n = h.get("name", "")
-                if not slug.match(n or ""):
-                    print(f'fuzz-config.json: harnesses[{i}].name "{n}" invalid (regex ^[a-z0-9][a-z0-9_-]{{0,31}}$)')
-                if n in names:
-                    print(f'fuzz-config.json: duplicate harness name "{n}"')
-                names.add(n)
-                if not h.get("entry_function"):
-                    print(f"fuzz-config.json: harnesses[{i}] ({n!r}) missing entry_function")
-
-
-# ---------------------------------------------------------------------------
-# fuzzers.json live manifest
-# ---------------------------------------------------------------------------
-def cmd_fuzzers_manifest():
-    mode = os.environ.get("MODE", "multi")
-    declared = _env_set("DECLARED")
-    required_base = {"slot", "engine", "binary", "pid", "pgid", "started_at", "log_file", "pid_file", "engine_file", "restart_count"}
-    required = required_base | ({"harness"} if mode == "multi" else set())
-    try:
-        d = json.load(open(os.environ["MANIFEST_PATH"]))
-    except Exception:
-        return
-    slots = d.get("slots") or []
-    for i, s in enumerate(slots):
-        if not isinstance(s, dict):
-            print(f"fuzzers.json: slots[{i}] is not an object")
-            continue
-        missing = required - set(s.keys())
-        if missing:
-            slot_name = s.get("slot", "?")
-            print(f"fuzzers.json: slots[{i}] ({slot_name!r}) missing fields {sorted(missing)}")
-        if mode == "multi":
-            h = s.get("harness", "")
-            if h and h not in declared:
-                slot_name = s.get("slot", "?")
-                print(f'fuzzers.json: slots[{i}] ({slot_name!r}) harness "{h}" not declared in fuzz-config.json')
-
-
-# ---------------------------------------------------------------------------
-# findings.jsonl per-line validation
-# ---------------------------------------------------------------------------
-def cmd_findings():
-    mode = os.environ.get("MODE", "multi")
-    declared = _env_set("DECLARED")
-
-    # v0.18 additive fields (verification pipeline + maintainer-facing report).
-    # Optional on existing schemas; some will become required at the next
-    # schema-version bump (WS-G).
-    V018_OPTIONAL = {
-        "poc_kind", "poc_path",
-        "cvss_v3_1", "cwe_id",
-        "principles_audit", "verification",
-        "disclosure_state",
-        "weaponization",
-    }
-
-    # Oracle-driven (logic) finding fields. Additive-optional: absent ⇒ crash
-    # finding. See STATE_SCHEMA "Oracle-Driven Fuzzing".
-    ORACLE_OPTIONAL = {"oracle_type", "divergence"}
-
-    # Code-review-sourced candidates (findings.sh import-cr) carry provenance
-    # (source/cr_ref) and the cr framing, but have NO stack_hash/reproducer
-    # until a poc-builder run produces them. See STATE_SCHEMA finding/v2
-    # "source + cr_ref". These fields are always allowed; required-set is
-    # narrowed per-line below when source == "code_review".
-    CR_SOURCE_FIELDS = {"source", "cr_ref", "oracle_kind", "trust_boundary_crossed",
-                        "precondition", "code_review_evidence", "realism_attestation"}
-
-    # finding/v2 is the only finding schema (multi-harness only since v0.30).
-    expected_schema = "finding/v2"
-    crash_required = {"schema", "id", "stack_hash", "category", "location", "exploitability", "root_cause", "reproducer", "first_seen", "last_seen", "dedup_count", "harnesses"}
-    allowed = crash_required | {"subcategory", "sanitizer_report_excerpt", "verified_against_build", "status", "stale_against_build"} | V018_OPTIONAL | ORACLE_OPTIONAL | CR_SOURCE_FIELDS
-
-    # A code_review candidate has no stack_hash/reproducer; it requires the
-    # provenance fields instead.
-    cr_required = (crash_required - {"stack_hash", "reproducer"}) | {"source", "cr_ref"}
-
-    # Crash classes + logic classes (oracle-driven). ubsan-<kind> handled separately below.
-    allowed_categories = enums.CATEGORIES
-    allowed_exploitability = enums.EXPLOITABILITY
-    ID_RE = re.compile(r"^f[0-9]{3,}$")
-
-    seen_hashes = {}
-    seen_ids = set()
-
-    with open(os.environ["FINDINGS"]) as f:
-        for ln, line in enumerate(f, 1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                d = json.loads(line)
-            except Exception as e:
-                print(f"findings.jsonl line {ln}: parse error: {e}")
-                continue
-            if d.get("schema") != expected_schema:
-                print(f"findings.jsonl line {ln}: wrong schema '{d.get('schema')}' (expected {expected_schema})")
-                continue
-            keys = set(d.keys())
-            is_cr = d.get("source") == "code_review"
-            required = cr_required if is_cr else crash_required
-            missing = required - keys
-            unrec = keys - allowed
-            if missing:
-                print(f"findings.jsonl line {ln}: missing fields {sorted(missing)}")
-            if unrec:
-                print(f"findings.jsonl line {ln}: unrecognized fields {sorted(unrec)}")
-
-            fid = d.get("id", "")
-            if fid and not ID_RE.match(fid):
-                print(f"findings.jsonl line {ln}: invalid id format '{fid}' (must match ^f[0-9]{{3,}}$)")
-            if fid in seen_ids:
-                print(f"findings.jsonl line {ln}: duplicate id '{fid}'")
-            seen_ids.add(fid)
-
-            cat = d.get("category", "")
-            if cat and cat not in allowed_categories and not cat.startswith("ubsan-"):
-                print(f"findings.jsonl line {ln}: invalid category '{cat}'")
-
-            expl = d.get("exploitability", "")
-            if expl and expl not in allowed_exploitability:
-                print(f"findings.jsonl line {ln}: invalid exploitability '{expl}'")
-
-            sh = d.get("stack_hash", "")
-            if sh:
-                if sh in seen_hashes and seen_hashes[sh] != fid:
-                    print(f"findings.jsonl line {ln}: stack_hash '{sh}' already used by {seen_hashes[sh]} (use findings.sh dedup)")
-                seen_hashes[sh] = fid
-
-            rep = d.get("reproducer", "")
-            status = d.get("status", "")
-            # A promoted (status==finding) record MUST carry its promotion
-            # receipt. Not required for candidate/stale. See STATE_SCHEMA
-            # "realism_attestation (required when status == 'finding')".
-            if status == "finding" and "realism_attestation" not in keys:
-                print(f"findings.jsonl line {ln}: status 'finding' requires field 'realism_attestation'")
-            if rep and fid:
-                if status == "stale":
-                    expected = f"fuzz/crashes/stale/{fid}/repro.bin"
-                else:
-                    expected = f"fuzz/crashes/known/{fid}/repro.bin"
-                if rep != expected:
-                    print(f"findings.jsonl line {ln}: reproducer '{rep}' should be '{expected}'")
-            if rep and not os.path.isfile(rep):
-                print(f"findings.jsonl line {ln}: reproducer file does not exist: {rep}")
-
-            hs = d.get("harnesses")
-            if not isinstance(hs, list) or not hs:
-                print(f"findings.jsonl line {ln}: harnesses[] is empty (finding/v2 requires >=1 source harness)")
-            else:
-                for h in hs:
-                    if h not in declared:
-                        print(f"findings.jsonl line {ln}: harnesses[] contains undeclared harness '{h}'")
-
-
-# ---------------------------------------------------------------------------
-# code-review/v1 per-finding validation (audit gap G2). The top-level
-# validate-json check is lenient and stops at the snapshot fields; this walks
-# each finding in findings[] and enforces the per-finding required set + enum
-# membership, importing the vocabularies from enums.py (the SSOT). Optional
-# fields (revisit-era + cr framing) are allowed without warning.
-# ---------------------------------------------------------------------------
-def cmd_code_review():
-    file = os.environ["FILE"]
-    try:
-        doc = json.load(open(file))
-    except Exception as e:
-        print(f"{os.path.basename(file)}: parse error: {e}")
-        return
-
-    base = os.path.basename(file)
-
-    # Loud-coverage scope fields (windowing contract). Validate leniently:
-    # present-and-wrong is an error, absent is fine (window partials and older
-    # snapshots may omit them). `mode` must be a CR_REVIEW_MODE member; the
-    # counts must be ints; coverage_complete must be a bool.
-    scope = doc.get("scope")
-    if isinstance(scope, dict):
-        smode = scope.get("mode")
-        if smode is not None and smode not in enums.CR_REVIEW_MODE:
-            print(f"{base}: scope.mode '{smode}' invalid "
-                  f"(expected one of {sorted(enums.CR_REVIEW_MODE)})")
-        for k in ("functions_inventoried", "candidates_reviewed", "not_reviewed"):
-            v = scope.get(k)
-            if v is not None and not isinstance(v, int):
-                print(f"{base}: scope.{k} must be an int, got {type(v).__name__}")
-        cc = scope.get("coverage_complete")
-        if cc is not None and not isinstance(cc, bool):
-            print(f"{base}: scope.coverage_complete must be a boolean, got {type(cc).__name__}")
-
-    findings = doc.get("findings")
-    if findings is None:
-        # top-level validate-json already flags a missing required field. A
-        # window-partial that hasn't been merged yet may legitimately have no
-        # findings; that's handled by the merge step, not flagged here.
-        return
-    if not isinstance(findings, list):
-        print(f"{base}: findings must be a list")
-        return
-
-    required = {"id", "cr_hash", "status", "file", "function", "line_range",
-                "pattern", "confidence", "tier_classified", "evidence"}
-    # Optional fields are allowed silently; anything outside required|optional
-    # is NOT an error here (the snapshot is lenient/forward-compat), so we only
-    # check required presence + enum membership.
-    HEX16 = re.compile(r"^[0-9a-f]{16}$")
-    ID_RE = re.compile(r"^cr[0-9]{3,}$")
-
-    for i, f in enumerate(findings):
-        if not isinstance(f, dict):
-            print(f"{base}: findings[{i}] is not an object")
-            continue
-        keys = set(f.keys())
-        missing = required - keys
-        if missing:
-            fid = f.get("id", "?")
-            print(f"{base}: findings[{i}] ({fid!r}) missing fields {sorted(missing)}")
-
-        fid = f.get("id", "")
-        if fid and not ID_RE.match(fid):
-            print(f"{base}: findings[{i}] invalid id '{fid}' (must match ^cr[0-9]{{3,}}$)")
-
-        crh = f.get("cr_hash", "")
-        if crh and not HEX16.match(crh):
-            print(f"{base}: findings[{i}] ({fid!r}) cr_hash '{crh}' is not 16-char lowercase hex")
-
-        status = f.get("status")
-        if status is not None and status not in enums.CR_STATUS:
-            print(f"{base}: findings[{i}] ({fid!r}) invalid status '{status}' (expected one of {sorted(enums.CR_STATUS)})")
-
-        pattern = f.get("pattern")
-        if pattern is not None and pattern not in enums.CR_PATTERN_CLASSES:
-            print(f"{base}: findings[{i}] ({fid!r}) invalid pattern '{pattern}'")
-
-        conf = f.get("confidence")
-        if conf is not None and conf not in enums.CONFIDENCE:
-            print(f"{base}: findings[{i}] ({fid!r}) invalid confidence '{conf}' (expected one of {sorted(enums.CONFIDENCE)})")
-
-        ok = f.get("oracle_kind")
-        if ok is not None and ok not in enums.ORACLE_KIND:
-            print(f"{base}: findings[{i}] ({fid!r}) invalid oracle_kind '{ok}' (expected one of {sorted(enums.ORACLE_KIND)})")
-
-        tier = f.get("tier_classified")
-        if tier is not None and tier not in ("sonnet", "opus"):
-            print(f"{base}: findings[{i}] ({fid!r}) invalid tier_classified '{tier}' (expected sonnet or opus)")
-
-        ndp = f.get("needs_deep_pass")
-        if ndp is not None and not isinstance(ndp, bool):
-            print(f"{base}: findings[{i}] ({fid!r}) needs_deep_pass must be a boolean, got {type(ndp).__name__}")
-
-
-# ---------------------------------------------------------------------------
-# harness-corrections.jsonl (v0.18 triager -> harness-writer feedback)
-# ---------------------------------------------------------------------------
-def cmd_jsonl_corrections():
-    required = {"schema", "ts", "finding_id", "stack_hash", "principle", "suggested_fix"}
-    principles = {"harness_correctness", "api_contract", "public_api_reachability", "entry_point_currency"}
-    with open(os.environ["HCS"]) as f:
-        for ln, line in enumerate(f, 1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                d = json.loads(line)
-            except Exception as e:
-                print(f"harness-corrections.jsonl line {ln}: parse error: {e}")
-                continue
-            if d.get("schema") != "harness-correction/v1":
-                print(f"harness-corrections.jsonl line {ln}: wrong schema '{d.get('schema')}'")
-                continue
-            missing = required - set(d.keys())
-            if missing:
-                print(f"harness-corrections.jsonl line {ln}: missing {sorted(missing)}")
-            if d.get("principle") not in principles:
-                print(f"harness-corrections.jsonl line {ln}: invalid principle '{d.get('principle')}'")
-
-
-# ---------------------------------------------------------------------------
-# dropped_crashes.jsonl (v0.18 transparency log)
-# ---------------------------------------------------------------------------
-def cmd_jsonl_dropped():
-    required = {"schema", "ts", "crash_file", "stage", "reason"}
-    stages = {"artifact_filter", "deterministic_replay", "target_realistic_reproducer"}
-    principles = {None, "", "harness_correctness", "api_contract", "public_api_reachability", "entry_point_currency"}
-    with open(os.environ["DROPS"]) as f:
-        for ln, line in enumerate(f, 1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                d = json.loads(line)
-            except Exception as e:
-                print(f"dropped_crashes.jsonl line {ln}: parse error: {e}")
-                continue
-            if d.get("schema") != "dropped-crash/v1":
-                print(f"dropped_crashes.jsonl line {ln}: wrong schema '{d.get('schema')}' (expected dropped-crash/v1)")
-                continue
-            missing = required - set(d.keys())
-            if missing:
-                print(f"dropped_crashes.jsonl line {ln}: missing fields {sorted(missing)}")
-            if d.get("stage") not in stages:
-                print(f"dropped_crashes.jsonl line {ln}: invalid stage '{d.get('stage')}'")
-            if d.get("stage") == "artifact_filter":
-                if d.get("principle") not in (principles - {None, ""}):
-                    print(f"dropped_crashes.jsonl line {ln}: artifact_filter requires a valid principle (got {d.get('principle')!r})")
-            else:
-                if d.get("principle") not in (None, "", "null") and d.get("principle") not in principles:
-                    print(f"dropped_crashes.jsonl line {ln}: principle field present but invalid for stage '{d.get('stage')}'")
-
-
-# ---------------------------------------------------------------------------
-# events.jsonl lightweight check
-# ---------------------------------------------------------------------------
-def cmd_jsonl_events():
-    required_base = {"schema", "ts", "tick", "event"}
-    with open(os.environ["EVENTS"]) as f:
-        for ln, line in enumerate(f, 1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                d = json.loads(line)
-            except Exception as e:
-                print(f"events.jsonl line {ln}: parse error: {e}")
-                continue
-            if d.get("schema") != "event/v1":
-                print(f"events.jsonl line {ln}: wrong schema")
-                continue
-            missing = required_base - set(d.keys())
-            if missing:
-                print(f"events.jsonl line {ln}: missing {sorted(missing)}")
-
-
-# ---------------------------------------------------------------------------
-# multi-mode snapshot filename/harness-field consistency
-# ---------------------------------------------------------------------------
-def cmd_snapshot_multi():
-    declared = _env_set("DECLARED")
-    patterns = [
-        ("coverage", re.compile(r"^coverage-([a-z0-9][a-z0-9_-]{0,31})-(\d+)\.json$")),
-        ("gaps", re.compile(r"^gaps-([a-z0-9][a-z0-9_-]{0,31})-(\d+)\.json$")),
-        ("concolic", re.compile(r"^concolic-([a-z0-9][a-z0-9_-]{0,31})-(\d+)\.json$")),
-    ]
-    # A snapshot without a <harness> prefix is a retired singular-layout name.
-    legacy_singular_re = re.compile(r"^(coverage|gaps|concolic)-\d+\.json$")
-    for path in sorted(glob.glob(os.path.join(os.environ["SNAPS_DIR"], "*.json"))):
-        base = os.path.basename(path)
-        if base.startswith("plan-") or base.startswith("delta-"):
-            continue
-        matched = False
-        for kind, pat in patterns:
-            m = pat.match(base)
-            if not m:
-                continue
-            matched = True
-            harness = m.group(1)
-            if harness not in declared:
-                print(f'snapshots/{base}: filename prefix references undeclared harness "{harness}"')
-                break
-            try:
-                d = json.load(open(path))
-            except Exception:
-                break
-            h_field = d.get("harness")
-            if h_field is None:
-                print(f'snapshots/{base}: multi-mode snapshot must carry top-level "harness" field')
-            elif h_field != harness:
-                print(f'snapshots/{base}: harness field "{h_field}" disagrees with filename prefix "{harness}"')
-            break
-        if not matched and legacy_singular_re.match(base):
-            print(f"snapshots/{base}: retired singular-layout snapshot name (no <harness> prefix). v0.30 is multi-harness only; remove the stray file or rename it with a harness prefix.")
-
-
-# ---------------------------------------------------------------------------
-# multi-mode harness binary executability
-# ---------------------------------------------------------------------------
-def cmd_harness_bins():
-    try:
-        doc = json.load(open(os.environ["HS_PATH"]))
-    except Exception:
-        return
-    for h in doc.get("harnesses", []):
-        name = h.get("name", "?")
-        b = h.get("harness_binary", "")
-        if b and not (os.path.isfile(b) and os.access(b, os.X_OK)):
-            print(f'harness "{name}" binary not executable: {b}')
+def _csv(name):
+    v = E.get(name, "")
+    return v.split(",") if v else []
 
 
 DISPATCH = {
-    "config-harness-names": cmd_config_harness_names,
-    "validate-json": cmd_validate_json,
-    "harnesses-mirror": cmd_harnesses_mirror,
-    "slots": cmd_slots,
-    "fuzzers-manifest": cmd_fuzzers_manifest,
-    "findings": cmd_findings,
-    "code-review": cmd_code_review,
-    "jsonl-corrections": cmd_jsonl_corrections,
-    "jsonl-dropped": cmd_jsonl_dropped,
-    "jsonl-events": cmd_jsonl_events,
-    "snapshot-multi": cmd_snapshot_multi,
-    "harness-bins": cmd_harness_bins,
+    "config-harness-names": lambda: C.config_harness_names(E["CFG"]),
+    "validate-json": lambda: [C.validate_json(E["FILE"], E["SCHEMA"], _csv("REQUIRED"), _csv("ALLOWED"),
+                                              E.get("LENIENT", "strict") == "lenient")],
+    "harnesses-mirror": lambda: C.harnesses_mirror(
+        E["HARNESSES_PATH"], E["MIRROR_PATH"], _declared(), _csv("REQUIRED_V6"), _csv("ALLOWED_V6"),
+        E.get("EXPECTED_HARNESS_SCHEMA", F.HARNESS_BUILT_SCHEMA)),
+    "slots": lambda: C.slots(E["CFG"], _declared()),
+    "fuzzers-manifest": lambda: C.fuzzers_manifest(E["MANIFEST_PATH"], _declared()),
+    "findings": lambda: C.findings(E["FINDINGS"], _declared()),
+    "code-review": lambda: C.code_review(E["FILE"]),
+    "jsonl-corrections": lambda: C.jsonl_corrections(E["HCS"]),
+    "jsonl-dropped": lambda: C.jsonl_dropped(E["DROPS"]),
+    "jsonl-events": lambda: C.jsonl_events(E["EVENTS"]),
+    "snapshot-multi": lambda: C.snapshot_multi(E["SNAPS_DIR"], _declared()),
+    "harness-bins": lambda: C.harness_bins(E["HS_PATH"]),
 }
 
 
@@ -686,19 +64,19 @@ def main(argv):
     if not argv:
         print("usage: state_checks.py <subcommand> [args]", file=sys.stderr)
         return 2
-    sub = argv[0]
-    rest = argv[1:]
+    sub, rest = argv[0], argv[1:]
     if sub == "field":
-        cmd_field(rest)
+        print(C.field(rest[0], rest[1], rest[2] if len(rest) > 2 else ""))
         return 0
     if sub == "hash-check":
-        cmd_hash_check(rest)
-        return 0
-    fn = DISPATCH.get(sub)
-    if fn is None:
+        lines = C.hash_check(rest[0])
+    elif sub in DISPATCH:
+        lines = DISPATCH[sub]()
+    else:
         print(f"unknown subcommand: {sub}", file=sys.stderr)
         return 2
-    fn()
+    for ln in lines:
+        print(ln)
     return 0
 
 

@@ -1,0 +1,23 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/launch-fuzzer-slot.sh",
+    "--slot",
+    "encoder-afl",
+    "--harness",
+    "encoder",
+    "--engine",
+    "aflpp"
+  ],
+  "created_dirs": [
+    "fuzz/harnesses/encoder/.libfuzzer-cwd",
+    "out"
+  ],
+  "deleted": [],
+  "exit_code": 1,
+  "files": {},
+  "stderr": [
+    "ERROR: --engine aflpp but afl-fuzz not in PATH"
+  ],
+  "stdout": []
+}

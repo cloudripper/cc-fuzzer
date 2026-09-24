@@ -1,0 +1,42 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/findings.sh",
+    "add",
+    "abcdef0123456789",
+    "heap-buffer-overflow",
+    "parse_chunk@src/parser.c:14",
+    "likely",
+    "chunk length not bounded",
+    "fuzz/crashes/known/f003/repro.bin"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 3,
+  "files": {
+    "fuzz/crashes/flaky/repro-flaky-abcdef01.bin": {
+      "lines": [
+        "benign"
+      ],
+      "trailing_newline": false
+    },
+    "fuzz/state/verify-abcdef012345.log": {
+      "lines": [
+        "=== stage1 attempt 1 rc=0 ===",
+        "",
+        "=== stage1 attempt 2 rc=0 ===",
+        "",
+        "=== stage1 attempt 3 rc=0 ===",
+        ""
+      ]
+    }
+  },
+  "stderr": [
+    "ERROR: Stage 1 (harness) verification failed: 0/3 attempts crashed",
+    "       reproducer is non-deterministic or no longer triggers the bug",
+    "       full log: <PROJECT>/fuzz/state/verify-abcdef012345.log",
+    "       routing input to fuzz/crashes/flaky/",
+    "       to override (not recommended): set FINDINGS_SKIP_VERIFY=1"
+  ],
+  "stdout": []
+}

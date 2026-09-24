@@ -1,0 +1,6 @@
+#!/bin/sh
+# Test-only afl-fuzz stand-in: records its cwd and argv on stdout (the slot log),
+# then idles like a running fuzzer until tests/support/reap-slots.sh kills it.
+echo "afl-fuzz cwd=$(pwd)"
+for a in "$@"; do echo "  $a"; done
+exec sleep 30

@@ -1,0 +1,25 @@
+{
+  "argv": [
+    "/usr/bin/python3",
+    "-m",
+    "cc_fuzzer_core",
+    "prescan",
+    "merge",
+    "--prescan",
+    "nope.json",
+    "--out",
+    "o.json",
+    "--md",
+    "o.md",
+    "fuzz/state/snapshots/code-review-1789999100-w01.json",
+    "fuzz/state/snapshots/code-review-1789999100-w02.json"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "ERROR: cannot read prescan nope.json: [Errno 2] No such file or directory: 'nope.json'"
+  ],
+  "stdout": []
+}

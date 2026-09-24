@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/findings.sh",
+    "add",
+    "0f1e2d3c4b5a6978",
+    "oom",
+    "l",
+    "likely",
+    "r",
+    "fuzz/crashes/known/f003/repro.bin"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 1,
+  "files": {},
+  "stderr": [
+    "ERROR: stack_hash 0f1e2d3c4b5a6978 already exists - use 'dedup' instead"
+  ],
+  "stdout": []
+}

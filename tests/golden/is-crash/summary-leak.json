@@ -1,0 +1,14 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/is-crash.sh"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {},
+  "stderr": [],
+  "stdout": [
+    "{\"is_crash\":true,\"category\":\"SUMMARY: LeakSanitizer: 64 byte(s) leaked in 1 allocation(s).\",\"summary_line\":\"SUMMARY: LeakSanitizer: 64 byte(s) leaked in 1 allocation(s).\",\"top_frame\":\"\",\"exit_code\":null}"
+  ]
+}

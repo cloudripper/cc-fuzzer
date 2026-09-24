@@ -1,0 +1,17 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/yolo-state.sh",
+    "enable",
+    "--mode",
+    "wild"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "ERROR: --mode must be guided, hybrid, or self_loop (got 'wild')"
+  ],
+  "stdout": []
+}

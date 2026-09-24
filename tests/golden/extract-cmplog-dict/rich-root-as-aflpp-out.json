@@ -1,0 +1,48 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/extract-cmplog-dict.sh",
+    "--aflpp-out",
+    "fuzz/harnesses/encoder/aflpp-out",
+    "--output",
+    "out.dict"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {
+    "out.dict": {
+      "lines": [
+        "# cc-fuzzer cmplog-derived dictionary",
+        "# generated_at: 2026-09-21T14:13:20+00:00",
+        "# source_dir:   fuzz/harnesses/encoder/aflpp-out",
+        "# entries:      10",
+        "# format:       libFuzzer / AFL++ dict",
+        "#",
+        "# These entries were observed by cmplog at runtime as comparison",
+        "# operands. The LLM coverage-analyst should treat their presence as",
+        "# evidence that the corresponding branches are cmplog-solvable",
+        "# (gap reason: direct_compare), and should NOT dispatch them to",
+        "# concolic-executor.",
+        "#",
+        "",
+        "\"KEYWORD\"",
+        "\"MAGIC\"",
+        "\"\\x09 tab\\\"q\\\\u\"",
+        "\"TAG=encoder\"",
+        "\"DELIM\\\"q\\\\\"",
+        "\"~ESCAPE_SEQ\"",
+        "\"LEGACY_OP\"",
+        "\"QUEUESTR\"",
+        "\"MAGIC_HEADER}PAYLOADxx\"",
+        "\"SECONDARY\""
+      ]
+    }
+  },
+  "stderr": [
+    "  entries: 10"
+  ],
+  "stdout": [
+    "out.dict"
+  ]
+}

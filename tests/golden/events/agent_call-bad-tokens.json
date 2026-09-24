@@ -1,0 +1,27 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/events.sh",
+    "agent_call",
+    "mutator",
+    "12",
+    "lots"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {
+    "fuzz/state/events.jsonl": {
+      "lines": [
+        "{\"schema\":\"event/v1\",\"ts\":1789998300,\"tick\":0,\"event\":\"campaign_start\"}",
+        "{\"schema\":\"event/v1\",\"ts\":1790000000,\"tick\":0,\"event\":\"agent_call\"}"
+      ]
+    }
+  },
+  "stderr": [
+    "Traceback (most recent call last):",
+    "  File \"<stdin>\", line 2, in <module>",
+    "ValueError: invalid literal for int() with base 10: 'lots'"
+  ],
+  "stdout": []
+}

@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/is-crash.sh",
+    "--exit-code",
+    "135"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {},
+  "stderr": [],
+  "stdout": [
+    "{\"is_crash\":true,\"category\":\"generic-crash\",\"summary_line\":\"MS: 1 DEADLYSIGNAL\",\"top_frame\":\"\",\"exit_code\":135}"
+  ]
+}

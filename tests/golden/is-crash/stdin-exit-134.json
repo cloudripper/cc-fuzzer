@@ -9,10 +9,7 @@
   "deleted": [],
   "exit_code": 0,
   "files": {},
-  "stderr": [
-    "awk: cmd. line:5:                     func = $(i+1);",
-    "awk: cmd. line:5:                     ^ syntax error"
-  ],
+  "stderr": [],
   "stdout": [
     "{\"is_crash\":true,\"category\":\"abort\",\"summary_line\":\"exit=134 (SIGABRT)\",\"top_frame\":\"\",\"exit_code\":134}"
   ]

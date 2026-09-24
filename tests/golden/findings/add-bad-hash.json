@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/findings.sh",
+    "add",
+    "xyz",
+    "oom",
+    "l",
+    "likely",
+    "r",
+    "fuzz/crashes/known/f003/repro.bin"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "ERROR: stack_hash 'xyz' must be hex (12-64 chars). Did you mix up arg order?"
+  ],
+  "stdout": []
+}

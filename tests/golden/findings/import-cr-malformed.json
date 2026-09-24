@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/findings.sh",
+    "import-cr",
+    "bad.json"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {},
+  "stderr": [
+    "import-cr: cannot read snapshot bad.json: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
+  ],
+  "stdout": []
+}

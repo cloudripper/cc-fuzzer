@@ -1,0 +1,23 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/launch-fuzzer-slot.sh",
+    "--slot",
+    "parser-main",
+    "--harness",
+    "parser",
+    "--engine",
+    "libfuzzer"
+  ],
+  "created_dirs": [
+    "out"
+  ],
+  "deleted": [],
+  "exit_code": 3,
+  "files": {},
+  "stderr": [
+    "ERROR: slot 'parser-main' already running (PID <PID>)",
+    "       stop-fuzzer.sh --slot parser-main first if you want to restart it."
+  ],
+  "stdout": []
+}

@@ -1,0 +1,26 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/findings.sh",
+    "promote",
+    "f002",
+    "--driver",
+    "fuzz/findings/f002/repro/driver.c",
+    "--verifier",
+    "nope.sh",
+    "--boundary",
+    "confidentiality",
+    "--precondition",
+    "attacker file",
+    "--projected",
+    "demonstrated"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "ERROR: promote: --verifier path does not exist: nope.sh"
+  ],
+  "stdout": []
+}

@@ -1,0 +1,40 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/_lib/fuzz-config.sh",
+    "set",
+    "fuzz_forks",
+    "4"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {
+    "fuzz/state/fuzz-config.json": {
+      "lines": [
+        "{",
+        "  \"fuzz_forks\": 4,",
+        "  \"fuzzer_slots\": [",
+        "    {",
+        "      \"engine\": \"libfuzzer\",",
+        "      \"harness\": \"parser\",",
+        "      \"slot\": \"main\"",
+        "    }",
+        "  ],",
+        "  \"harnesses\": [",
+        "    {",
+        "      \"entry_function\": \"parse_chunk\",",
+        "      \"name\": \"parser\"",
+        "    }",
+        "  ],",
+        "  \"schema\": \"fuzz-config/v3\"",
+        "}"
+      ],
+      "trailing_newline": false
+    }
+  },
+  "stderr": [],
+  "stdout": [
+    "set fuzz_forks = 4 in fuzz/state/fuzz-config.json"
+  ]
+}

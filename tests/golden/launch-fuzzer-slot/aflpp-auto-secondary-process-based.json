@@ -1,0 +1,126 @@
+{
+  "argv": [
+    "<ROOT>/tests/support/reap-slots.sh",
+    "bash",
+    "<ROOT>/scripts/launch-fuzzer-slot.sh",
+    "--slot",
+    "parser-s1",
+    "--harness",
+    "parser",
+    "--role",
+    "secondary",
+    "--binary",
+    "fuzz/harnesses/parser/harness/parser_fuzzer"
+  ],
+  "created_dirs": [
+    "fuzz/harnesses/parser/.libfuzzer-cwd",
+    "fuzz/harnesses/parser/aflpp-out",
+    "out"
+  ],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {
+    "fuzz/state/fuzzer-parser-s1.engine": {
+      "lines": [
+        "aflpp"
+      ]
+    },
+    "fuzz/state/fuzzer-parser-s1.log": {
+      "lines": [
+        "afl-fuzz cwd=<PROJECT>",
+        "  -t",
+        "  5000+",
+        "  -x",
+        "  <PROJECT>/fuzz/state/merged-dict-parser.dict",
+        "  -S",
+        "  parser-s1",
+        "  -i",
+        "  <PROJECT>/fuzz/harnesses/parser/corpus",
+        "  -o",
+        "  <PROJECT>/fuzz/harnesses/parser/aflpp-out",
+        "  --",
+        "  fuzz/harnesses/parser/harness/parser_fuzzer",
+        "  @@"
+      ]
+    },
+    "fuzz/state/fuzzer-parser-s1.pid": {
+      "lines": [
+        "<PID>"
+      ]
+    },
+    "fuzz/state/fuzzers.json": {
+      "lines": [
+        "{",
+        "  \"schema\": \"fuzzers/v2\",",
+        "  \"slots\": [",
+        "    {",
+        "      \"slot\": \"parser-main\",",
+        "      \"harness\": \"parser\",",
+        "      \"engine\": \"libfuzzer\",",
+        "      \"binary\": \"fuzz/harnesses/parser/harness/parser_fuzzer\",",
+        "      \"pid\": \"<PID>\",",
+        "      \"pgid\": \"<PID>\",",
+        "      \"started_at\": \"2026-09-21T09:13:20Z\",",
+        "      \"log_file\": \"fuzz/state/fuzzer-parser-main.log\",",
+        "      \"pid_file\": \"fuzz/state/fuzzer-parser-main.pid\",",
+        "      \"engine_file\": \"fuzz/state/fuzzer-parser-main.engine\",",
+        "      \"role\": null,",
+        "      \"afl_power_schedule\": null,",
+        "      \"restart_count\": 0,",
+        "      \"last_restart_at\": null",
+        "    },",
+        "    {",
+        "      \"slot\": \"encoder-afl\",",
+        "      \"harness\": \"encoder\",",
+        "      \"engine\": \"aflpp\",",
+        "      \"binary\": \"fuzz/harnesses/encoder/harness/encoder_fuzzer\",",
+        "      \"pid\": \"<PID>\",",
+        "      \"pgid\": \"<PID>\",",
+        "      \"started_at\": \"2026-09-21T09:13:20Z\",",
+        "      \"log_file\": \"fuzz/state/fuzzer-encoder-afl.log\",",
+        "      \"pid_file\": \"fuzz/state/fuzzer-encoder-afl.pid\",",
+        "      \"engine_file\": \"fuzz/state/fuzzer-encoder-afl.engine\",",
+        "      \"role\": \"master\",",
+        "      \"afl_power_schedule\": \"explore\",",
+        "      \"restart_count\": 1,",
+        "      \"last_restart_at\": \"2026-09-21T11:43:20Z\"",
+        "    },",
+        "    {",
+        "      \"slot\": \"parser-s1\",",
+        "      \"engine\": \"aflpp\",",
+        "      \"binary\": \"fuzz/harnesses/parser/harness/parser_fuzzer\",",
+        "      \"pid\": \"<PID>\",",
+        "      \"pgid\": \"<PID>\",",
+        "      \"started_at\": \"2026-09-21T14:13:20Z\",",
+        "      \"log_file\": \"<PROJECT>/fuzz/state/fuzzer-parser-s1.log\",",
+        "      \"pid_file\": \"<PROJECT>/fuzz/state/fuzzer-parser-s1.pid\",",
+        "      \"engine_file\": \"<PROJECT>/fuzz/state/fuzzer-parser-s1.engine\",",
+        "      \"role\": \"secondary\",",
+        "      \"afl_power_schedule\": null,",
+        "      \"restart_count\": 0,",
+        "      \"last_restart_at\": null,",
+        "      \"harness\": \"parser\"",
+        "    }",
+        "  ]",
+        "}"
+      ],
+      "trailing_newline": false
+    },
+    "fuzz/state/merged-dict-parser.dict": {
+      "lines": [
+        "# === fuzz/dicts/a.dict ===",
+        "\"GIF8\"",
+        "",
+        "# === fuzz/dicts/b.dict ===",
+        "kw=\"\\x00\\x01\"",
+        ""
+      ]
+    }
+  },
+  "stderr": [
+    "slot=parser-s1: launching AFL++ (role=secondary, schedule=default, mode=process_based, timeout=5000ms, harness=parser)"
+  ],
+  "stdout": [
+    "slot=parser-s1 engine=aflpp pid=<PID> pgid=<PID> log=<PROJECT>/fuzz/state/fuzzer-parser-s1.log"
+  ]
+}

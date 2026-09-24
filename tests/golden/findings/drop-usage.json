@@ -1,0 +1,20 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/findings.sh",
+    "drop",
+    "x",
+    "artifact_filter"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "Usage: findings.sh drop <crash_file> <stage> <reason> [--principle <name>] [--evidence <text>]",
+    "  stage in: artifact_filter | deterministic_replay | target_realistic_reproducer",
+    "  principle (required only when stage=artifact_filter):",
+    "    harness_correctness | api_contract | public_api_reachability | entry_point_currency"
+  ],
+  "stdout": []
+}

@@ -8,10 +8,7 @@
   "deleted": [],
   "exit_code": 0,
   "files": {},
-  "stderr": [
-    "awk: cmd. line:5:                     func = $(i+1);",
-    "awk: cmd. line:5:                     ^ syntax error"
-  ],
+  "stderr": [],
   "stdout": [
     "{\"is_crash\":true,\"category\":\"segfault\",\"summary_line\":\"Segmentation fault (core dumped)\",\"top_frame\":\"\",\"exit_code\":null}"
   ]

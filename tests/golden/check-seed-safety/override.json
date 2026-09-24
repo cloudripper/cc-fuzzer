@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/check-seed-safety.sh",
+    "fuzz/harnesses/parser/corpus-quarantine/seed-a.bin",
+    "fuzz/harnesses/parser/corpus-quarantine/seed-destructive.sh"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {},
+  "stderr": [
+    "check-seed-safety.sh: CCFUZZ_ALLOW_DESTRUCTIVE_SEEDS=1 — safety check bypassed"
+  ],
+  "stdout": []
+}

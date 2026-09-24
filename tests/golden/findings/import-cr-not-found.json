@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/findings.sh",
+    "import-cr",
+    "fuzz/state/snapshots/nope.json"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "ERROR: import-cr: snapshot not found: fuzz/state/snapshots/nope.json"
+  ],
+  "stdout": []
+}

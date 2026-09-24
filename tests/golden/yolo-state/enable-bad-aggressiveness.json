@@ -1,0 +1,17 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/yolo-state.sh",
+    "enable",
+    "--aggressiveness",
+    "max"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "ERROR: --aggressiveness must be conservative, balanced, or aggressive (got 'max')"
+  ],
+  "stdout": []
+}

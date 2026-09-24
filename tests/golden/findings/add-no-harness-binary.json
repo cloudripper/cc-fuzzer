@@ -1,0 +1,22 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/findings.sh",
+    "add",
+    "abcdef0123456789",
+    "heap-buffer-overflow",
+    "parse_chunk@src/parser.c:14",
+    "likely",
+    "chunk length not bounded",
+    "fuzz/crashes/known/f003/repro.bin"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "ERROR: cannot find harness_binary in <PROJECT>/fuzz/state/harness-built.json",
+    "       set FINDINGS_SKIP_VERIFY=1 to skip verification (not recommended)"
+  ],
+  "stdout": []
+}

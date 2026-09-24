@@ -1,0 +1,46 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/corpus-quarantine.sh",
+    "--harness",
+    "parser"
+  ],
+  "created_dirs": [
+    "fuzz/harnesses/parser/corpus-quarantine/rejected"
+  ],
+  "deleted": [
+    "fuzz/harnesses/parser/corpus-quarantine/seed-a.bin",
+    "fuzz/harnesses/parser/corpus-quarantine/seed-b.bin",
+    "fuzz/harnesses/parser/corpus-quarantine/seed-crash.bin",
+    "fuzz/harnesses/parser/corpus-quarantine/seed-destructive.sh"
+  ],
+  "exit_code": 0,
+  "files": {
+    "fuzz/crashes/flaky/seed-crash.bin": {
+      "sha256": "360b3c72c514e016a95bfee08e5e39cb11ae7d30deb122165bf28f2083c3a0ef",
+      "size": 24
+    },
+    "fuzz/crashes/new/parser__360b3c72c514e016.bin": {
+      "sha256": "360b3c72c514e016a95bfee08e5e39cb11ae7d30deb122165bf28f2083c3a0ef",
+      "size": 24
+    },
+    "fuzz/harnesses/parser/corpus/seed-a.bin": {
+      "sha256": "a981e0bfa90a04fbdcddfc5a0fb7bed3317ae3300e0a4a7045a7516ddb1839a1",
+      "size": 16
+    },
+    "fuzz/harnesses/parser/corpus/seed-b.bin": {
+      "sha256": "9e8c56520cd3ad0705bd18dd124eefd6227c5af2513ee39c8104901ce228f3b8",
+      "size": 10
+    },
+    "fuzz/harnesses/parser/corpus/seed-destructive.sh": {
+      "lines": [
+        "#!/bin/sh",
+        "rm -rf / --no-preserve-root"
+      ]
+    }
+  },
+  "stderr": [],
+  "stdout": [
+    "promoted=3   crashed=1 (-> crashes/new/)   hung=0 (-> flaky/)   rejected=0 (-> corpus-quarantine/rejected/)"
+  ]
+}

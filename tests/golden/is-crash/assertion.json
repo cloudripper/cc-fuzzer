@@ -8,11 +8,8 @@
   "deleted": [],
   "exit_code": 0,
   "files": {},
-  "stderr": [
-    "awk: cmd. line:5:                     func = $(i+1);",
-    "awk: cmd. line:5:                     ^ syntax error"
-  ],
+  "stderr": [],
   "stdout": [
-    "{\"is_crash\":true,\"category\":\"assertion-failure\",\"summary_line\":\"parser_fuzzer: /src/target/src/parser.c:40: int check(int): Assertion `n < 16' failed.\",\"top_frame\":\"\",\"exit_code\":null}"
+    "{\"is_crash\":true,\"category\":\"assertion-failure\",\"summary_line\":\"parser_fuzzer: /src/target/src/parser.c:40: int check(int): Assertion `n < 16' failed.\",\"top_frame\":\"__assert_fail @ \",\"exit_code\":null}"
   ]
 }

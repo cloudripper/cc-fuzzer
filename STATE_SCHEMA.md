@@ -10,7 +10,7 @@ Every campaign is multi-harness. The Nix build backend, `harness-built/v7`, and 
 
 ### Enum source of truth
 
-The centralized state enums (finding `status`/`category`/`exploitability`, code-review `status`/`pattern`/`confidence`, `oracle_type`/`oracle_kind`, `recommendation.branch`, gap reasons, etc.) live in **`scripts/_lib/enums.py`** — that module is the *machine* source of truth, imported by the Python validators and shelled out to by bash (`python3 enums.py print|check <name>`). The enum lists reproduced throughout this document are the *human-readable mirror*: when an enum changes, edit `enums.py` **and** the corresponding list here so the two never drift.
+The centralized state enums (finding `status`/`category`/`exploitability`, code-review `status`/`pattern`/`confidence`, `oracle_type`/`oracle_kind`, `recommendation.branch`, gap reasons, etc.) live in **`src/cc_fuzzer_core/enums.py`** (`scripts/_lib/enums.py` is a re-export shim, so references to `enums.py` below mean this module) — that module is the *machine* source of truth, imported by the Python validators and shelled out to by bash (`python3 enums.py print|check <name>` / `cc-fuzzer enums print|check <name>`). The enum lists reproduced throughout this document are the *human-readable mirror*: when an enum changes, edit `cc_fuzzer_core/enums.py` **and** the corresponding list here so the two never drift.
 
 ## Filesystem Layout
 
@@ -29,6 +29,7 @@ fuzz/
 │   ├── findings.jsonl              # APPEND ONLY for new findings; in-place edit allowed for dedup count
 │   ├── FINDINGS-REPORT-<target>.md    # REWRITABLE markdown; rewritten by /cc-fuzzer:report
 │   ├── events.jsonl                # APPEND ONLY, never edited
+│   ├── ledger-hook.log             # APPEND ONLY; SubagentStop ledger hook failures (plain text, optional)
 │   ├── budget.json                 # replaced atomically
 │   ├── cmplog-dict-<harness>-<ts>.dict  # IMMUTABLE per timestamp; cmplog runtime observations
 │   ├── fuzz-config.json            # REWRITABLE; user-editable launch config (harnesses[] + fuzzer_slots[])
@@ -336,7 +337,7 @@ The single file the orchestrator reads on warm ticks. Schema is **`cc-fuzzer-cur
 
 **Optional fields**: `last_report_at` (integer unix timestamp, set by reporting-agent after writing `FINDINGS-REPORT-<target>.md`).
 
-**`yolo_state` block** (v0.18+) — computed by `update-current.sh` from `fuzz-config.json:yolo` + campaign signals (coverage roundups, events.jsonl token totals, findings.jsonl). Drives the end-of-tick decision: the orchestrator (a subagent) reads it and emits a `YOLO_NEXT:` directive; the main-thread `/cc-fuzzer:tick` skill turns that into a `ScheduleWakeup` for the next tick (the orchestrator never calls `ScheduleWakeup` itself — a subagent's wakeup can't re-fire the main conversation):
+**`yolo_state` block** (v0.18+) — computed by `update-current.sh` from `fuzz-config.json:yolo` + campaign signals (coverage roundups, spend from the events.jsonl `agent_call` ledger, findings.jsonl). Drives the end-of-tick decision: the orchestrator (a subagent) reads it and emits a `YOLO_NEXT:` directive; the main-thread `/cc-fuzzer:tick` skill turns that into a `ScheduleWakeup` for the next tick (the orchestrator never calls `ScheduleWakeup` itself — a subagent's wakeup can't re-fire the main conversation):
 ```json
 "yolo_state": {
   "active": true,
@@ -378,8 +379,8 @@ The single file the orchestrator reads on warm ticks. Schema is **`cc-fuzzer-cur
       "non_exhaustive": true,
       "note": "Floor, not ceiling: also reason creatively beyond these; fold in `references`.",
       "eligible_levers": [
-        {"lever": "harness_extend", "agent": "harness-writer", "evidence": "for_harness=2 (also check uncovered CVE hotspots)", "cost_tier": "sonnet", "idle_ticks": 6, "suppressed": false, "affordable": true},
-        {"lever": "poc_build", "agent": "poc-builder", "evidence": "1 confirmed finding(s) without an exploit bundle", "cost_tier": "opus", "idle_ticks": 9, "suppressed": false, "affordable": true}
+        {"lever": "harness_extend", "agent": "harness-writer", "evidence": "for_harness=2 (also check uncovered CVE hotspots)", "cost_tier": "standard", "idle_ticks": 6, "suppressed": false, "affordable": true},
+        {"lever": "poc_build", "agent": "poc-builder", "evidence": "1 confirmed finding(s) without an exploit bundle", "cost_tier": "deep", "idle_ticks": 9, "suppressed": false, "affordable": true}
       ],
       "eligible_count": 2,
       "ranked_levers": ["poc_build", "harness_extend"],
@@ -440,11 +441,11 @@ One directive == one line. Vocabulary:
 
 The orchestrator never calls `ScheduleWakeup` (a subagent's wakeup can't re-fire the main conversation) and never calls `Agent` (it has no such tool). It only emits the directive; the main thread executes it.
 
-**`evaluation`** (v0.18+, computed by `_lib/yolo_evaluate.py`) is the **advisory** dynamic-YOLO signal block — it never halts (the hard caps above own that). `posture` ∈ {`normal`, `throttle`, `halt`} engages Opus-throttling at `soft_cost_fraction` of `max_cost_usd` (unless `cost_cap_enabled` is `false`, in which case cost is not a constraint at all — posture stays `normal`, and the hard cost halt in `compute_yolo_state` is suppressed too). `agent_ledger[agent].suppressed` flags an agent that has been dispatched `≥ redundancy_threshold` times with no result (concolic → 0 inputs promoted; coverage agents → no weighted-coverage gain; triager → no new finding). `suggested_disposition` ∈ {`wait`, `act`, `consult`} and `suggested_wait_seconds` (adaptive backoff) are recommendations; how strictly the orchestrator follows them depends on `mode` (see the `yolo` config block). `aggressiveness` ∈ {`conservative`, `balanced`, `aggressive`} (defaults from `mode`; overridable) shapes the disposition: under `aggressive` a self-climbing fuzzer no longer forces `wait`, an empty/`sleep` gap-branch becomes `act` ("pursue strategic toolbox"), and `suggested_wait_seconds` does not compound across consecutive waits.
+**`evaluation`** (v0.18+, computed by `cc_fuzzer_core/state/yolo_evaluate.py`) is the **advisory** dynamic-YOLO signal block — it never halts (the hard caps above own that). `posture` ∈ {`normal`, `throttle`, `halt`} engages Opus-throttling at `soft_cost_fraction` of `max_cost_usd` (unless `cost_cap_enabled` is `false`, in which case cost is not a constraint at all — posture stays `normal`, and the hard cost halt in `compute_yolo_state` is suppressed too). `agent_ledger[agent].suppressed` flags an agent that has been dispatched `≥ redundancy_threshold` times with no result (concolic → 0 inputs promoted; coverage agents → no weighted-coverage gain; triager → no new finding). `suggested_disposition` ∈ {`wait`, `act`, `consult`} and `suggested_wait_seconds` (adaptive backoff) are recommendations; how strictly the orchestrator follows them depends on `mode` (see the `yolo` config block). `aggressiveness` ∈ {`conservative`, `balanced`, `aggressive`} (defaults from `mode`; overridable) shapes the disposition: under `aggressive` a self-climbing fuzzer no longer forces `wait`, an empty/`sleep` gap-branch becomes `act` ("pursue strategic toolbox"), and `suggested_wait_seconds` does not compound across consecutive waits.
 
-**`toolbox`** (v0.19+, computed by `_lib/toolbox_eval.py`) is the **materialized lever board** — the whole known orchestrator toolbox computed deterministically each tick so the model doesn't tunnel-vision on the gap-closing agents the recommendation engine happens to surface. `eligible_levers[]` lists every actionable lever (`lever`, `agent`, `evidence`, `cost_tier` ∈ {cheap, haiku, sonnet, opus}, `idle_ticks`, `suppressed`, `affordable` [= not (`throttle` ∧ opus)]); ineligible levers are omitted to keep the block compact (`eligible_count` is the total). **`ranked_levers[]`** is those eligible levers ordered high→low by priority, and **`top_lever`** is the single highest-priority affordable, non-suppressed pick — the orchestrator's concrete default action every tick (populated whenever anything is eligible, unlike `suggested_lever` which only fires on neglect/tunnel). `neglected_levers[]` are eligible+affordable levers idle ≥3 ticks (opus levers drop out under `posture: throttle`). `tunnel_vision` is true when the last ≥3 *act* ticks rode ≤1 distinct lever family while ≥2 levers (or ≥1 neglected lever) were eligible; `suggested_lever` is the highest-priority neglected lever, and under `aggressive` the disposition is steered to `act` on it (or to `consult` if none is affordable). **`non_exhaustive` is always `true`**: the board is a floor, not a ceiling — it captures only deterministically-detectable moves. `references` reports operator steering (`fuzz/guidance.md`, `fuzz/docs/*`) with `changed_recently`, so the orchestrator re-reads it and pursues moves the catalog can't express. The lever set maps to the Action menu in `agents/fuzz-orchestrator.md`: instrumentation, coverage_reanalysis, seedgen, concolic, mutator, dictionary, harness_extend, **harness_rewrite, harness_new, mock_env, engine_swap** (the plateau-breaking levers, lit by the ceiling probe's `structural_candidates`/`engine_fit`), cve_refresh, code_review, verification_fill, poc_build, poc_upgrade, plan_revise, slot_engine.
+**`toolbox`** (v0.19+, computed by `cc_fuzzer_core/state/toolbox.py`) is the **materialized lever board** — the whole known orchestrator toolbox computed deterministically each tick so the model doesn't tunnel-vision on the gap-closing agents the recommendation engine happens to surface. `eligible_levers[]` lists every actionable lever (`lever`, `agent`, `evidence`, `cost_tier` ∈ {none, fast, standard, deep} — the model tiers of `cc_fuzzer_core/data/models.json`, `none` for a deterministic lever that dispatches no model; an agent-backed lever takes its agent's tier, `idle_ticks`, `suppressed`, `affordable` [= not (`throttle` ∧ deep)]); ineligible levers are omitted to keep the block compact (`eligible_count` is the total). **`ranked_levers[]`** is those eligible levers ordered high→low by priority, and **`top_lever`** is the single highest-priority affordable, non-suppressed pick — the orchestrator's concrete default action every tick (populated whenever anything is eligible, unlike `suggested_lever` which only fires on neglect/tunnel). `neglected_levers[]` are eligible+affordable levers idle ≥3 ticks (opus levers drop out under `posture: throttle`). `tunnel_vision` is true when the last ≥3 *act* ticks rode ≤1 distinct lever family while ≥2 levers (or ≥1 neglected lever) were eligible; `suggested_lever` is the highest-priority neglected lever, and under `aggressive` the disposition is steered to `act` on it (or to `consult` if none is affordable). **`non_exhaustive` is always `true`**: the board is a floor, not a ceiling — it captures only deterministically-detectable moves. `references` reports operator steering (`fuzz/guidance.md`, `fuzz/docs/*`) with `changed_recently`, so the orchestrator re-reads it and pursues moves the catalog can't express. The lever set maps to the Action menu in `agents/fuzz-orchestrator.md`: instrumentation, coverage_reanalysis, seedgen, concolic, mutator, dictionary, harness_extend, **harness_rewrite, harness_new, mock_env, engine_swap** (the plateau-breaking levers, lit by the ceiling probe's `structural_candidates`/`engine_fit`), cve_refresh, code_review, verification_fill, poc_build, poc_upgrade, plan_revise, slot_engine.
 
-**`ceiling_probe`** (computed by `_lib/ceiling_probe.py`; present **only under `self_loop`/`aggressive`**, so guided/balanced `evaluation` output is unchanged) is the deterministic "is this a real coverage ceiling?" verdict that governs whether a plateau may halt. It cross-references the latest coverage snapshot's uncovered functions against gap `harness_action`s, code-review findings, CVE hotspots, and engine/gap-mix fit (`engine_fit`), minus anything tagged `dead`, to produce `structural_candidates[]` (each a concrete reshape: `entry_swap`/`new_harness`/`mock`/`driver`/`extend`/`engine_swap` with `proposed_entry`/`mock_target`). `ladder_stage` is the single source of truth for the **escalation ladder** that both the disposition layer and the halt gate read: **0** normal (climbing, or flat < `plateau_escalate_ticks`); **1** escalate (an untried `recommended_structural` exists → disposition `act`); **2** pre-halt consult (candidates attempted, no consult yet → disposition `consult`); **3** honest halt (consult ran, still flat → the `no_progress` halt is now permitted). `is_real_ceiling` is true only at stage 3. The full block is also written to `state/snapshots/ceiling-probe-<ts>.json` by `scripts/ceiling-probe.sh` for the pre-halt consult briefing.
+**`ceiling_probe`** (computed by `cc_fuzzer_core/state/ceiling.py`; present **only under `self_loop`/`aggressive`**, so guided/balanced `evaluation` output is unchanged) is the deterministic "is this a real coverage ceiling?" verdict that governs whether a plateau may halt. It cross-references the latest coverage snapshot's uncovered functions against gap `harness_action`s, code-review findings, CVE hotspots, and engine/gap-mix fit (`engine_fit`), minus anything tagged `dead`, to produce `structural_candidates[]` (each a concrete reshape: `entry_swap`/`new_harness`/`mock`/`driver`/`extend`/`engine_swap` with `proposed_entry`/`mock_target`). `ladder_stage` is the single source of truth for the **escalation ladder** that both the disposition layer and the halt gate read: **0** normal (climbing, or flat < `plateau_escalate_ticks`); **1** escalate (an untried `recommended_structural` exists → disposition `act`); **2** pre-halt consult (candidates attempted, no consult yet → disposition `consult`); **3** honest halt (consult ran, still flat → the `no_progress` halt is now permitted). `is_real_ceiling` is true only at stage 3. The full block is also written to `state/snapshots/ceiling-probe-<ts>.json` by `scripts/ceiling-probe.sh` for the pre-halt consult briefing.
 
 **`consult_state` block** (v0.18+) — signals whether a strategic check-in is due this tick:
 ```json
@@ -468,7 +469,7 @@ The orchestrator dispatches based on the top-level `recommendation` (`branch` + 
 
 ### `state/fuzz-config.json` — REWRITABLE (user-editable)
 
-Schema: **`fuzz-config/v3`**. The user-editable launch config: it declares the campaign's `harnesses[]` and the `fuzzer_slots[]` that run against them. The full required/cross-reference rules and the `harnesses[]` shape are under "`state/fuzz-config.json` — `fuzz-config/v3`" in the Multi-Harness Layout section below; this section documents the per-slot fields and the optional `tick` / `cve` / `code_review` / `yolo` blocks.
+Schema: **`fuzz-config/v3`**. The user-editable launch config: it declares the campaign's `harnesses[]` and the `fuzzer_slots[]` that run against them. The full required/cross-reference rules and the `harnesses[]` shape are under "`state/fuzz-config.json` — `fuzz-config/v3`" in the Multi-Harness Layout section below; this section documents the per-slot fields and the optional `tick` / `cve` / `code_review` / `yolo` / `models` blocks.
 
 ```json
 {
@@ -579,13 +580,13 @@ Toggled via `/fuzz-review [--deep] [--refresh] [--delta]`. Auto-runs at COLD bet
 - `aggressiveness` — `conservative` / `balanced` / `aggressive`; how readily a tick acts vs waits, decoupled from `mode`. Defaults from `mode` when absent (guided→conservative, hybrid→balanced, self_loop→aggressive). Under `aggressive`: a self-climbing fuzzer never forces `wait`; an empty/`sleep` gap-branch maps to `act` (pursue the strategic toolbox the gap engine can't see — harness/CVE/review/PoC/plan); the wait-backoff does not compound; and the `soft_cost_fraction` default rises to 0.8. Written by `scripts/yolo-state.sh enable` (from `--aggressiveness` or derived from `--mode`).
 - `interval_seconds` — base delay between auto-scheduled ticks (default 1800 = 30 min). Hard floor: 60s. Under `hybrid`/`self_loop` a `wait` disposition applies adaptive backoff up to `max_backoff_multiplier × interval_seconds` — except under `aggressiveness: aggressive`, where the backoff does not compound (stays at `interval_seconds`) so priorities never go stale across a long idle stretch.
 - `max_ticks` — hard tick cap (default 24 ≈ 12 hours at the 30-min interval). Counted from `enabled_at_tick`.
-- `max_cost_usd` — soft cost cap (default 10.0). Estimated from `events.jsonl:agent_call` token totals; not a billing source of truth. The hard halt fires at 100%.
+- `max_cost_usd` — soft cost cap (default 10.0). Estimated by `ledger.spend()` from the `events.jsonl:agent_call` rows (host-measured rows superseding the orchestrator's; `tick` rows never bill), each call priced at its reported model's rate, else its agent's (`cc_fuzzer_core/data/models.json` `pricing`, see the `models` block); not a billing source of truth. The hard halt fires at 100%.
 - `stop_on_no_progress_ticks` — halt after N consecutive zero-delta tick-coverage roundups (default 30 ≈ 15 hours stuck). **Under `guided`/`balanced` this is a direct flat-count halt. Under `self_loop`/`aggressive` it is gated by the escalation ladder** (see `plateau_escalate_ticks` and `yolo_state.evaluation.ceiling_probe`): a plateau does not halt directly — it first triggers structural reshapes (rewrite entry / new harness / mock / engine swap) and a pre-halt consult, and the `no_progress` halt fires only when the ladder reaches stage 3 (avenues attempted AND a consult returned nothing). The honest `halt_reason` then names what was tried.
 - `plateau_escalate_ticks` — (`self_loop`) number of flat-coverage ticks before the reshape→consult→halt escalation ladder begins (default 8). Auto-clamped to `< stop_on_no_progress_ticks` by `yolo-state.sh enable`. Smaller = react to plateaus sooner; the ladder then runs structural moves while still flat, so the campaign keeps breaking through ceilings instead of idling to the no-progress cap.
 - `crash_storm_threshold` — halt when one interval yields ≥ N new findings (default 10).
 - `redundancy_threshold` — (hybrid/self_loop) suppress an agent after this many consecutive unproductive dispatches (default 2). Surfaced in `yolo_state.evaluation.agent_ledger`.
 - `soft_cost_fraction` — (hybrid/self_loop) fraction of `max_cost_usd` at which cost `posture` becomes `throttle`: prefer cheap/deterministic actions and defer Opus agents (default 0.6; default 0.8 when `aggressiveness: aggressive`, so strategic Opus levers stay available longer).
-- `cost_cap_enabled` — when `false` (set by `/cc-fuzzer:yolo on --no-cap`), cost is removed as a constraint entirely: the soft `throttle` posture is never entered **and** the hard `max_cost_usd` halt is suppressed, so the campaign runs regardless of spend until a non-cost halt fires (tick cap / no-progress / crash-storm) or the operator stops it. Default `true`. Surfaced in `yolo_state.evaluation.cost.cost_cap_enabled`; the hard-halt gate lives in `_lib/derive-tick-state.py`.
+- `cost_cap_enabled` — when `false` (set by `/cc-fuzzer:yolo on --no-cap`), cost is removed as a constraint entirely: the soft `throttle` posture is never entered **and** the hard `max_cost_usd` halt is suppressed, so the campaign runs regardless of spend until a non-cost halt fires (tick cap / no-progress / crash-storm) or the operator stops it. Default `true`. Surfaced in `yolo_state.evaluation.cost.cost_cap_enabled`; the hard-halt gate lives in `cc_fuzzer_core/state/derive_tick.py`.
 - `max_backoff_multiplier` — (hybrid/self_loop) cap on adaptive wait backoff (default 4).
 - `enabled_at_ts` / `enabled_at_tick` — written by `scripts/yolo-state.sh enable`; used to scope halt-condition + evaluation computation.
 - `last_halt_reason` — human-readable reason from the most recent auto-halt (or null when never halted / freshly enabled).
@@ -593,6 +594,20 @@ Toggled via `/fuzz-review [--deep] [--refresh] [--delta]`. Auto-runs at COLD bet
 Toggled via `/cc-fuzzer:yolo on [--mode ...] [--aggressiveness ...]|off|status` which wraps `scripts/yolo-state.sh`. `/fuzz-stop` always sets `enabled=false` (escape hatch).
 
 **Operator stance during yolo**: see the corresponding section in `agents/fuzz-orchestrator.md`. The short version: under `guided`/`conservative`, `sleep` is the last resort and a self-climbing fuzzer means wait. Under `hybrid`/`balanced`, the orchestrator acts on a concrete gap move even while the fuzzer climbs, and waits (with backoff) only when there's no gap move, every actionable agent is suppressed, or cost is throttling Opus. Under `self_loop`/`aggressive`, a self-climbing fuzzer is **not** a reason to idle — when no gap move remains it pursues the strategic toolbox (harness/CVE/review/PoC/plan) in parallel, and waits only when a hard constraint binds.
+
+**`models` block** (optional) — per-campaign override of the model aliasing in `cc_fuzzer_core/data/models.json` (`cc-fuzzer models show` prints the effective mapping):
+```json
+"models": {
+  "tiers":   { "deep": "opus" },
+  "agents":  { "crash-triager": "standard", "seed-generator": "my-model-id" },
+  "pricing": { "my-model-id": { "input_per_mtok": 0.5, "output_per_mtok": 2.0 } },
+  "default_tier": "standard"
+}
+```
+- `tiers` — tier → model id (`deep` → `opus`, `standard` → `sonnet`, `fast` → `haiku` by default).
+- `agents` — agent → tier name, or a literal model id. Unknown agents run on `default_tier`.
+- `pricing` — model id → USD per million input/output tokens, plus optional `cache_read_per_mtok` / `cache_write_per_mtok` (default 0.1× / 1.25× the input rate). Advisory: drives `yolo_state.estimated_cost_usd`, the `cost_cap` halt and `evaluation.cost` (whose `opus_usd` / `opus_calls` count the **deep** tier). An unpriced model is charged at the default tier's rate.
+- Every key is a partial overlay on the packaged mapping; a JSON file named by `$CC_FUZZER_MODELS` (same shape) is layered on top of this block and wins.
 
 **Lifecycle**: REWRITABLE. Single canonical version. Replaced atomically.
 
@@ -713,13 +728,20 @@ Beyond this dedup case, the only other permitted in-place mutations are: promoti
 ### `state/events.jsonl` — APPEND-ONLY (strict)
 
 ```json
-{"schema":"event/v1","ts":1714789234,"tick":14,"event":"tick","branch":"concolic","reason":"plateau, 2 concolic-eligible gaps","duration_ms":3540,"agent_called":"concolic-executor","tokens_in":2104,"tokens_out":487}
+{"schema":"event/v1","ts":1714789234,"tick":14,"event":"tick","branch":"concolic","reason":"plateau, 2 concolic-eligible gaps","duration_ms":3540,"agent_called":"concolic-executor"}
+{"schema":"event/v1","ts":1714789290,"tick":14,"event":"agent_call","agent_called":"concolic-executor","tokens_in":2104,"tokens_out":487,"source":"orchestrator"}
+{"schema":"event/v1","ts":1714789291,"tick":14,"event":"agent_call","agent_called":"concolic-executor","tokens_in":1830,"tokens_out":512,"cache_read":40210,"cache_write":6100,"model":"claude-haiku-4-5-20251001","source":"host-hook","call_id":"a1b2c3d4e5f6"}
 ```
 
 **Required**: schema, ts, tick, event.
 **Conditionally required by `event` value**:
-- `event="tick"`: branch, reason, duration_ms.
-- `event="agent_call"`: agent_called, tokens_in, tokens_out.
+- `event="tick"`: branch, reason, duration_ms. Optional `agent_called` (the dispatch this tick made). A tick row is **not billable**: any `tokens_in`/`tokens_out` on it (older campaigns wrote them) are ignored by spend.
+- `event="agent_call"`: agent_called, tokens_in, tokens_out. These rows are the **spend ledger** (`cc_fuzzer_core.ledger`, `cc-fuzzer ledger append|spend|show`):
+  - `source` — who recorded the call (`enums.py` `LEDGER_SOURCE`): `orchestrator` (the model's own `events.sh agent_call`; advisory), `host-hook` (the plugin's `SubagentStop` hook, `hooks/ledger-append.sh`, measured from the subagent transcript) or `driver` (the §7 loop driver, from its `AgentResult`). **Absent = `orchestrator`** (rows written before the field existed; event/v1 is unchanged).
+  - `call_id` — the host's id for the call (the Claude Code `agent_id` for `host-hook`). Required for `host-hook` / `driver`, absent on orchestrator rows. **Per `call_id` the report with the largest total tokens counts** (`tokens_in + tokens_out + cache_read + cache_write`; the earliest on a tie): a transcript sum only grows (a blocked subagent continues, the asynchronous transcript flush catches up), so a larger later report appends a replacing row that keeps the call's original `tick`, and an equal or smaller report writes nothing. Still strictly append-only — the replaced rows stay, spend ignores them.
+  - optional `cache_read`, `cache_write` (prompt-cache tokens; written when non-zero), `model` (the model id the host reported; priced by family, e.g. `claude-opus-4-1` → `opus`) and `transcript` (absolute path of the transcript the usage was summed from; `cc-fuzzer ledger reconcile` re-reads it at tick start and appends a replacing row if the total grew).
+  - **Precedence**: when a `host-hook` or `driver` row exists for an agent and `tick`, the `orchestrator` rows for that same agent and tick are superseded — spend ignores them. A row with no tokens at all is a dispatch marker, not a billable call.
+  - `ledger.spend()` is the only spend reader: `yolo_state.estimated_cost_usd`, the `cost_cap` halt and `evaluation.cost` all come from it.
 - `event="error"`: error_message.
 - `event="campaign_start"`, `event="campaign_resume"`, `event="campaign_stop"`: no extra fields required.
 
@@ -984,8 +1006,8 @@ Produced by `scripts/tick-briefing.sh`. The orchestrator writes this on consult 
     "tunnel_vision": false,
     "suggested_lever": null,
     "eligible_levers": [
-      {"lever": "poc_build", "evidence": "1 confirmed finding(s) without an exploit bundle", "idle_ticks": 9, "cost_tier": "opus", "suppressed": false},
-      {"lever": "harness_extend", "evidence": "for_harness=2", "idle_ticks": 6, "cost_tier": "sonnet", "suppressed": false}
+      {"lever": "poc_build", "evidence": "1 confirmed finding(s) without an exploit bundle", "idle_ticks": 9, "cost_tier": "deep", "suppressed": false},
+      {"lever": "harness_extend", "evidence": "for_harness=2", "idle_ticks": 6, "cost_tier": "standard", "suppressed": false}
     ]
   }
 }
@@ -1053,7 +1075,7 @@ Rendered by the `code-reviewer` Sonnet agent at the tail of the Tier-2 pass. The
 
 ### `state/snapshots/ceiling-probe-<ts>.json` — IMMUTABLE (self_loop plateau verdict)
 
-Produced by `scripts/ceiling-probe.sh` (→ `scripts/_lib/ceiling_probe.py`). Deterministic, no LLM. The "is this a real coverage ceiling?" verdict that decides whether a `self_loop` plateau may halt or must first escalate to structural reshapes. The same computation is folded into `current.json.yolo_state.evaluation.ceiling_probe` every tick by `update-current.sh` (via `yolo_evaluate`); this snapshot is the on-disk audit copy and the input the pre-halt `planner-consult` briefing reads.
+Produced by `scripts/ceiling-probe.sh` (→ `cc-fuzzer state ceiling-probe`, `cc_fuzzer_core/state/ceiling.py`). Deterministic, no LLM. The "is this a real coverage ceiling?" verdict that decides whether a `self_loop` plateau may halt or must first escalate to structural reshapes. The same computation is folded into `current.json.yolo_state.evaluation.ceiling_probe` every tick by `update-current.sh` (via `yolo_evaluate`); this snapshot is the on-disk audit copy and the input the pre-halt `planner-consult` briefing reads.
 
 ```json
 {
@@ -1093,7 +1115,7 @@ Produced by `scripts/ceiling-probe.sh` (→ `scripts/_lib/ceiling_probe.py`). De
 
 ### `state/snapshots/code-review-prescan-<ts>.json` — IMMUTABLE (v0.18 Tier-1 output)
 
-Produced by `scripts/_lib/code_review_prescan.py` (invoked via `scripts/code-review-run.sh`). Deterministic, no LLM. Ranks the target's functions by suspicion score so Tier-2 (Sonnet) reviews the most promising candidates.
+Produced by `cc_fuzzer_core.prescan.code_review_prescan` (invoked via `scripts/code-review-run.sh` / `cc-fuzzer prescan run`). Deterministic, no LLM. Ranks the target's functions by suspicion score so Tier-2 (Sonnet) reviews the most promising candidates.
 
 ```json
 {
@@ -1165,7 +1187,7 @@ Produced by `scripts/_lib/code_review_prescan.py` (invoked via `scripts/code-rev
 
 ### `state/snapshots/code-review-<ts>-w<NN>.json` — IMMUTABLE (v0.30 sweep window partial)
 
-A PARTIAL code-review snapshot scoped to one reviewer window. The sweep flow fans `top_candidates[start:start+batch_size]` across `ceil(candidates_selected / batch_size)` windows; each `code-reviewer` dispatch writes one `code-review-<ts>-w<NN>.json` covering its slice and does NOT write the consolidated markdown (the merge step owns that). Schema is `code-review/v1` but a partial need only carry `ts`, `scope` (window-scoped, with an honest per-window `candidates_reviewed`), and `findings`; `focus_areas` is optional on a partial. `scripts/_lib/code_review_merge.py` (via `code-review-run.sh merge-code-review`) consolidates all partials into the canonical `code-review-<ts>.json`: dedup findings by `cr_hash`, reassign stable `cr<NNN>` ids in `cr_hash` order, aggregate scope, and write the loud markdown. Single-window (capped) mode produces one partial the merge passes through trivially. Validated leniently (no required `focus_areas`).
+A PARTIAL code-review snapshot scoped to one reviewer window. The sweep flow fans `top_candidates[start:start+batch_size]` across `ceil(candidates_selected / batch_size)` windows; each `code-reviewer` dispatch writes one `code-review-<ts>-w<NN>.json` covering its slice and does NOT write the consolidated markdown (the merge step owns that). Schema is `code-review/v1` but a partial need only carry `ts`, `scope` (window-scoped, with an honest per-window `candidates_reviewed`), and `findings`; `focus_areas` is optional on a partial. `cc_fuzzer_core.prescan.merge` (via `code-review-run.sh merge-code-review` / `cc-fuzzer prescan merge`) consolidates all partials into the canonical `code-review-<ts>.json`: dedup findings by `cr_hash`, reassign stable `cr<NNN>` ids in `cr_hash` order, aggregate scope, and write the loud markdown. Single-window (capped) mode produces one partial the merge passes through trivially. Validated leniently (no required `focus_areas`).
 
 ### `state/snapshots/code-review-<ts>.json` — IMMUTABLE (v0.18 code-review output)
 
@@ -1231,7 +1253,7 @@ Produced by the `code-reviewer` agent (Tier-2 Sonnet pass; Tier-3 Opus deep pass
 **Required fields**: schema, ts, target, scope, tiers_run, findings, focus_areas.
 **Optional fields**: model_costs, revisit_passes.
 
-**Loud coverage disclosure (v0.30).** `scope` carries the same coverage posture the markdown header surfaces, written by the merge step (`code_review_merge.py`) so a capped review can never read as a complete audit:
+**Loud coverage disclosure (v0.30).** `scope` carries the same coverage posture the markdown header surfaces, written by the merge step (`cc_fuzzer_core.prescan.merge`) so a capped review can never read as a complete audit:
 - **`mode`** — `capped | sweep` (`enums.py` `CR_REVIEW_MODE`), carried from the prescan.
 - **`candidates_reviewed`** — sum of each window partial's honest per-window `candidates_reviewed`. Even in sweep, if a window under-reviews (token budget within a window), this reflects it.
 - **`not_reviewed`** — `functions_inventoried - candidates_reviewed`.
@@ -1941,9 +1963,9 @@ Phases 1–4 are shipped (v0.23.0): the schema + finding fields + prescan `oracl
 
 ## Concurrency Rules
 
-- **Single writer per file.** Every state file has exactly one writer (one script or one agent). No locking needed because there are no concurrent writers by design.
+- **Single writer per file.** Every state file has exactly one writer (one script or one agent). No locking needed because there are no concurrent writers by design — except `events.jsonl`, whose one writer (`cc_fuzzer_core.events`) is called from several processes (`events.sh`, the `SubagentStop` ledger hook, core subsystems) and holds an exclusive `flock` on the file for each append.
 - **Atomic replacements.** REWRITABLE files are written to `<file>.tmp` then `mv`'d into place.
-- **Append safety.** APPEND-ONLY files use `>>` from a single process. The orchestrator is the only writer of `events.jsonl`; `crash-triager` is the only writer of `findings.jsonl`.
+- **Append safety.** APPEND-ONLY files use `>>` from a single process. `events.jsonl` is written only through `cc_fuzzer_core.events` (`events.sh` for the orchestrator, `cc-fuzzer ledger append` for the host hook); `crash-triager` is the only writer of `findings.jsonl`.
 - **No subagent ever writes to another's files.** `crash-triager` doesn't touch `events.jsonl`; the orchestrator doesn't touch `findings.jsonl`.
 
 ## Nix Build Backend
@@ -2117,7 +2139,7 @@ Every subagent prompt must be updated to reference this document. Specifically:
 - **coverage-analyst** writes `gaps-<harness>-<ts>.json` to `fuzz/state/snapshots/`. Filename ts must equal the `timestamp` field; the filename prefix and the `harness` field must agree.
 - **concolic-executor** writes to `fuzz/harnesses/<name>/corpus-quarantine/` first, validates, then promotes to `fuzz/harnesses/<name>/corpus/`. Status JSON to `fuzz/state/snapshots/concolic-<harness>-<ts>.json`.
 - **crash-triager** is the only writer of `findings.jsonl`. Moves crash files between `fuzz/crashes/new/`, `fuzz/crashes/known/<id>/`, and `fuzz/crashes/flaky/` per the lifecycle above.
-- **fuzz-orchestrator** is the only writer of `events.jsonl`. Reads `current.json` only on warm ticks.
+- **fuzz-orchestrator** writes `events.jsonl` (via `events.sh` only). The host's `SubagentStop` hook (`hooks/ledger-append.sh`) also appends `agent_call` rows (`source: host-hook`) through `cc-fuzzer ledger append`. Reads `current.json` only on warm ticks.
 - **reporting-agent** is the only writer of `fuzz/state/FINDINGS-REPORT-<target>.md`. It must also invoke `${CLAUDE_PLUGIN_ROOT}/scripts/update-current.sh` after writing.
 
 If a subagent needs to write somewhere this document doesn't permit, the document must be updated first, then the agent. Not the other way around.

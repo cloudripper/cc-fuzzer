@@ -1,0 +1,14 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/validate-state.sh"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {},
+  "stderr": [],
+  "stdout": [
+    "ok"
+  ]
+}

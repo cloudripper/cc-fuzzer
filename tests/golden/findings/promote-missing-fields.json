@@ -1,0 +1,20 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/findings.sh",
+    "promote",
+    "f002",
+    "--driver",
+    "d.c"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "ERROR: promote: missing required attestation fields: --verifier --boundary --precondition --projected",
+    "       schema v12 REQUIRES the 3-point realism gate — see",
+    "       references/verifier-template.sh and poc-builder.md."
+  ],
+  "stdout": []
+}
