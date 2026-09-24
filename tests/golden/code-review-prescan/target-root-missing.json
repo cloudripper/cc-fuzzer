@@ -1,0 +1,23 @@
+{
+  "argv": [
+    "/usr/bin/python3",
+    "-m",
+    "cc_fuzzer_core",
+    "prescan",
+    "run",
+    "--target-root",
+    "nope",
+    "--no-sast"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "ERROR: cannot resolve target source root.",
+    "       Tried: --target-root, fuzz-config.json:code_review.scan_paths,",
+    "       and auto-detect from harness-built.json:target_source.",
+    "       Pass --target-root <dir> or set code_review.scan_paths in fuzz-config.json."
+  ],
+  "stdout": []
+}

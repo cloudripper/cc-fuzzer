@@ -1,5 +1,5 @@
-#!/usr/bin/env python3
-"""sast_scan.py — deterministic SAST signal for Tier-1 of the code-review pipeline.
+"""Deterministic SAST signal for Tier-1 of the code-review pipeline (port of
+scripts/_lib/sast_scan.py).
 
 This module shells out to external static analyzers (semgrep, optionally CodeQL),
 normalizes their output to a common finding shape, and attributes each finding to
@@ -13,12 +13,22 @@ hit is a stronger signal than a coarse `strcpy` grep, so attributed findings get
 a heavier score bump than the PATTERN_RULES weights — but they never gate the
 review; Tier-2 (Sonnet) still confirms.
 
-Public surface (imported by code_review_prescan.py):
+Public surface:
 
     detect_tools()                       -> {"semgrep": bool, "codeql": bool}
     run_sast(target_root, *, ...)        -> SastResult
     attribute(findings, functions)       -> mutates FunctionEntry-likes in place,
                                             returns (attributed, unattributed)
+    run_semgrep_config(target_root, config, excludes, timeout)
+                                         -> (status, findings) for ONE semgrep
+                                            config (a rule file/dir or a registry
+                                            ref). The single engine invocation:
+                                            run_semgrep() calls it per spec, and
+                                            `cc-fuzzer query run` (§5) reuses it.
+    semgrep_argv(semgrep, target_root, config, excludes, timeout) -> argv
+
+semgrep and codeql resolve through cc_fuzzer_core.tools.which
+($CC_FUZZER_TOOL_SEMGREP / _CODEQL, the nix-env.json pin, then PATH).
 
 `run_sast` returns a SastResult dataclass carrying per-tool status, the
 normalized findings, and a machine-readable `to_dict()` for the prescan JSON's
@@ -39,8 +49,8 @@ Common normalized finding shape (one dict per finding):
 
 CLI (for manual runs / debugging, NOT used by the pipeline):
 
-    sast_scan.py --target-root <dir> [--rules <dir,dir>] [--tool semgrep]
-                 [--timeout 300] [--json]
+    cc-fuzzer prescan sast --target-root <dir> [--rules <dir,dir>] [--mode auto]
+                           [--timeout 300] [--excluded-paths a/,b/] [--codeql-db D] [--json]
 """
 from __future__ import annotations
 
@@ -48,13 +58,14 @@ import argparse
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import time
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Iterable
+
+from cc_fuzzer_core import tools
 
 
 # ---------------------------------------------------------------------------
@@ -129,8 +140,8 @@ class SastResult:
 def detect_tools() -> Dict[str, bool]:
     """Return which supported analyzers are on PATH."""
     return {
-        "semgrep": shutil.which("semgrep") is not None,
-        "codeql": shutil.which("codeql") is not None,
+        "semgrep": tools.which("semgrep") is not None,
+        "codeql": tools.which("codeql") is not None,
     }
 
 
@@ -235,7 +246,7 @@ _AUTO_SKIP_NOTE = ("auto skipped: requires semgrep telemetry (--metrics on), "
                    "pack such as p/trailofbits")
 
 
-def _classify_rule_specs(rule_specs) -> Tuple[List[Path], List[str], List[str]]:
+def _classify_rule_specs(rule_specs, base: Optional[Path] = None) -> Tuple[List[Path], List[str], List[str]]:
     """Split mixed rule specs into (local_dirs, registry_tokens, skipped).
 
     Each spec is a Path (auto-discovered local pack) or a str (user-supplied via
@@ -248,7 +259,11 @@ def _classify_rule_specs(rule_specs) -> Tuple[List[Path], List[str], List[str]]:
 
     `skipped` entries are human-readable notes surfaced in the ToolRun status —
     never sent to semgrep. NB: `auto` is matched BEFORE the registry regex so it
-    can never leak into an invocation."""
+    can never leak into an invocation.
+
+    A relative local dir resolves against `base` (default: the cwd) and is
+    returned ABSOLUTE: semgrep runs with cwd=target_root, where a relative
+    config path would name a different (usually missing) directory."""
     local_dirs: List[Path] = []
     registry: List[str] = []
     skipped: List[str] = []
@@ -267,8 +282,10 @@ def _classify_rule_specs(rule_specs) -> Tuple[List[Path], List[str], List[str]]:
             skipped.append(_AUTO_SKIP_NOTE)
             continue
         p = Path(s)
+        if not p.is_absolute() and base is not None:
+            p = Path(base) / p
         if p.is_dir():
-            local_dirs.append(p)
+            local_dirs.append(Path(os.path.abspath(p)))
         elif _REGISTRY_REF_RE.match(s) or s.startswith(("http://", "https://")):
             registry.append(s)
         else:
@@ -277,7 +294,7 @@ def _classify_rule_specs(rule_specs) -> Tuple[List[Path], List[str], List[str]]:
 
 
 def run_semgrep(target_root: Path, rules_dirs, excludes: List[str],
-                timeout: int) -> Tuple[ToolRun, List[dict]]:
+                timeout: int, *, base: Optional[Path] = None) -> Tuple[ToolRun, List[dict]]:
     """Run semgrep over target_root with the given rule specs. `rules_dirs` is a
     mixed list of Path (auto-discovered local packs) and/or str (user-supplied
     --sast-rules: local dirs, semgrep registry refs like `p/trailofbits`, or
@@ -286,10 +303,11 @@ def run_semgrep(target_root: Path, rules_dirs, excludes: List[str],
     raises for the common failure modes — a missing binary, a bad ruleset, a
     bad registry token, or a timeout all become a ToolRun status string."""
     t0 = time.time()
-    if shutil.which("semgrep") is None:
+    semgrep = tools.which("semgrep")
+    if semgrep is None:
         return ToolRun("semgrep", "skipped: semgrep not on PATH"), []
 
-    local_dirs, registry_tokens, skipped = _classify_rule_specs(rules_dirs)
+    local_dirs, registry_tokens, skipped = _classify_rule_specs(rules_dirs, base)
     if not local_dirs and not registry_tokens:
         # Nothing runnable. Surface why — including the explanatory note for an
         # unsupported `auto` spec — instead of a bare "no rule dirs".
@@ -318,7 +336,7 @@ def run_semgrep(target_root: Path, rules_dirs, excludes: List[str],
     per_dir_status: List[str] = []
     had_success = False
     for spec in config_specs:
-        fr, fnd = _run_semgrep_one(target_root, spec, excludes, timeout)
+        fr, fnd = run_semgrep_config(target_root, spec, excludes, timeout, semgrep=semgrep)
         per_dir_status.append(fr)
         if fnd or fr == "ok" or fr.startswith("ok "):
             had_success = True
@@ -348,22 +366,38 @@ def run_semgrep(target_root: Path, rules_dirs, excludes: List[str],
     return run, all_findings
 
 
-def _run_semgrep_one(target_root: Path, rule_dir: str, excludes: List[str],
-                     timeout: int) -> Tuple[str, List[dict]]:
-    """Run semgrep for a SINGLE config spec (local path or registry ref).
-    Returns (status_string, findings). Never raises. Status is "ok" /
-    "ok (N rule-load errors ignored)" / "error: <reason>"."""
-    # PRIVACY DEFAULT: semgrep ALWAYS runs with --metrics=off. No invocation may
-    # enable telemetry. (`--config auto` would need metrics on, so it never
-    # reaches here — _classify_rule_specs skips it with an explanation upstream.)
-    cmd = ["semgrep", "--json", "--quiet", "--disable-version-check",
+def semgrep_argv(semgrep: str, target_root: Path, config: str, excludes,
+                 timeout: int) -> List[str]:
+    """The argv of one semgrep run over target_root with ONE config spec.
+    PRIVACY DEFAULT: semgrep ALWAYS runs with --metrics=off. No invocation may
+    enable telemetry. (`--config auto` would need metrics on, so it never
+    reaches here — _classify_rule_specs skips it with an explanation upstream.)
+    The per-rule timeout is a quarter of the wall-clock budget (min 5s)."""
+    cmd = [semgrep, "--json", "--quiet", "--disable-version-check",
            "--metrics=off", "--timeout", str(max(5, timeout // 4)),
-           "--config", rule_dir]
+           "--config", config]
     for ex in excludes:
         frag = ex.strip().strip("/")
         if frag:
             cmd += ["--exclude", frag]
     cmd.append(str(target_root))
+    return cmd
+
+
+def run_semgrep_config(target_root: Path, rule_dir: str, excludes: List[str],
+                       timeout: int, *, semgrep: Optional[str] = None) -> Tuple[str, List[dict]]:
+    """Run semgrep for a SINGLE config spec (local rule file/dir or registry
+    ref) over target_root (also its cwd), with a `timeout`-second wall clock.
+    Returns (status_string, normalized findings). Never raises. Status is
+    "ok" / "ok (N rule-load errors ignored)" / "error: <reason>" (plus
+    "skipped: semgrep not on PATH" when `semgrep` isn't given and can't be
+    resolved). This is the one engine invocation: run_semgrep() calls it per
+    spec, `cc-fuzzer query run` (§5) calls it with a single authored rule."""
+    semgrep = semgrep or tools.which("semgrep")
+    if semgrep is None:
+        return "skipped: semgrep not on PATH", []
+    target_root = Path(target_root)
+    cmd = semgrep_argv(semgrep, target_root, rule_dir, excludes, timeout)
 
     try:
         proc = subprocess.run(
@@ -433,7 +467,7 @@ def _run_semgrep_one(target_root: Path, rule_dir: str, excludes: List[str],
 # ---------------------------------------------------------------------------
 
 def run_codeql(target_root: Path, db_path: Optional[Path], query_suite: str,
-               timeout: int) -> Tuple[ToolRun, List[dict]]:
+               timeout: int, *, base: Optional[Path] = None) -> Tuple[ToolRun, List[dict]]:
     """Analyze a *prebuilt* CodeQL database and normalize the SARIF results.
 
     Building a CodeQL DB requires the project's compile command and is slow, so
@@ -442,16 +476,19 @@ def run_codeql(target_root: Path, db_path: Optional[Path], query_suite: str,
     This keeps the prescan's "free, ~seconds" contract intact — DB construction
     is a separate, explicit step."""
     t0 = time.time()
-    if shutil.which("codeql") is None:
+    codeql = tools.which("codeql")
+    if codeql is None:
         return ToolRun("codeql", "skipped: codeql not on PATH"), []
     if not db_path:
         return ToolRun("codeql", "skipped: no codeql_db configured"), []
-    db_path = Path(db_path)
+    shown = db_path = Path(db_path)
+    if base is not None and not db_path.is_absolute():
+        db_path = Path(base) / db_path   # relative => against base (default: cwd)
     if not db_path.exists():
-        return ToolRun("codeql", f"skipped: db not found ({db_path})"), []
+        return ToolRun("codeql", f"skipped: db not found ({shown})"), []
 
     sarif_out = db_path.parent / f"codeql-results-{int(time.time())}.sarif"
-    cmd = ["codeql", "database", "analyze", str(db_path), query_suite,
+    cmd = [codeql, "database", "analyze", str(db_path), query_suite,
            "--format=sarifv2.1.0", f"--output={sarif_out}",
            "--threads=0", "--rerun"]
     try:
@@ -601,28 +638,30 @@ def attribute(findings: List[dict], functions: Iterable) -> Tuple[int, List[dict
 def run_sast(target_root: Path, *, mode: str, rules_dirs,
              excludes: List[str], timeout: int,
              codeql_db: Optional[Path] = None,
-             codeql_suite: str = "cpp-security-and-quality.qls") -> SastResult:
+             codeql_suite: str = "cpp-security-and-quality.qls",
+             base: Optional[Path] = None) -> SastResult:
     """Run the configured analyzers. `mode` is one of:
         "off"  -> do nothing (enabled=False)
         "auto" -> run whichever of semgrep/codeql is available (default)
         "on"   -> run; if nothing available, the per-tool status records why
     `rules_dirs` is a mixed list of Path (local packs) and/or str (local dirs,
     semgrep registry refs like `p/trailofbits` / `auto`, or http(s) URLs); see
-    run_semgrep for the routing. Findings are returned un-attributed; the caller
-    invokes attribute()."""
+    run_semgrep for the routing. Relative local paths (rule dirs, codeql_db)
+    resolve against `base` (default: the cwd). Findings are returned
+    un-attributed; the caller invokes attribute()."""
     if mode == "off":
         return SastResult(enabled=False,
                           runs=[ToolRun("sast", "skipped: disabled (mode=off)")])
 
     result = SastResult(enabled=True)
 
-    sg_run, sg_findings = run_semgrep(target_root, rules_dirs, excludes, timeout)
+    sg_run, sg_findings = run_semgrep(target_root, rules_dirs, excludes, timeout, base=base)
     result.runs.append(sg_run)
     result.findings.extend(sg_findings)
 
     # CodeQL only when a DB is configured (auto and on both honor this; without
     # a DB it self-skips cheaply).
-    cq_run, cq_findings = run_codeql(target_root, codeql_db, codeql_suite, timeout)
+    cq_run, cq_findings = run_codeql(target_root, codeql_db, codeql_suite, timeout, base=base)
     result.runs.append(cq_run)
     result.findings.extend(cq_findings)
 
@@ -630,11 +669,11 @@ def run_sast(target_root: Path, *, mode: str, rules_dirs,
 
 
 # ---------------------------------------------------------------------------
-# CLI (debugging only)
+# CLI (debugging only): cc-fuzzer prescan sast
 # ---------------------------------------------------------------------------
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description="Standalone SAST scan (debug).")
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(prog="sast_scan.py", description="Standalone SAST scan (debug).")
     ap.add_argument("--target-root", required=True)
     ap.add_argument("--rules", default="",
                     help="comma-separated rule sources: local dirs and/or explicit "
@@ -645,7 +684,7 @@ def main() -> int:
     ap.add_argument("--excluded-paths", default="")
     ap.add_argument("--codeql-db", default="")
     ap.add_argument("--json", action="store_true", help="dump findings as JSON")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     # Raw strings so run_sast can classify local dirs vs registry refs (`auto`,
     # `p/…`, URLs); wrapping in Path() would mangle URLs and hide registry refs.
@@ -666,6 +705,3 @@ def main() -> int:
                   f"{f['rule_id']} {f.get('cwe')}")
     return 0
 
-
-if __name__ == "__main__":
-    sys.exit(main())

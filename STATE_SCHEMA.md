@@ -1107,7 +1107,7 @@ Produced by `scripts/ceiling-probe.sh` (→ `cc-fuzzer state ceiling-probe`, `cc
 
 ### `state/snapshots/code-review-prescan-<ts>.json` — IMMUTABLE (v0.18 Tier-1 output)
 
-Produced by `scripts/_lib/code_review_prescan.py` (invoked via `scripts/code-review-run.sh`). Deterministic, no LLM. Ranks the target's functions by suspicion score so Tier-2 (Sonnet) reviews the most promising candidates.
+Produced by `cc_fuzzer_core.prescan.code_review_prescan` (invoked via `scripts/code-review-run.sh` / `cc-fuzzer prescan run`). Deterministic, no LLM. Ranks the target's functions by suspicion score so Tier-2 (Sonnet) reviews the most promising candidates.
 
 ```json
 {
@@ -1179,7 +1179,7 @@ Produced by `scripts/_lib/code_review_prescan.py` (invoked via `scripts/code-rev
 
 ### `state/snapshots/code-review-<ts>-w<NN>.json` — IMMUTABLE (v0.30 sweep window partial)
 
-A PARTIAL code-review snapshot scoped to one reviewer window. The sweep flow fans `top_candidates[start:start+batch_size]` across `ceil(candidates_selected / batch_size)` windows; each `code-reviewer` dispatch writes one `code-review-<ts>-w<NN>.json` covering its slice and does NOT write the consolidated markdown (the merge step owns that). Schema is `code-review/v1` but a partial need only carry `ts`, `scope` (window-scoped, with an honest per-window `candidates_reviewed`), and `findings`; `focus_areas` is optional on a partial. `scripts/_lib/code_review_merge.py` (via `code-review-run.sh merge-code-review`) consolidates all partials into the canonical `code-review-<ts>.json`: dedup findings by `cr_hash`, reassign stable `cr<NNN>` ids in `cr_hash` order, aggregate scope, and write the loud markdown. Single-window (capped) mode produces one partial the merge passes through trivially. Validated leniently (no required `focus_areas`).
+A PARTIAL code-review snapshot scoped to one reviewer window. The sweep flow fans `top_candidates[start:start+batch_size]` across `ceil(candidates_selected / batch_size)` windows; each `code-reviewer` dispatch writes one `code-review-<ts>-w<NN>.json` covering its slice and does NOT write the consolidated markdown (the merge step owns that). Schema is `code-review/v1` but a partial need only carry `ts`, `scope` (window-scoped, with an honest per-window `candidates_reviewed`), and `findings`; `focus_areas` is optional on a partial. `cc_fuzzer_core.prescan.merge` (via `code-review-run.sh merge-code-review` / `cc-fuzzer prescan merge`) consolidates all partials into the canonical `code-review-<ts>.json`: dedup findings by `cr_hash`, reassign stable `cr<NNN>` ids in `cr_hash` order, aggregate scope, and write the loud markdown. Single-window (capped) mode produces one partial the merge passes through trivially. Validated leniently (no required `focus_areas`).
 
 ### `state/snapshots/code-review-<ts>.json` — IMMUTABLE (v0.18 code-review output)
 
@@ -1245,7 +1245,7 @@ Produced by the `code-reviewer` agent (Tier-2 Sonnet pass; Tier-3 Opus deep pass
 **Required fields**: schema, ts, target, scope, tiers_run, findings, focus_areas.
 **Optional fields**: model_costs, revisit_passes.
 
-**Loud coverage disclosure (v0.30).** `scope` carries the same coverage posture the markdown header surfaces, written by the merge step (`code_review_merge.py`) so a capped review can never read as a complete audit:
+**Loud coverage disclosure (v0.30).** `scope` carries the same coverage posture the markdown header surfaces, written by the merge step (`cc_fuzzer_core.prescan.merge`) so a capped review can never read as a complete audit:
 - **`mode`** — `capped | sweep` (`enums.py` `CR_REVIEW_MODE`), carried from the prescan.
 - **`candidates_reviewed`** — sum of each window partial's honest per-window `candidates_reviewed`. Even in sweep, if a window under-reviews (token budget within a window), this reflects it.
 - **`not_reviewed`** — `functions_inventoried - candidates_reviewed`.

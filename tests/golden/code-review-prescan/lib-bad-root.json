@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "/usr/bin/python3",
+    "-m",
+    "cc_fuzzer_core",
+    "prescan",
+    "scan",
+    "--target-root",
+    "nope",
+    "--out",
+    "p.json"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "ERROR: target-root not a directory: <PROJECT>/nope"
+  ],
+  "stdout": []
+}

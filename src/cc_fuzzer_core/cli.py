@@ -33,6 +33,7 @@ SUBSYSTEMS = (
     "cc_fuzzer_core.coverage",
     "cc_fuzzer_core.quarantine",
     "cc_fuzzer_core.delta",
+    "cc_fuzzer_core.prescan",
     "cc_fuzzer_core.tools",
     "cc_fuzzer_core.models",
     "cc_fuzzer_core.manifest",

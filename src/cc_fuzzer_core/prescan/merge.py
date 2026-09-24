@@ -1,9 +1,9 @@
-#!/usr/bin/env python3
-"""code_review_merge.py — combine code-review window partials into the canonical snapshot.
+"""Combine code-review window partials into the canonical snapshot (port of
+scripts/_lib/code_review_merge.py).
 
 Tier-2 of the sweep flow writes one PARTIAL snapshot per window
 (`code-review-<ts>-w<NN>.json`, each scoped to `top_candidates[start:start+count]`).
-This helper merges them into the single canonical `code-review-<ts>.json` the rest
+This module merges them into the single canonical `code-review-<ts>.json` the rest
 of the campaign reads, and writes the consolidated `code-review.md` with a LOUD
 coverage header so a capped review can never read as a complete audit.
 
@@ -24,8 +24,11 @@ What it does (the merge half of the windowing contract):
 Single-window (capped) mode passes through trivially: one partial in, one
 canonical out, with the same loud disclosure.
 
-CLI:
-    code_review_merge.py \\
+API: merge(prescan, partials, out, md, target="") -> MergeResult (MergeError
+when an input can't be read).
+
+CLI (`code-review-run.sh merge-code-review` is a shim onto it):
+    cc-fuzzer prescan merge \\
         --prescan  fuzz/state/snapshots/code-review-prescan-<ts>.json \\
         --out      fuzz/state/snapshots/code-review-<ts>.json \\
         --md       fuzz/state/code-review.md \\
@@ -37,7 +40,10 @@ import argparse
 import json
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
+
+_DESCRIPTION = "code_review_merge.py — combine code-review window partials into the canonical snapshot."
 
 # CR status lifecycle, most-advanced last. Used to pick the winning status when
 # the same cr_hash appears in more than one window partial.
@@ -168,20 +174,28 @@ def _render_markdown(doc, header_line):
     return "\n".join(lines)
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--prescan", required=True, help="prescan artifact (scope totals + mode).")
-    ap.add_argument("--out", required=True, help="canonical code-review-<ts>.json output path.")
-    ap.add_argument("--md", required=True, help="code-review.md output path.")
-    ap.add_argument("--target", default="", help="target name for the snapshot/markdown.")
-    ap.add_argument("partials", nargs="+", help="window partial JSON paths.")
-    args = ap.parse_args()
+class MergeError(RuntimeError):
+    """An input could not be read; str(e) is the message, `code` the exit status."""
 
+    def __init__(self, message: str, code: int = 2):
+        super().__init__(message)
+        self.code = code
+
+
+@dataclass
+class MergeResult:
+    out: str            # the canonical snapshot path (as given)
+    md: str             # the markdown path (as given)
+    header: str         # the loud coverage line
+    doc: dict           # the canonical snapshot
+
+
+def merge(prescan_path, partials, out, md, target: str = "") -> MergeResult:
+    """Merge window partials (see module docstring) and write `out` + `md`."""
     try:
-        prescan = _load(args.prescan)
+        prescan = _load(prescan_path)
     except Exception as e:
-        print(f"ERROR: cannot read prescan {args.prescan}: {e}", file=sys.stderr)
-        return 2
+        raise MergeError(f"ERROR: cannot read prescan {prescan_path}: {e}")
     pscope = prescan.get("scope") or {}
     inventoried = int(pscope.get("functions_inventoried") or 0)
     mode = pscope.get("mode") or "capped"
@@ -190,18 +204,17 @@ def main() -> int:
     by_hash = {}
     reviewed_total = 0
     tiers = set()
-    target = args.target or ""
+    target = target or ""
     files_scanned = pscope.get("files_scanned")
     loc_total = pscope.get("loc_total")
     revisit_passes = []
     model_costs = {}
 
-    for pp in args.partials:
+    for pp in partials:
         try:
             d = _load(pp)
         except Exception as e:
-            print(f"ERROR: cannot read partial {pp}: {e}", file=sys.stderr)
-            return 2
+            raise MergeError(f"ERROR: cannot read partial {pp}: {e}")
         wscope = d.get("scope") or {}
         reviewed_total += int(wscope.get("candidates_reviewed") or 0)
         for t in (d.get("tiers_run") or []):
@@ -242,7 +255,7 @@ def main() -> int:
 
     # Collect focus areas from partials (concatenate, dedup by scope, re-rank).
     fa_by_scope = {}
-    for pp in args.partials:
+    for pp in partials:
         try:
             d = _load(pp)
         except Exception:
@@ -281,18 +294,30 @@ def main() -> int:
     if model_costs:
         doc["model_costs"] = model_costs
 
-    doc["_artifact"] = str(args.out)
+    doc["_artifact"] = str(out)
     header = _coverage_header(mode, reviewed_total, inventoried, not_reviewed, coverage_complete)
-    md = _render_markdown(doc, header)
+    text = _render_markdown(doc, header)
     del doc["_artifact"]
 
-    _atomic_write_json(args.out, doc)
-    _atomic_write_text(args.md, md)
+    _atomic_write_json(out, doc)
+    _atomic_write_text(md, text)
+    return MergeResult(str(out), str(md), header, doc)
 
-    print(header)
-    print(args.out)
+
+def main(argv=None) -> int:
+    """`cc-fuzzer prescan merge` (code_review_merge.py's CLI)."""
+    ap = argparse.ArgumentParser(prog="code_review_merge.py", description=_DESCRIPTION)
+    ap.add_argument("--prescan", required=True, help="prescan artifact (scope totals + mode).")
+    ap.add_argument("--out", required=True, help="canonical code-review-<ts>.json output path.")
+    ap.add_argument("--md", required=True, help="code-review.md output path.")
+    ap.add_argument("--target", default="", help="target name for the snapshot/markdown.")
+    ap.add_argument("partials", nargs="+", help="window partial JSON paths.")
+    args = ap.parse_args(argv)
+    try:
+        r = merge(args.prescan, args.partials, args.out, args.md, args.target)
+    except MergeError as e:
+        print(str(e), file=sys.stderr)
+        return e.code
+    print(r.header)
+    print(r.out)
     return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())

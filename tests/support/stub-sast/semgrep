@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+"""Test stub semgrep: `semgrep --json ... --config <spec> [--exclude X]... <target>`.
+
+Emits a semgrep-shaped results JSON for every *.c file under the target
+(paths are the target as given joined with the file, as semgrep prints them):
+strcpy( -> ERROR (cwe list), sprintf( -> WARNING (cwe string), free( -> an
+unknown severity, the first #include -> INFO without metadata (lands outside
+any function). check_ids are prefixed with the config's basename.
+
+Env knobs:
+  STUB_SEMGREP_LOG      append the argv (minus argv[0]) to this file
+  STUB_SEMGREP_MODE     ok (default) | errors (results + rule-load errors) |
+                        empty | garbage (unparseable stdout, exit 0) | fail
+  STUB_SEMGREP_FAIL_ON  fail (exit 2, no JSON) when the config contains this
+"""
+import json
+import os
+import sys
+
+argv = sys.argv[1:]
+log = os.environ.get("STUB_SEMGREP_LOG")
+if log:
+    with open(log, "a") as f:
+        f.write(" ".join(argv) + "\n")
+config = argv[argv.index("--config") + 1] if "--config" in argv else ""
+target = argv[-1] if argv else "."
+mode = os.environ.get("STUB_SEMGREP_MODE", "ok")
+fail_on = os.environ.get("STUB_SEMGREP_FAIL_ON")
+if mode == "fail" or (fail_on and fail_on in config):
+    sys.stderr.write("[ERROR] invalid configuration\nsemgrep: fatal: cannot load rules from " + config + "\n")
+    sys.exit(2)
+if mode == "garbage":
+    print("this is not json")
+    sys.exit(0)
+
+prefix = os.path.basename(config.rstrip("/")) or "cfg"
+results = []
+if mode != "empty":
+    for dirpath, dirnames, filenames in sorted(os.walk(target)):
+        dirnames.sort()
+        for fn in sorted(filenames):
+            if not fn.endswith(".c"):
+                continue
+            p = os.path.join(dirpath, fn)
+            rel = p  # like semgrep: the target as given + the file under it
+            seen_include = False
+            with open(p, errors="replace") as fh:
+                for n, line in enumerate(fh, 1):
+                    def hit(rule, sev, meta, msg):
+                        extra = {"severity": sev, "message": msg}
+                        if meta is not None:
+                            extra["metadata"] = meta
+                        results.append({"check_id": f"{prefix}.{rule}", "path": rel,
+                                        "start": {"line": n, "col": 1},
+                                        "end": {"line": n + 1, "col": 1}, "extra": extra})
+                    if "strcpy(" in line:
+                        hit("strcpy", "ERROR", {"cwe": ["CWE-120: Buffer Copy without Checking Size"]},
+                            "  unbounded strcpy into a fixed buffer  ")
+                    if "sprintf(" in line:
+                        hit("sprintf", "WARNING", {"cwe": "CWE-787: Out-of-bounds Write"}, "sprintf into stack buffer")
+                    if "free(" in line:
+                        hit("free", "weird", {"cwe": ["not-a-cwe"], "message": "meta message"}, "")
+                    if line.startswith("#include") and not seen_include:
+                        seen_include = True
+                        hit("include", "INFO", None, "header include")
+doc = {"results": results, "errors": [], "version": "0.0.0-stub"}
+if mode == "errors":
+    doc["errors"] = [{"type": "Rule parse error", "message": "bad rule"}, {"type": "x"}]
+print(json.dumps(doc))
+sys.exit(1 if results else 0)

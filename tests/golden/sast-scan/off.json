@@ -1,0 +1,39 @@
+{
+  "argv": [
+    "/usr/bin/python3",
+    "-m",
+    "cc_fuzzer_core",
+    "prescan",
+    "sast",
+    "--target-root",
+    "src",
+    "--mode",
+    "off",
+    "--json"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {},
+  "stderr": [],
+  "stdout": [
+    "{",
+    "  \"summary\": {",
+    "    \"enabled\": false,",
+    "    \"tools\": [",
+    "      {",
+    "        \"tool\": \"sast\",",
+    "        \"status\": \"skipped: disabled (mode=off)\",",
+    "        \"findings_count\": 0,",
+    "        \"duration_s\": 0.0,",
+    "        \"rules_source\": []",
+    "      }",
+    "    ],",
+    "    \"findings_total\": 0,",
+    "    \"attributed\": 0,",
+    "    \"unattributed\": []",
+    "  },",
+    "  \"findings\": []",
+    "}"
+  ]
+}

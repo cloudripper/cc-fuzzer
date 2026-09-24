@@ -1,0 +1,34 @@
+{
+  "argv": [
+    "/usr/bin/python3",
+    "-m",
+    "cc_fuzzer_core",
+    "prescan",
+    "sast",
+    "--target-root",
+    "src",
+    "--rules",
+    "rules-extra/plain"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {
+    "semgrep-argv.log": {
+      "lines": [
+        "--json --quiet --disable-version-check --metrics=off --timeout 75 --config <PROJECT>/rules-extra/plain <PROJECT>/src"
+      ]
+    }
+  },
+  "stderr": [
+    "[semgrep] ok (5 findings, 0.0s)",
+    "[codeql] skipped: no codeql_db configured (0 findings, 0.0s)"
+  ],
+  "stdout": [
+    "low    parser.c:2 plain.include []",
+    "high   parser.c:15 plain.strcpy ['CWE-120']",
+    "medium parser.c:27 plain.sprintf ['CWE-787']",
+    "low    parser.c:32 plain.free ['not-a-cwe']",
+    "low    parser.c:33 plain.free ['not-a-cwe']"
+  ]
+}

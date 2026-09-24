@@ -1,0 +1,22 @@
+{
+  "argv": [
+    "/usr/bin/python3",
+    "-m",
+    "cc_fuzzer_core",
+    "prescan",
+    "run",
+    "--max-functions",
+    "-3",
+    "--no-sast"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "[code-review] running prescan: target=<PROJECT>/src max=-3 sast=off",
+    "ERROR: --max-functions cannot be negative (-3); use 'all' or 0 for unlimited.",
+    "ERROR: prescan failed"
+  ],
+  "stdout": []
+}

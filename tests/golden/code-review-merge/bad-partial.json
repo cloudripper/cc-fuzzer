@@ -1,0 +1,25 @@
+{
+  "argv": [
+    "/usr/bin/python3",
+    "-m",
+    "cc_fuzzer_core",
+    "prescan",
+    "merge",
+    "--prescan",
+    "fuzz/state/snapshots/code-review-prescan-1789999000.json",
+    "--out",
+    "fuzz/state/snapshots/code-review-1789999100.json",
+    "--md",
+    "fuzz/state/code-review.md",
+    "fuzz/state/snapshots/code-review-1789999100-w01.json",
+    "missing.json"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "ERROR: cannot read partial missing.json: [Errno 2] No such file or directory: 'missing.json'"
+  ],
+  "stdout": []
+}

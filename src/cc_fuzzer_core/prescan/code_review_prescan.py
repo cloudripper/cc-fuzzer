@@ -1,5 +1,5 @@
-#!/usr/bin/env python3
-"""code_review_prescan.py — deterministic Tier-1 of the code-review pipeline.
+"""Deterministic Tier-1 of the code-review pipeline (port of
+scripts/_lib/code_review_prescan.py).
 
 The prescan walks the target source tree and produces a ranked list of
 functions worth deeper LLM review. It does NO LLM calls. Output is a JSON
@@ -13,14 +13,18 @@ What it does:
     suspicion-score bump.
   - Git-history weighting: recently-modified files get a bump (when in a git
     repo). Skipped silently when git isn't available.
+  - External SAST (semgrep / CodeQL, prescan.sast_scan) folded into the
+    scores; the bundled rule packs come from paths.data("rules").
   - Suspicion score per function (composite of all the above).
   - Top-N selection.
 
-Output: a JSON file (path passed via --out) containing the scope summary,
-the full function inventory, and the top-N candidates with explanation.
+API: prescan(target_root, out, ...) -> PrescanResult (the artifact is written
+to `out`; PrescanError on bad arguments). The artifact contains the scope
+summary, the full function inventory, and the top-N candidates with
+explanation.
 
 CLI:
-    code_review_prescan.py \\
+    cc-fuzzer prescan scan \\
         --target-root /path/to/source \\
         --out fuzz/state/code-review-prescan-<ts>.json \\
         [--max-functions 50|all] \\
@@ -39,32 +43,31 @@ from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
-# Sibling deterministic SAST module (semgrep / CodeQL; this file runs as a
-# script, so its directory is already on sys.path). Imported defensively so a
-# stripped checkout without it still runs the grep-only prescan.
-try:
-    import sast_scan  # type: ignore
-except Exception:  # noqa: BLE001
-    sast_scan = None  # type: ignore
+from cc_fuzzer_core import paths, tools
+from cc_fuzzer_core.prescan import sast_scan
+
+_DESCRIPTION = ("code_review_prescan.py — deterministic Tier-1 of the code-review pipeline.")
+
+
+class PrescanError(RuntimeError):
+    """Bad prescan arguments; str(e) is the message, `code` the exit status."""
+
+    def __init__(self, message: str, code: int = 2):
+        super().__init__(message)
+        self.code = code
 
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
-def _rules_root() -> Path:
-    """The bundled semgrep rules ROOT. Resolved by the core
-    (cc_fuzzer_core.paths.data("rules"), on PYTHONPATH via _lib/root.sh), else
-    $CC_FUZZER_ROOT/rules; a bare manual run with neither falls back to this
-    checkout's rules/ (<root>/scripts/_lib/.. -> <root>/rules)."""
+def rules_root() -> Path | None:
+    """The bundled semgrep rules ROOT: paths.data("rules") (None when no data
+    root can be found at all)."""
     try:
-        from cc_fuzzer_core import paths as _core_paths
-        return _core_paths.data("rules")
-    except Exception:  # noqa: BLE001
-        pass
-    if os.environ.get("CC_FUZZER_ROOT"):
-        return Path(os.environ["CC_FUZZER_ROOT"]) / "rules"
-    return Path(__file__).resolve().parents[2] / "rules"
+        return paths.data("rules")
+    except paths.RootNotFound:
+        return None
 
 
 # File extensions we consider. C/C++ for now (the plugin's stated scope).
@@ -431,10 +434,13 @@ def _score_function(entry: FunctionEntry, file_text_lines: List[str],
 def _recently_changed_files(target_root: Path, days: int = 30) -> Set[str]:
     """Return absolute paths of source files modified in `target_root` within
     the last `days` according to git log. Empty set if not a git repo."""
+    git = tools.which("git")
+    if git is None:
+        return set()
     try:
         # `git -C <root> log --since=<days> --name-only --pretty=format:`
         out = subprocess.check_output(
-            ["git", "-C", str(target_root), "log",
+            [git, "-C", str(target_root), "log",
              f"--since={days}.days.ago", "--name-only", "--pretty=format:"],
             stderr=subprocess.DEVNULL, timeout=10,
         ).decode("utf-8", errors="replace")
@@ -543,70 +549,59 @@ def _detect_oracle_candidates(functions: List[FunctionEntry]) -> dict:
 # Main
 # ---------------------------------------------------------------------------
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--target-root", required=True,
-                    help="Root directory of the target source.")
-    ap.add_argument("--out", required=True,
-                    help="Output JSON path.")
-    ap.add_argument("--max-functions", default="50",
-                    help="Top-N functions to surface in the candidates list (default 50). "
-                         "Accepts an int, or 'all'/0 for UNLIMITED (sweep mode — the full "
-                         "ranked inventory becomes the candidate list). Negatives are rejected.")
-    ap.add_argument("--excluded-paths", default="",
-                    help="Comma-separated path fragments to exclude (defaults union with built-ins).")
-    ap.add_argument("--cve-context", default="",
-                    help="Optional path to cve-context-<ts>.json for hotspot cross-ref.")
-    ap.add_argument("--sast", default="auto", choices=["off", "auto", "on"],
-                    help="Run external SAST (semgrep/CodeQL) as additional Tier-1 signal. "
-                         "'auto' (default) runs whatever is installed and self-skips loudly "
-                         "when nothing is; 'off' disables; 'on' is auto plus a louder status.")
-    ap.add_argument("--sast-rules", default="",
-                    help="Comma-separated semgrep rule sources, appended to the bundled "
-                         "rules/semgrep default. Each is a local rule dir OR an explicit "
-                         "semgrep registry ref fetched on demand: 'p/trailofbits' (and "
-                         "other 'p/'/'r/' shorthands) or an http(s):// rule URL. NOTE: "
-                         "'auto' is unsupported (needs semgrep telemetry, disabled for "
-                         "privacy) and is skipped with a note — use an explicit pack.")
-    ap.add_argument("--sast-timeout", type=int, default=300,
-                    help="Wall-clock budget (seconds) for the whole SAST step (default 300).")
-    ap.add_argument("--codeql-db", default="",
-                    help="Path to a PREBUILT CodeQL database. CodeQL is skipped when absent "
-                         "(DB construction needs the build command and is not done implicitly).")
-    args = ap.parse_args()
+@dataclass
+class PrescanResult:
+    path: Path          # the artifact written
+    doc: dict           # its content
 
-    # Resolve --max-functions into `max_functions: Optional[int]`.
-    #   None  => unlimited (sweep): the full ranked inventory is the candidate list.
-    #   int>0 => capped: top-N.
-    #   "all" / 0 => unlimited.
-    #   negative / non-numeric => error.
-    raw_max = str(args.max_functions).strip().lower()
+    @property
+    def scope(self) -> dict:
+        return self.doc["scope"]
+
+
+def parse_max_functions(raw) -> Optional[int]:
+    """--max-functions into `Optional[int]`:
+      None  => unlimited (sweep): the full ranked inventory is the candidate list.
+      int>0 => capped: top-N.
+      "all" / 0 => unlimited.
+      negative / non-numeric => PrescanError."""
+    raw_max = str(raw).strip().lower()
     if raw_max in ("all", "0"):
-        max_functions: Optional[int] = None
-    else:
-        try:
-            n = int(raw_max)
-        except ValueError:
-            print(f"ERROR: --max-functions must be an int or 'all', got {args.max_functions!r}",
-                  file=sys.stderr)
-            return 2
-        if n < 0:
-            print(f"ERROR: --max-functions cannot be negative ({n}); use 'all' or 0 for unlimited.",
-                  file=sys.stderr)
-            return 2
-        max_functions = n  # n == 0 already handled above
-    mode = "sweep" if max_functions is None else "capped"
+        return None
+    try:
+        n = int(raw_max)
+    except ValueError:
+        raise PrescanError(f"ERROR: --max-functions must be an int or 'all', got {raw!r}")
+    if n < 0:
+        raise PrescanError(f"ERROR: --max-functions cannot be negative ({n}); use 'all' or 0 for unlimited.")
+    return n  # n == 0 already handled above
 
-    target_root = Path(args.target_root).resolve()
+
+def prescan(target_root, out, *, max_functions="50", excluded_paths: str = "",
+            cve_context: str = "", sast: str = "auto", sast_rules: str = "",
+            sast_timeout: int = 300, codeql_db: str = "",
+            base: Path | None = None) -> PrescanResult:
+    """Run the Tier-1 prescan over target_root and write the
+    code-review-prescan/v1 artifact to `out` (atomically). String arguments
+    take the CLI's forms (comma lists, "all"). Relative paths (target_root,
+    out, cve_context, codeql_db, local --sast-rules dirs) resolve against
+    `base` (default: the cwd); the artifact records cve_context as given."""
+    max_n = parse_max_functions(max_functions)
+    mode = "sweep" if max_n is None else "capped"
+
+    def io(p) -> Path:
+        p = Path(p)
+        return p if base is None or p.is_absolute() else Path(base) / p
+
+    target_root = io(target_root).resolve()
     if not target_root.is_dir():
-        print(f"ERROR: target-root not a directory: {target_root}", file=sys.stderr)
-        return 2
+        raise PrescanError(f"ERROR: target-root not a directory: {target_root}")
 
-    user_excludes = [e.strip() for e in args.excluded_paths.split(",") if e.strip()]
+    user_excludes = [e.strip() for e in excluded_paths.split(",") if e.strip()]
     excludes = sorted(set(DEFAULT_EXCLUDED + user_excludes))
 
     cve_files, cve_funcs, cve_pat_tags = _load_cve_hotspots(
-        Path(args.cve_context) if args.cve_context else None
+        io(cve_context) if cve_context else None
     )
 
     recent = _recently_changed_files(target_root, days=30)
@@ -641,10 +636,12 @@ def main() -> int:
     # into suspicion scores BEFORE ranking, so a real-tool hit lifts a function
     # into the candidate window. Self-skips (with a recorded reason) when the
     # tools or rules are absent — never fatal, mirroring cmplog/SymCC.
+    # (With --sast off the block keeps its historical "module unavailable"
+    # status; the goldens record it.)
     sast_block: dict = {"enabled": False,
                         "tools": [{"tool": "sast", "status": "skipped: module unavailable"}],
                         "findings_total": 0, "attributed": 0, "unattributed": []}
-    if sast_scan is not None and args.sast != "off":
+    if sast != "off":
         # Resolve the rules ROOT, then auto-discover EVERY immediate
         # subdirectory that holds at least one .yml/.yaml file. This picks up the
         # bundled rules/semgrep pack (the offline default) and any other local
@@ -653,10 +650,10 @@ def main() -> int:
         # REGISTRY via an explicit --sast-rules ref (e.g. `p/trailofbits`); they
         # are not vendored. (`auto` is unsupported — telemetry-gated, disabled
         # for privacy.) See run_sast for the local-dir vs registry-token routing.
-        rules_root = _rules_root()
+        root = rules_root()
         rule_specs: List = []
-        if rules_root.is_dir():
-            for sub in sorted(p for p in rules_root.iterdir() if p.is_dir()):
+        if root is not None and root.is_dir():
+            for sub in sorted(p for p in root.iterdir() if p.is_dir()):
                 if any(sub.rglob("*.yml")) or any(sub.rglob("*.yaml")):
                     rule_specs.append(sub)
         # User-supplied --sast-rules ADD to the discovered defaults (never
@@ -664,12 +661,12 @@ def main() -> int:
         # local dir, a semgrep registry ref (`p/…`, `http(s)://…`), or a skip
         # (`auto` and typos) — wrapping in Path() here would mangle URLs
         # (`https://`→`https:/`).
-        rule_specs += [p.strip() for p in args.sast_rules.split(",") if p.strip()]
+        rule_specs += [p.strip() for p in sast_rules.split(",") if p.strip()]
 
         sast_res = sast_scan.run_sast(
-            target_root, mode=args.sast, rules_dirs=rule_specs,
-            excludes=excludes, timeout=args.sast_timeout,
-            codeql_db=Path(args.codeql_db) if args.codeql_db else None,
+            target_root, mode=sast, rules_dirs=rule_specs,
+            excludes=excludes, timeout=sast_timeout,
+            codeql_db=Path(codeql_db) if codeql_db else None, base=base,
         )
         # all_functions already carry target-root-relative .file paths here;
         # attribute() is suffix-tolerant so rel/abs differences still match.
@@ -682,13 +679,13 @@ def main() -> int:
     all_functions.sort(
         key=lambda f: (-f.suspicion_score, -f.loc, f.file, f.name, f.line_start)
     )
-    # In sweep (max_functions is None) the candidate list is the FULL ranked
+    # In sweep (max_n is None) the candidate list is the FULL ranked
     # inventory; in capped mode it is the top-N.
-    top = all_functions if max_functions is None else all_functions[:max_functions]
+    top = all_functions if max_n is None else all_functions[:max_n]
 
     oracle_candidates = _detect_oracle_candidates(all_functions)
 
-    out = {
+    doc = {
         "schema": "code-review-prescan/v1",
         "ts": int(time.time()),
         "target_root": str(target_root),
@@ -700,13 +697,13 @@ def main() -> int:
             # run-script, reviewer, and merge agree on how much was selected and
             # how much was deliberately left out. cap is null in sweep mode.
             "mode": mode,
-            "cap": max_functions,
+            "cap": max_n,
             "candidates_selected": len(top),
             "not_selected": len(all_functions) - len(top),
             "excluded_paths": excludes,
-            "cve_context_consumed": str(args.cve_context) if args.cve_context else None,
+            "cve_context_consumed": str(cve_context) if cve_context else None,
             "recently_changed_files": len(recent),
-            "sast_mode": args.sast,
+            "sast_mode": sast,
             "sast_attributed_findings": sast_block.get("attributed", 0),
         },
         # Oracle candidates for logic-bug fuzzing. The reviewer and planner read
@@ -731,17 +728,57 @@ def main() -> int:
         ],
     }
 
-    out_path = Path(args.out)
+    out_path = io(out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = out_path.with_suffix(out_path.suffix + ".tmp")
     with tmp.open("w") as f:
-        json.dump(out, f, indent=2)
+        json.dump(doc, f, indent=2)
         f.write("\n")
     tmp.replace(out_path)
+    return PrescanResult(Path(out), doc)
 
-    print(out_path)
+
+def main(argv=None, *, base: Path | None = None, quiet: bool = False) -> int:
+    """`cc-fuzzer prescan scan` (code_review_prescan.py's CLI). `base` as for
+    prescan(); quiet=True drops the artifact-path line on stdout."""
+    ap = argparse.ArgumentParser(prog="code_review_prescan.py", description=_DESCRIPTION)
+    ap.add_argument("--target-root", required=True,
+                    help="Root directory of the target source.")
+    ap.add_argument("--out", required=True,
+                    help="Output JSON path.")
+    ap.add_argument("--max-functions", default="50",
+                    help="Top-N functions to surface in the candidates list (default 50). "
+                         "Accepts an int, or 'all'/0 for UNLIMITED (sweep mode — the full "
+                         "ranked inventory becomes the candidate list). Negatives are rejected.")
+    ap.add_argument("--excluded-paths", default="",
+                    help="Comma-separated path fragments to exclude (defaults union with built-ins).")
+    ap.add_argument("--cve-context", default="",
+                    help="Optional path to cve-context-<ts>.json for hotspot cross-ref.")
+    ap.add_argument("--sast", default="auto", choices=["off", "auto", "on"],
+                    help="Run external SAST (semgrep/CodeQL) as additional Tier-1 signal. "
+                         "'auto' (default) runs whatever is installed and self-skips loudly "
+                         "when nothing is; 'off' disables; 'on' is auto plus a louder status.")
+    ap.add_argument("--sast-rules", default="",
+                    help="Comma-separated semgrep rule sources, appended to the bundled "
+                         "rules/semgrep default. Each is a local rule dir OR an explicit "
+                         "semgrep registry ref fetched on demand: 'p/trailofbits' (and "
+                         "other 'p/'/'r/' shorthands) or an http(s):// rule URL. NOTE: "
+                         "'auto' is unsupported (needs semgrep telemetry, disabled for "
+                         "privacy) and is skipped with a note — use an explicit pack.")
+    ap.add_argument("--sast-timeout", type=int, default=300,
+                    help="Wall-clock budget (seconds) for the whole SAST step (default 300).")
+    ap.add_argument("--codeql-db", default="",
+                    help="Path to a PREBUILT CodeQL database. CodeQL is skipped when absent "
+                         "(DB construction needs the build command and is not done implicitly).")
+    args = ap.parse_args(argv)
+    try:
+        r = prescan(args.target_root, args.out, max_functions=args.max_functions,
+                    excluded_paths=args.excluded_paths, cve_context=args.cve_context,
+                    sast=args.sast, sast_rules=args.sast_rules, sast_timeout=args.sast_timeout,
+                    codeql_db=args.codeql_db, base=base)
+    except PrescanError as e:
+        print(str(e), file=sys.stderr)
+        return e.code
+    if not quiet:
+        print(r.path)
     return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())

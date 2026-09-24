@@ -1,4 +1,4 @@
-"""Shared golden cases for the §2 ports (UPDATE_ROADMAP.md table rows 1-6).
+"""Shared golden cases for the §2 ports (UPDATE_ROADMAP.md table rows 1-8).
 
 Each Case names ONE golden (tests/golden/<name>.json), the fixture + setup it
 runs on, the bash entry point that recorded it (`bash_argv`) and the core CLI
@@ -1011,10 +1011,243 @@ DELTA_CASES = [
     _fd("from-subdir", "campaign-warm", setup=_delta_master, cwd="src"),
 ]
 
+
+# ---------------------------------------------------------------------------
+# row 7: code-review-run.sh (+ _lib/code_review_prescan.py, sast_scan.py,
+# code_review_merge.py). SAST runs against the stub semgrep / codeql in
+# tests/support/stub-sast (neither tool is installed here).
+# ---------------------------------------------------------------------------
+
+CR = "scripts/code-review-run.sh"
+STUB_SAST_PATH = f"{TESTS / 'support' / 'stub-sast'}{os.pathsep}{SUPPORT_BIN}{os.pathsep}{os.environ.get('PATH', '/usr/bin:/bin')}"
+_SAST_ENV = {"PATH": STUB_SAST_PATH, "STUB_SEMGREP_LOG": "../semgrep-argv.log"}
+
+
+def _cr(name, fixture, *args, setup=None, env=None, cwd=None):
+    return Case(f"code-review-prescan/{name}", fixture, bash(CR, *args), core("prescan", "run", *args),
+                setup=setup, env=env or {}, cwd=cwd)
+
+
+def _cr_config(block):
+    def setup(sb):
+        sb.edit_json("fuzz/state/fuzz-config.json", lambda d: d.update(code_review=block))
+    return setup
+
+
+def _cve_contexts(sb):
+    snaps = "fuzz/state/snapshots"
+    old = sb.write(f"{snaps}/cve-context-1789990000.json", json.dumps(
+        {"hotspots": {"by_function": [{"name": "free_chunk"}]}}) + "\n")
+    os.utime(old, (sb.now - 600, sb.now - 600))
+    sb.write(f"{snaps}/cve-context-1789999000.json", json.dumps({
+        "hotspots": {"by_file": [{"path": "src/parser.c"}, {"nopath": 1}],
+                     "by_function": [{"name": "parse_exif"}, {"name": ""}]},
+        "pattern_frequency": {"oob_read": 3, "integer_overflow": 1}}) + "\n")
+
+
+def _extra_rule_packs(sb):
+    sb.write("rules-extra/plain/r1.yml", "rules: []\n")
+    sb.write("rules-extra/dotted/.github/workflows/ci.yml", "on: push\n")
+    sb.write("rules-extra/dotted/pack-a/a.yaml", "rules: []\n")
+    sb.write("rules-extra/dotted/pack-b/README", "no rules\n")
+    sb.write("rules-extra/dotted/top.yml", "rules: []\n")
+    sb.write("rules-extra/empty/.keep", "")
+
+
+def _git_recent(sb):
+    """src/ as a git repo with a commit dated (really) yesterday, so git's
+    --since=30.days.ago (real clock) sees it whatever the frozen clock says."""
+    when = f"@{int(time.time()) - 86400} +0000"
+    env = dict(sb.env(), GIT_AUTHOR_NAME="F", GIT_AUTHOR_EMAIL="f@example.invalid",
+               GIT_COMMITTER_NAME="F", GIT_COMMITTER_EMAIL="f@example.invalid",
+               GIT_AUTHOR_DATE=when, GIT_COMMITTER_DATE=when,
+               GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+    src = sb.path("src")
+    for args in (["init", "-q"], ["add", "parser.c"], ["commit", "-q", "-m", "x"]):
+        subprocess.run(["git", *args], cwd=src, env=env, check=True, capture_output=True)
+
+
+def _codeql_db(sb):
+    sb.write("fuzz/codeql/db/codeql-database.yml", "x: 1\n")
+
+
+def _rich_source(sb):
+    """A second tree exercising the inventory: oracle pairs, lifecycle pairs,
+    gates, recursion, a >100 LOC function, excluded dirs and odd extensions."""
+    body = "\n".join(f"    x += {i};" for i in range(120))
+    sb.write("lib/codec.c", (
+        "#include <string.h>\n"
+        "static int json_parse(const char *s) {\n    return json_parse(s + 1) + atoi(s);\n}\n"
+        "int encode_json(char *out, const char *s) {\n    strcpy(out, s);\n    sprintf(out, s);\n    return 0;\n}\n"
+        "int validate_token(const char *t)\n{\n    return system(t);\n}\n"
+        "void *ctx_create(void) {\n    return malloc(n * 4 + 1);\n}\n"
+        "void ctx_destroy(void *c) {\n    free(c);\n}\n"
+        "int parseDoc(int x) {\n    printf(x);\n    for (i = 0; i < len; i++) buf[i] = 0;\n    return 0;\n}\n"
+        "int big(int x) {\n" + body + "\n    return x;\n}\n"
+        "int unbalanced(void) {\n#if 0\n{\n#endif\n    return 0;\n}\n"
+        "typedef int (*fnptr)(int);\n"
+        "int proto(int a);\n"))
+    sb.write("lib/codec.hpp", "inline int deserialize_blob(int x) { return gets(x); }\n")
+    sb.write("lib/tests/t.c", "int test_one(void) { strcpy(a, b); return 0; }\n")
+    sb.write("lib/vendor/v.c", "int vend(void) { return 0; }\n")
+    sb.write("lib/notes.txt", "int nope(void) { return 0; }\n")
+    sb.write("lib/private/p.c", "int private_fn(void) { gets(x); return 0; }\n")
+
+
+PRESCAN_CASES = [
+    _cr("sast-on-stub", "campaign-crashes", "--sast", "on", env=_SAST_ENV),
+    _cr("sast-auto-stub-extra-rules", "campaign-crashes", "--sast", "auto", "--sast-rules",
+        "rules-extra/plain,rules-extra/dotted,rules-extra/empty,p/trailofbits,https://example.invalid/r.yml,auto,nope/../missing,, ",
+        setup=_extra_rule_packs, env=_SAST_ENV),
+    _cr("sast-stub-rule-load-errors", "campaign-crashes", env=dict(_SAST_ENV, STUB_SEMGREP_MODE="errors")),
+    _cr("sast-stub-all-fail", "campaign-crashes", "--sast-rules", "p/x",
+        env=dict(_SAST_ENV, STUB_SEMGREP_MODE="fail")),
+    _cr("sast-stub-garbage", "campaign-crashes", env=dict(_SAST_ENV, STUB_SEMGREP_MODE="garbage")),
+    _cr("sast-stub-empty", "campaign-crashes", env=dict(_SAST_ENV, STUB_SEMGREP_MODE="empty")),
+    _cr("sast-stub-partial-fail", "campaign-crashes", "--sast-rules", "p/bad-pack,rules-extra/plain",
+        setup=_extra_rule_packs, env=dict(_SAST_ENV, STUB_SEMGREP_FAIL_ON="bad-pack")),
+    _cr("codeql-db-stub", "campaign-crashes", "--codeql-db", "fuzz/codeql/db", setup=_codeql_db,
+        env=_SAST_ENV),
+    _cr("codeql-db-stub-fail", "campaign-crashes", "--codeql-db", "fuzz/codeql/db", setup=_codeql_db,
+        env=dict(_SAST_ENV, STUB_CODEQL_MODE="fail")),
+    _cr("codeql-db-missing", "campaign-crashes", "--codeql-db", "fuzz/codeql/nope", env=_SAST_ENV),
+    _cr("config-codeql-db", "campaign-crashes",
+        setup=lambda sb: (_codeql_db(sb), _cr_config({"sast": {"codeql_db": "fuzz/codeql/db"}})(sb)),
+        env=_SAST_ENV),
+    _cr("config-defaults", "campaign-crashes",
+        setup=_cr_config({"scan_paths": ["src"], "max_functions_to_review": 2,
+                          "excluded_paths": ["gen/", "old/"], "sast": {"mode": "off"}})),
+    _cr("config-sast-bool-false", "campaign-crashes",
+        setup=_cr_config({"scan_paths": "src", "sast": False}), env=_SAST_ENV),
+    _cr("config-sast-bool-true", "campaign-crashes", setup=_cr_config({"sast": True}), env=_SAST_ENV),
+    _cr("config-sast-enabled-false", "campaign-crashes",
+        setup=_cr_config({"sast": {"enabled": False}}), env=_SAST_ENV),
+    _cr("config-unparseable", "campaign-crashes", "--no-sast",
+        setup=lambda sb: sb.write("fuzz/state/fuzz-config.json", "{not json\n")),
+    _cr("cli-overrides-config", "campaign-crashes", "--target-root", "src", "--max-functions", "1",
+        "--excluded-paths", "x/", "--sast", "off",
+        setup=_cr_config({"scan_paths": ["nowhere"], "max_functions_to_review": 9, "sast": {"mode": "on"}})),
+    _cr("cve-context-latest", "campaign-crashes", "--no-sast", setup=_cve_contexts),
+    _cr("cve-context-skipped", "campaign-crashes", "--no-sast", "--no-cve-context", setup=_cve_contexts),
+    _cr("git-recently-changed", "campaign-crashes", "--no-sast", setup=_git_recent),
+    _cr("rich-inventory", "campaign-crashes", "--target-root", "lib", "--no-sast", "--excluded-paths",
+        "private", setup=_rich_source),
+    _cr("rich-sweep-windows", "campaign-crashes", "--target-root", "lib", "--sweep", "--batch-size", "3",
+        "--max-functions", "2", "--no-sast", setup=_rich_source),
+    _cr("max-all", "campaign-crashes", "--max-functions", "all", "--no-sast"),
+    _cr("max-zero", "campaign-crashes", "--max-functions", "0", "--no-sast"),
+    _cr("max-bad", "campaign-crashes", "--max-functions", "lots", "--no-sast"),
+    _cr("max-negative", "campaign-crashes", "--max-functions", "-3", "--no-sast"),
+    _cr("empty-tree", "campaign-crashes", "--target-root", "empty", "--no-sast",
+        setup=lambda sb: sb.path("empty").mkdir()),
+    _cr("target-root-missing", "campaign-crashes", "--target-root", "nope", "--no-sast"),
+    _cr("no-target-source", "campaign-cold", "--no-sast",
+        setup=lambda sb: (sb.edit_json("fuzz/state/harness-built.json", lambda d: d.pop("target_source")))),
+    _cr("target-source-is-dir", "campaign-cold", "--no-sast",
+        setup=lambda sb: sb.edit_json("fuzz/state/harness-built.json", lambda d: d.update(target_source="src"))),
+    _cr("from-subdir", "campaign-crashes", "--no-sast", cwd="src"),
+    _cr("state-dir-override", "campaign-crashes", "--no-sast",
+        setup=lambda sb: shutil.move(str(sb.path("fuzz/state")), str(sb.path("alt-state"))),
+        env={"FUZZ_STATE_DIR": "alt-state"}),
+    Case("code-review-prescan/help", "campaign-cold", bash(CR, "--help"), None),
+]
+
+# _lib/code_review_prescan.py and _lib/sast_scan.py are gone (their only
+# caller was code-review-run.sh); these goldens were recorded from them and the
+# core CLI is now both sides of the case.
+
+
+def _lib(name, verb, *args, setup=None, env=None):
+    return Case(name, "campaign-crashes", core("prescan", verb, *args), core("prescan", verb, *args),
+                setup=setup, env=env or {})
+
+
+LIB_PRESCAN_CASES = [
+    _lib("code-review-prescan/lib-direct", "scan", "--target-root", "src", "--out", "out/p.json",
+         "--sast", "on", "--sast-timeout", "8", env=_SAST_ENV),
+    _lib("code-review-prescan/lib-bad-root", "scan", "--target-root", "nope", "--out", "p.json"),
+    _lib("sast-scan/json", "sast", "--target-root", "src", "--rules", "rules-extra/plain,p/pack",
+         "--excluded-paths", "a/,/b/,", "--json", "--timeout", "40", setup=_extra_rule_packs, env=_SAST_ENV),
+    _lib("sast-scan/text", "sast", "--target-root", "src", "--rules", "rules-extra/plain",
+         setup=_extra_rule_packs, env=_SAST_ENV),
+    _lib("sast-scan/off", "sast", "--target-root", "src", "--mode", "off", "--json"),
+    _lib("sast-scan/only-auto", "sast", "--target-root", "src", "--rules", "auto,nope", "--json", env=_SAST_ENV),
+    _lib("sast-scan/no-rules", "sast", "--target-root", "src", "--json", env=_SAST_ENV),
+]
+
+
+# merge-code-review: window partials -> canonical snapshot + markdown.
+SNAP = "fuzz/state/snapshots"
+
+
+def _cr_finding(i, **kw):
+    f = {"cr_hash": f"h{i:02d}", "id": f"w{i}", "status": "candidate", "file": f"src/f{i % 3}.c",
+         "function": f"fn{i}", "line_range": [10 + i, 20 + i], "pattern": "oob_read",
+         "confidence": ("high", "medium", "low")[i % 3], "evidence": f"evidence {i}",
+         "tier_classified": "sonnet"}
+    f.update(kw)
+    return f
+
+
+def _merge_inputs(sb, *, n_extra=0, sweep=False, reviewed=(3, 2)):
+    sb.write(f"{SNAP}/code-review-prescan-1789999000.json", json.dumps({
+        "schema": "code-review-prescan/v1", "ts": 1789999000, "target_root": "src",
+        "scope": {"files_scanned": 4, "functions_inventoried": 5, "loc_total": 321,
+                  "mode": "sweep" if sweep else "capped", "excluded_paths": ["tests/"]},
+        "top_candidates": []}) + "\n")
+    w1 = {"schema": "code-review/v1", "ts": 1789999100, "target": "",
+          "scope": {"candidates_reviewed": reviewed[0], "files_scanned": 99},
+          "tiers_run": ["sonnet", "prescan"], "model_costs": {"sonnet_tokens": 100, "note": "x"},
+          "revisit_passes": [{"pass": 1}],
+          "focus_areas": [{"rank": 2, "scope": "parse_*", "rationale": "r1", "fuzzing_recommendation": "fr1"},
+                          {"rank": 1, "scope": "exif", "rationale": "r2"}],
+          "findings": [_cr_finding(1), _cr_finding(2, status="dismissed"),
+                       _cr_finding(3, oracle_kind="auth", trust_boundary_crossed="user->admin",
+                                   precondition="login", exploitability_hint="easy",
+                                   fuzzing_recommendation="seed tokens", needs_deep_pass=True,
+                                   deep_pass_question="is it reachable?"),
+                       {"id": "nohash", "confidence": "high", "pattern": "p", "file": "x.c",
+                        "line_start": 7}]}
+    w2 = {"schema": "code-review/v1", "ts": 1789999200, "target": "libfoo",
+          "scope": {"candidates_reviewed": reviewed[1]}, "tiers_run": ["opus"],
+          "model_costs": {"sonnet_tokens": 50, "opus_tokens": 7},
+          "focus_areas": [{"rank": 1, "scope": "exif", "rationale": "dup"},
+                          {"scope": "crc", "rationale": "r3"}],
+          "findings": [_cr_finding(2, status="confirmed", tier_classified="opus"),
+                       _cr_finding(1, status="candidate"),
+                       *[_cr_finding(10 + i, confidence="high") for i in range(n_extra)]]}
+    sb.write(f"{SNAP}/code-review-1789999100-w01.json", json.dumps(w1) + "\n")
+    sb.write(f"{SNAP}/code-review-1789999100-w02.json", json.dumps(w2) + "\n")
+
+
+_MERGE_ARGS = ("--prescan", f"{SNAP}/code-review-prescan-1789999000.json",
+               "--out", f"{SNAP}/code-review-1789999100.json", "--md", "fuzz/state/code-review.md")
+_PARTS = (f"{SNAP}/code-review-1789999100-w01.json", f"{SNAP}/code-review-1789999100-w02.json")
+
+
+def _merge(name, *args, setup=_merge_inputs, fixture="campaign-crashes"):
+    return Case(f"code-review-merge/{name}", fixture, bash(CR, "merge-code-review", *args),
+                core("prescan", "merge", *args), setup=setup)
+
+
+MERGE_CASES = [
+    _merge("capped-two-windows", *_MERGE_ARGS, "--target", "tgt", *_PARTS),
+    _merge("target-from-partial", *_MERGE_ARGS, *_PARTS),
+    _merge("sweep-complete", *_MERGE_ARGS, *_PARTS, setup=lambda sb: _merge_inputs(sb, sweep=True)),
+    _merge("sweep-incomplete-many-findings", *_MERGE_ARGS, *_PARTS,
+           setup=lambda sb: _merge_inputs(sb, sweep=True, n_extra=21, reviewed=(1, 1))),
+    _merge("single-empty-partial", *_MERGE_ARGS, f"{SNAP}/w.json",
+           setup=lambda sb: (_merge_inputs(sb), sb.write(f"{SNAP}/w.json", "{}\n"))),
+    _merge("bad-prescan", "--prescan", "nope.json", "--out", "o.json", "--md", "o.md", *_PARTS),
+    _merge("bad-partial", *_MERGE_ARGS, _PARTS[0], "missing.json"),
+    _merge("no-partials", *_MERGE_ARGS),
+]
+
 ROW1_CASES = CONFIG_CASES + ENUMS_CASES
 ROW2_CASES = VALIDATE_CASES
 ROW3_CASES = YOLO_CASES + ROUNDUP_CASES + CEILING_CASES + DERIVE_CASES + UPDATE_CASES
 ROW4_CASES = CLASSIFY_CASES + DETECT_CASES
 ROW5_CASES = LAUNCH_CASES + LIVENESS_CASES
 ROW6_CASES = CMPLOG_CASES + COVERAGE_CASES + QUARANTINE_CASES + SAFETY_CASES + DELTA_CASES
-ALL_CASES = ROW1_CASES + ROW2_CASES + ROW3_CASES + ROW4_CASES + ROW5_CASES + ROW6_CASES
+ROW7_CASES = PRESCAN_CASES + LIB_PRESCAN_CASES + MERGE_CASES
+ALL_CASES = ROW1_CASES + ROW2_CASES + ROW3_CASES + ROW4_CASES + ROW5_CASES + ROW6_CASES + ROW7_CASES
