@@ -227,9 +227,10 @@ case "$RESULT" in
   HARNESS_SET*)
     hp_invalidate_cache   # so a sourcing caller sees multi mode immediately
     if [ "$ACTION" = "init" ]; then
-      # Stamp the schema version. v0.30 calibrates to v12 — there is no
-      # migration path from older versions; older campaigns must start fresh.
-      echo "v12" > "$STATE_DIR/schema-version"
+      # Stamp the schema version (cc_fuzzer_core.schema.SCHEMA_VERSION, v12).
+      # There is no migration path from older versions; older campaigns must
+      # start fresh.
+      python3 -m cc_fuzzer_core schema version > "$STATE_DIR/schema-version"
     fi
     echo "wrote $CFG_FILE ($ACTION: $RESULT)" >&2
     echo "$RESULT"
