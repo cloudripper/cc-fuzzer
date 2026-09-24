@@ -163,6 +163,18 @@ def resolve_state_dir(project_root: Path, fuzz_root: Path,
     return fuzz_root / "state"
 
 
+def state_dir_text(c: "Campaign", env: Mapping[str, str] | None = None) -> str:
+    """The state dir as the path-anchored scripts print it:
+    ${FUZZ_STATE_DIR:-$FUZZ_ROOT/state} -- a relative override stays relative
+    (to the project root), the default is absolute. For messages and recorded
+    paths only; do I/O through Campaign.state_dir."""
+    env = os.environ if env is None else env
+    raw = env.get("FUZZ_STATE_DIR")
+    if raw and resolve_state_dir(c.project_root, c.fuzz_root, env) == c.state_dir:
+        return raw
+    return str(c.state_dir)
+
+
 def campaign(start: str | os.PathLike | None = None, *,
              project_root: str | os.PathLike | None = None,
              env: Mapping[str, str] | None = None,

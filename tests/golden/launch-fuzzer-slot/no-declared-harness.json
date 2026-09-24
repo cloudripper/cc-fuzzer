@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/launch-fuzzer-slot.sh",
+    "--engine",
+    "libfuzzer"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "ERROR: no --harness <name> given and no declared harness resolvable"
+  ],
+  "stdout": []
+}

@@ -20,7 +20,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable
 
-from tests.support.golden import FROZEN_NOW, bash, core, python_script
+from tests.support.golden import FROZEN_NOW, SUPPORT_BIN, TESTS, bash, core, python_script
 
 N = FROZEN_NOW
 
@@ -654,8 +654,152 @@ DETECT_CASES = [
         env={"FUZZ_STATE_DIR": "alt-state"}),
 ]
 
+
+# ---------------------------------------------------------------------------
+# row 5: launch-fuzzer-slot.sh, check-slot-liveness.sh
+# ---------------------------------------------------------------------------
+
+REAP = str(TESTS / "support" / "reap-slots.sh")
+STUB_AFL_PATH = f"{TESTS / 'support' / 'stub-afl'}{os.pathsep}{SUPPORT_BIN}{os.pathsep}{os.environ.get('PATH', '/usr/bin:/bin')}"
+LS = "scripts/launch-fuzzer-slot.sh"
+_STUB_HARNESS = ('#!/bin/sh\n# test stub fuzzer: record cwd + argv, then idle until reaped\n'
+                 'echo "harness cwd=$(pwd)"\nfor a in "$@"; do echo "  $a"; done\nexec sleep 30\n')
+
+
+def _pid_regexes(sb):
+    sb.add_regex(r"\b(pid|pgid)=\d+", r"\1=<PID>")
+    sb.add_regex(r'"(pid|pgid)": "\d+"', r'"\1": "<PID>"')
+    sb.add_regex(r"(?m)^\d+$", "<PID>")
+    sb.add_regex(r"PID \d+", "PID <PID>")
+
+
+def _stub_harnesses(sb):
+    """Replace the fixture's harness binaries with long-lived argv recorders."""
+    _pid_regexes(sb)
+    for p in sb.path("fuzz/harnesses").glob("*/harness/*_fuzzer"):
+        sb.write(str(p.relative_to(sb.project)), _STUB_HARNESS, mode=0o755)
+
+
+def _ls(name, fixture, *args, setup=None, env=None, reap=False, live=False):
+    b, c = bash(LS, *args), core("slots", "launch", *args)
+    if reap:
+        b, c = [REAP, *b], [REAP, *c]
+    return Case(f"launch-fuzzer-slot/{name}", fixture, b, c,
+                setup=setup or _pid_regexes, env=env or {}, live=live)
+
+
+def _dicts(sb):
+    _stub_harnesses(sb)
+    sb.write("fuzz/dicts/a.dict", '"GIF8"\n')
+    sb.write("fuzz/dicts/b.dict", 'kw="\\x00\\x01"\n')
+
+    def hs(d):
+        for h in d["harnesses"]:
+            h["dict_files"] = ["fuzz/dicts/a.dict", "fuzz/dicts/missing.dict", "fuzz/dicts/b.dict"]
+        d["harnesses"][0]["fuzzing_mode"] = "process_based"
+    sb.edit_json("fuzz/state/harnesses.json", hs)
+
+
+def _single_dict_string(sb):
+    _stub_harnesses(sb)
+    sb.write("fuzz/dicts/a.dict", '"GIF8"\n')
+    sb.edit_json("fuzz/state/harnesses.json",
+                 lambda d: d["harnesses"][0].update(dict_files="fuzz/dicts/a.dict"))
+
+
+def _already_running(sb):
+    _pid_regexes(sb)
+    sb.write("fuzz/state/fuzzer-parser-main.pid", f"{sb.live_pid}\n")
+
+
+LAUNCH_CASES = [
+    _ls("unknown-arg", "campaign-warm", "--frobnicate"),
+    _ls("undeclared-harness", "campaign-warm", "--harness", "ghost", "--engine", "libfuzzer"),
+    _ls("no-declared-harness", "campaign-cold", "--engine", "libfuzzer",
+        setup=lambda sb: sb.edit_json("fuzz/state/fuzz-config.json", lambda d: d.update(harnesses=[]))),
+    _ls("bad-slot-name", "campaign-warm", "--slot", "Main_1", "--harness", "parser"),
+    _ls("slot-too-long", "campaign-warm", "--slot", "a" * 33, "--harness", "parser"),
+    _ls("binary-not-executable", "campaign-warm", "--harness", "parser", "--binary", "fuzz/nope"),
+    _ls("unsafe-asan-options", "campaign-warm", "--harness", "parser", "--engine", "libfuzzer",
+        env={"ASAN_OPTIONS": "detect_leaks=0:abort_on_error=1"}),
+    _ls("already-running", "campaign-warm", "--slot", "parser-main", "--harness", "parser",
+        "--engine", "libfuzzer", setup=_already_running, live=True),
+    _ls("auto-engine-undetectable", "campaign-warm", "--harness", "parser"),
+    _ls("bad-engine", "campaign-warm", "--harness", "parser", "--engine", "honggfuzz"),
+    _ls("bad-timeout", "campaign-warm", "--harness", "parser", "--engine", "libfuzzer",
+        "--timeout-ms", "fast"),
+    _ls("timeout-below-floor", "campaign-warm", "--harness", "parser", "--engine", "libfuzzer",
+        "--timeout-ms", "50"),
+    _ls("aflpp-missing", "campaign-warm", "--slot", "encoder-afl", "--harness", "encoder",
+        "--engine", "aflpp"),
+    _ls("aflpp-bad-role", "campaign-warm", "--slot", "encoder-afl", "--harness", "encoder",
+        "--engine", "aflpp", "--role", "boss", env={"PATH": STUB_AFL_PATH}),
+    _ls("aflpp-bad-schedule", "campaign-warm", "--slot", "encoder-afl", "--harness", "encoder",
+        "--engine", "aflpp", "--power-schedule", "slow", env={"PATH": STUB_AFL_PATH}),
+    _ls("libfuzzer-forks", "campaign-warm", "--slot", "parser-main", "--harness", "parser",
+        "--engine", "libfuzzer", "--libfuzzer-forks", "3", setup=_stub_harnesses, reap=True),
+    _ls("libfuzzer-single-dicts-process-based", "campaign-warm", "--slot", "p2", "--harness", "parser",
+        "--engine", "libfuzzer", "--timeout-ms", "2500", "--corpus", "fuzz/corpus",
+        setup=_dicts, env={"FUZZ_FORKS": "0"}, reap=True),
+    _ls("libfuzzer-default-harness-dict-string", "campaign-warm", "--engine", "libfuzzer",
+        setup=_single_dict_string, env={"FUZZ_FORKS_OVERRIDE": "0"}, reap=True),
+    _ls("aflpp-restart-cmplog-dicts", "campaign-warm", "--slot", "encoder-afl", "--harness", "encoder",
+        "--engine", "aflpp", "--role", "master", "--power-schedule", "explore",
+        "--restart-of", "encoder-afl", setup=_dicts, env={"PATH": STUB_AFL_PATH}, reap=True),
+    _ls("aflpp-auto-secondary-process-based", "campaign-warm", "--slot", "parser-s1", "--harness",
+        "parser", "--role", "secondary", "--binary", "fuzz/harnesses/parser/harness/parser_fuzzer",
+        setup=_dicts, env={"PATH": STUB_AFL_PATH}, reap=True),
+    _ls("state-dir-override", "campaign-warm", "--slot", "parser-main", "--harness", "parser",
+        "--engine", "libfuzzer", "--libfuzzer-forks", "0",
+        setup=lambda sb: (_stub_harnesses(sb),
+                          shutil.move(str(sb.path("fuzz/state")), str(sb.path("fuzz/alt-state")))),
+        env={"FUZZ_STATE_DIR": "fuzz/alt-state"}, reap=True),
+]
+
+CSL = "scripts/check-slot-liveness.sh"
+
+
+def _csl(name, fixture, *args, setup=None, env=None):
+    # FUZZ_FORKS_OVERRIDE=0: the fork count is otherwise capped at nproc-1.
+    return Case(f"check-slot-liveness/{name}", fixture, [REAP, *bash(CSL, *args)],
+                [REAP, *core("slots", "liveness", *args)], setup=setup,
+                env={"FUZZ_FORKS_OVERRIDE": "0", **(env or {})})
+
+
+def _one_declared_slot_missing(sb):
+    _stub_harnesses(sb)
+    sb.edit_json("fuzz/state/fuzzers.json", lambda d: d.update(slots=d["slots"][1:]))
+
+
+def _no_declared_slots(sb):
+    _stub_harnesses(sb)
+    sb.edit_json("fuzz/state/fuzz-config.json", lambda d: d.pop("fuzzer_slots") and None)
+
+
+def _slot_options(sb):
+    _stub_harnesses(sb)
+
+    def cfg(d):
+        d["fuzzer_slots"][0].update(libfuzzer_forks=0, timeout_ms=3000)
+    sb.edit_json("fuzz/state/fuzz-config.json", cfg)
+
+
+LIVENESS_CASES = [
+    _csl("relaunch-libfuzzer-afl-missing", "campaign-warm", setup=_stub_harnesses),
+    _csl("relaunch-both", "campaign-warm", setup=_stub_harnesses, env={"PATH": STUB_AFL_PATH}),
+    _csl("declared-slot-missing-from-manifest", "campaign-warm", setup=_one_declared_slot_missing,
+         env={"PATH": STUB_AFL_PATH}),
+    _csl("manifest-only-slots", "campaign-warm", setup=_no_declared_slots, env={"PATH": STUB_AFL_PATH}),
+    _csl("slot-options", "campaign-warm", setup=_slot_options),
+    _csl("state-dir-override", "campaign-warm",
+         setup=lambda sb: (_stub_harnesses(sb),
+                           shutil.move(str(sb.path("fuzz/state")), str(sb.path("fuzz/alt-state")))),
+         env={"FUZZ_STATE_DIR": "fuzz/alt-state"}),
+]
+
 ROW1_CASES = CONFIG_CASES + ENUMS_CASES
 ROW2_CASES = VALIDATE_CASES
 ROW3_CASES = YOLO_CASES + ROUNDUP_CASES + CEILING_CASES + DERIVE_CASES + UPDATE_CASES
 ROW4_CASES = CLASSIFY_CASES + DETECT_CASES
-ALL_CASES = ROW1_CASES + ROW2_CASES + ROW3_CASES + ROW4_CASES
+ROW5_CASES = LAUNCH_CASES + LIVENESS_CASES
+ALL_CASES = ROW1_CASES + ROW2_CASES + ROW3_CASES + ROW4_CASES + ROW5_CASES

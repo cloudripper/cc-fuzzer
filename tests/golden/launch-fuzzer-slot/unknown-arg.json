@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/launch-fuzzer-slot.sh",
+    "--frobnicate"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "ERROR: unknown arg '--frobnicate'"
+  ],
+  "stdout": []
+}

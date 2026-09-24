@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/launch-fuzzer-slot.sh",
+    "--harness",
+    "parser",
+    "--engine",
+    "libfuzzer"
+  ],
+  "created_dirs": [
+    "out"
+  ],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "ERROR: ASAN_OPTIONS contains a safety-defeating option: detect_leaks=0:abort_on_error=1",
+    "       refusing to launch. Unset or fix ASAN_OPTIONS and retry."
+  ],
+  "stdout": []
+}

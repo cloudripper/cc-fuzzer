@@ -1,0 +1,18 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/launch-fuzzer-slot.sh",
+    "--slot",
+    "Main_1",
+    "--harness",
+    "parser"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "ERROR: invalid --slot 'Main_1' (must match ^[a-z0-9-]+$)"
+  ],
+  "stdout": []
+}

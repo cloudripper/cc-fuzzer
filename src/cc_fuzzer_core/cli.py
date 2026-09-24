@@ -28,6 +28,8 @@ SUBSYSTEMS = (
     "cc_fuzzer_core.schema",
     "cc_fuzzer_core.state",
     "cc_fuzzer_core.crash",
+    "cc_fuzzer_core.slots",
+    "cc_fuzzer_core.tools",
     "cc_fuzzer_core.models",
     "cc_fuzzer_core.manifest",
 )

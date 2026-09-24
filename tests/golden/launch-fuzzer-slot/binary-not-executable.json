@@ -1,0 +1,18 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/launch-fuzzer-slot.sh",
+    "--harness",
+    "parser",
+    "--binary",
+    "fuzz/nope"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "ERROR: binary not executable: fuzz/nope"
+  ],
+  "stdout": []
+}

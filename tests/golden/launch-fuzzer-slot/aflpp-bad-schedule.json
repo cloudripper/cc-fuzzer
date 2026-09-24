@@ -1,0 +1,26 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/launch-fuzzer-slot.sh",
+    "--slot",
+    "encoder-afl",
+    "--harness",
+    "encoder",
+    "--engine",
+    "aflpp",
+    "--power-schedule",
+    "slow"
+  ],
+  "created_dirs": [
+    "fuzz/harnesses/encoder/.libfuzzer-cwd",
+    "out"
+  ],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "slot=encoder-afl: cmplog enabled (fuzz/harnesses/encoder/harness/encoder_fuzzer_cmplog)",
+    "ERROR: invalid --power-schedule 'slow'"
+  ],
+  "stdout": []
+}
