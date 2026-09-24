@@ -1,0 +1,31 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/find-delta-targets.sh",
+    "--range",
+    "HEAD~1..HEAD"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {
+    "fuzz/state/snapshots/delta-1790000000.json": {
+      "lines": [
+        "{",
+        "  \"schema\": \"delta-targets/v1\",",
+        "  \"timestamp\": 1790000000,",
+        "  \"range\": \"HEAD~1..HEAD\",",
+        "  \"commits\": [\"340e374ecc60dd662e03013e179252fbcc69127f\"],",
+        "  \"files_changed\": 2,",
+        "  \"targets\": [{\"file\": \"src/encoder.c\", \"function_context\": \"int encode_chunk(const unsigned char *in, size_t n, unsigned char **out) {\", \"lines_changed\": [11, 11], \"kind\": \"modified\"}, {\"file\": \"src/lookup.c\", \"function_context\": null, \"lines_changed\": [1, 3], \"kind\": \"added\"}]",
+        "}"
+      ]
+    }
+  },
+  "stderr": [
+    "delta: 2 hunks across 2 files in HEAD~1..HEAD"
+  ],
+  "stdout": [
+    "fuzz/state/snapshots/delta-1790000000.json"
+  ]
+}

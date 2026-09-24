@@ -29,12 +29,13 @@
 
 set -u
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/_lib/root.sh"
+SCRIPT_DIR="$CC_FUZZER_ROOT/scripts"
 . "$SCRIPT_DIR/_lib/path-anchor.sh"
 . "$SCRIPT_DIR/_lib/harness-path.sh"
 
 FUZZ_ROOT="${FUZZ_ROOT:-fuzz}"
-STATE_DIR="$FUZZ_ROOT/state"
+STATE_DIR="${FUZZ_STATE_DIR:-$FUZZ_ROOT/state}"
 TS=$(date +%s)
 
 HARNESS=""
@@ -60,7 +61,7 @@ if [ -z "$HARNESS" ] && [ -z "$AFLPP_OUT" ]; then
   RC=0
   while IFS= read -r h; do
     [ -n "$h" ] || continue
-    bash "$0" --harness "$h" || RC=$?
+    bash "$SCRIPT_DIR/extract-cmplog-dict.sh" --harness "$h" || RC=$?
   done < <(declared_harnesses)
   exit "$RC"
 fi

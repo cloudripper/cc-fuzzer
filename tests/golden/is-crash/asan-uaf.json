@@ -1,0 +1,18 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/is-crash.sh",
+    "<ROOT>/tests/fixtures/sanitizer-logs/asan-uaf.log"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {},
+  "stderr": [
+    "awk: cmd. line:5:                     func = $(i+1);",
+    "awk: cmd. line:5:                     ^ syntax error"
+  ],
+  "stdout": [
+    "{\"is_crash\":true,\"category\":\"heap-use-after-free\",\"summary_line\":\"SUMMARY: AddressSanitizer: heap-use-after-free /src/target/src/parser.c:34:9 in free_chunk\",\"top_frame\":\"\",\"exit_code\":null}"
+  ]
+}

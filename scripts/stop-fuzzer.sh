@@ -10,7 +10,8 @@
 # bash-forked child processes that a simple kill-by-PID would miss.
 set -u
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/_lib/root.sh"
+SCRIPT_DIR="$CC_FUZZER_ROOT/scripts"
 . "$SCRIPT_DIR/_lib/path-anchor.sh"
 STATE_DIR="${FUZZ_STATE_DIR:-fuzz/state}"
 

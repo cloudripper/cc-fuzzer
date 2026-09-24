@@ -1,0 +1,11 @@
+INFO: Running with entropic power schedule (0xFF, 100).
+INFO: Seed: 1234567
+==13355==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x602000000011 at pc 0x0000004f1a2b bp 0x7ffc sp 0x7ffc
+READ of size 1 at 0x602000000011 thread T0
+    #0 0x4f1a2b in parse_exif /src/target/src/parser.c:25:13
+    #1 0x4f1c00 in parse_chunk /src/target/src/parser.c:17:16
+    #2 0x4f2000 in LLVMFuzzerTestOneInput /src/fuzz/parser_fuzzer.c:5:5
+    #3 0x43de23 in fuzzer::Fuzzer::ExecuteCallback(unsigned char const*, unsigned long) FuzzerLoop.cpp:611:15
+
+SUMMARY: AddressSanitizer: heap-buffer-overflow /src/target/src/parser.c:25:13 in parse_exif
+Shadow bytes around the buggy address:

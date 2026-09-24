@@ -14,7 +14,8 @@
 # the user's cwd as a heuristic.
 set -u
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/_lib/root.sh"
+SCRIPT_DIR="$CC_FUZZER_ROOT/scripts"
 
 #------------------------------------------------------------------------------
 # 0. Filesystem read-only enforcement

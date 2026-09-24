@@ -1,0 +1,18 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/is-crash.sh",
+    "<ROOT>/tests/fixtures/sanitizer-logs/assertion.log"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {},
+  "stderr": [
+    "awk: cmd. line:5:                     func = $(i+1);",
+    "awk: cmd. line:5:                     ^ syntax error"
+  ],
+  "stdout": [
+    "{\"is_crash\":true,\"category\":\"assertion-failure\",\"summary_line\":\"parser_fuzzer: /src/target/src/parser.c:40: int check(int): Assertion `n < 16' failed.\",\"top_frame\":\"\",\"exit_code\":null}"
+  ]
+}

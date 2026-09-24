@@ -26,11 +26,12 @@
 set -u
 
 # Path anchor - refuses cwd inside fuzz/, refuses recursive fuzz/fuzz/
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/_lib/root.sh"
+SCRIPT_DIR="$CC_FUZZER_ROOT/scripts"
 . "$SCRIPT_DIR/_lib/path-anchor.sh"
 
 FUZZ_ROOT="${FUZZ_ROOT:-fuzz}"
-STATE_DIR="$FUZZ_ROOT/state"
+STATE_DIR="${FUZZ_STATE_DIR:-$FUZZ_ROOT/state}"
 SNAPSHOTS_DIR="$STATE_DIR/snapshots"
 HARNESSES_DIR="$FUZZ_ROOT/harnesses"
 CRASHES_DIR="$FUZZ_ROOT/crashes"

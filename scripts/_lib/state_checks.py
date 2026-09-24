@@ -39,10 +39,10 @@ import json
 import os
 import re
 import sys
-from pathlib import Path
 
-# SSOT for all state enums. Same sibling-import pattern as cve-context-builder.py.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+# SSOT for all state enums. A sibling import: every _lib module runs as a
+# script (python3 scripts/_lib/<x>.py), so the interpreter already puts this
+# directory first on sys.path; the plugin root itself comes from _lib/root.sh.
 import enums  # type: ignore  # noqa: E402
 
 

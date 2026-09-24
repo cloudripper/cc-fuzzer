@@ -1,0 +1,39 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/extract-cmplog-dict.sh"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {
+    "fuzz/state/cmplog-dict-parser-1790000000.dict": {
+      "lines": [
+        "# cc-fuzzer cmplog-derived dictionary",
+        "# generated_at: 2026-09-21T14:13:20+00:00",
+        "# source_dir:   <PROJECT>/fuzz/harnesses/parser/aflpp-out",
+        "# entries:      0",
+        "# format:       libFuzzer / AFL++ dict",
+        "#",
+        "# These entries were observed by cmplog at runtime as comparison",
+        "# operands. The LLM coverage-analyst should treat their presence as",
+        "# evidence that the corresponding branches are cmplog-solvable",
+        "# (gap reason: direct_compare), and should NOT dispatch them to",
+        "# concolic-executor.",
+        "#",
+        "# NOTE: AFL++ output dir <PROJECT>/fuzz/harnesses/parser/aflpp-out does not exist yet.",
+        "#       Either this is a libFuzzer campaign (no cmplog data), or AFL++",
+        "#       has not run yet. Dictionary is empty; coverage-analyst should",
+        "#       fall back to source-only reasoning for this tick.",
+        ""
+      ]
+    }
+  },
+  "stderr": [
+    "note: AFL++ output dir not present yet: <PROJECT>/fuzz/harnesses/parser/aflpp-out (emitting empty cmplog dict)",
+    "  entries: 0"
+  ],
+  "stdout": [
+    "<PROJECT>/fuzz/state/cmplog-dict-parser-1790000000.dict"
+  ]
+}

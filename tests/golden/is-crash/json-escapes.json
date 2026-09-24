@@ -1,0 +1,18 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/is-crash.sh",
+    "<ROOT>/tests/fixtures/sanitizer-logs/json-escapes.log"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {},
+  "stderr": [
+    "awk: cmd. line:5:                     func = $(i+1);",
+    "awk: cmd. line:5:                     ^ syntax error"
+  ],
+  "stdout": [
+    "{\"is_crash\":true,\"category\":\"global-buffer-overflow\",\"summary_line\":\"SUMMARY: AddressSanitizer: global-buffer-overflow /src/target/src/names.c:7:3 in lookup_name \\\"q\\\" \\\\b\",\"top_frame\":\"\",\"exit_code\":null}"
+  ]
+}

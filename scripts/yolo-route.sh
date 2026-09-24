@@ -38,7 +38,8 @@
 #   yolo-route.sh read-directive  # echo the orchestrator's last persisted directive (fallback)
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/_lib/root.sh"
+SCRIPT_DIR="$CC_FUZZER_ROOT/scripts"
 FUZZ_ROOT="${FUZZ_ROOT:-fuzz}"
 FUZZ_STATE_DIR="${FUZZ_STATE_DIR:-$FUZZ_ROOT/state}"
 DIRECTIVE_FILE="$FUZZ_STATE_DIR/next-directive.txt"

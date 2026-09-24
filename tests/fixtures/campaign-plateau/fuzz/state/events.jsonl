@@ -1,0 +1,22 @@
+{"schema":"event/v1","ts":1789964000,"tick":0,"event":"campaign_start"}
+{"schema":"event/v1","ts":1789970000,"tick":1,"event":"tick","branch":"generate_seeds","reason":"fixture plateau tick 1","duration_ms":3000,"agent_called":"seed-generator","tokens_in":9000,"tokens_out":1800}
+{"schema":"event/v1","ts":1789970005,"tick":1,"event":"agent_call","agent_called":"seed-generator","tokens_in":9000,"tokens_out":1800}
+{"schema":"event/v1","ts":1789972400,"tick":2,"event":"tick","branch":"mutator","reason":"fixture plateau tick 2","duration_ms":3000,"agent_called":"mutator","tokens_in":9000,"tokens_out":1800}
+{"schema":"event/v1","ts":1789972405,"tick":2,"event":"agent_call","agent_called":"mutator","tokens_in":9000,"tokens_out":1800}
+{"schema":"event/v1","ts":1789974800,"tick":3,"event":"tick","branch":"sleep","reason":"fixture plateau tick 3","duration_ms":3000}
+{"schema":"event/v1","ts":1789977200,"tick":4,"event":"tick","branch":"analyze_gaps","reason":"fixture plateau tick 4","duration_ms":3000,"agent_called":"coverage-analyst","tokens_in":9000,"tokens_out":1800}
+{"schema":"event/v1","ts":1789977205,"tick":4,"event":"agent_call","agent_called":"coverage-analyst","tokens_in":9000,"tokens_out":1800}
+{"schema":"event/v1","ts":1789979600,"tick":5,"event":"tick","branch":"generate_seeds","reason":"fixture plateau tick 5","duration_ms":3000,"agent_called":"seed-generator","tokens_in":9000,"tokens_out":1800}
+{"schema":"event/v1","ts":1789979605,"tick":5,"event":"agent_call","agent_called":"seed-generator","tokens_in":9000,"tokens_out":1800}
+{"schema":"event/v1","ts":1789982000,"tick":6,"event":"tick","branch":"mutator","reason":"fixture plateau tick 6","duration_ms":3000,"agent_called":"mutator","tokens_in":9000,"tokens_out":1800}
+{"schema":"event/v1","ts":1789982005,"tick":6,"event":"agent_call","agent_called":"mutator","tokens_in":9000,"tokens_out":1800}
+{"schema":"event/v1","ts":1789984400,"tick":7,"event":"tick","branch":"sleep","reason":"fixture plateau tick 7","duration_ms":3000}
+{"schema":"event/v1","ts":1789986800,"tick":8,"event":"tick","branch":"analyze_gaps","reason":"fixture plateau tick 8","duration_ms":3000,"agent_called":"coverage-analyst","tokens_in":9000,"tokens_out":1800}
+{"schema":"event/v1","ts":1789986805,"tick":8,"event":"agent_call","agent_called":"coverage-analyst","tokens_in":9000,"tokens_out":1800}
+{"schema":"event/v1","ts":1789989200,"tick":9,"event":"tick","branch":"generate_seeds","reason":"fixture plateau tick 9","duration_ms":3000,"agent_called":"seed-generator","tokens_in":9000,"tokens_out":1800}
+{"schema":"event/v1","ts":1789989205,"tick":9,"event":"agent_call","agent_called":"seed-generator","tokens_in":9000,"tokens_out":1800}
+{"schema":"event/v1","ts":1789991600,"tick":10,"event":"tick","branch":"mutator","reason":"fixture plateau tick 10","duration_ms":3000,"agent_called":"mutator","tokens_in":9000,"tokens_out":1800}
+{"schema":"event/v1","ts":1789991605,"tick":10,"event":"agent_call","agent_called":"mutator","tokens_in":9000,"tokens_out":1800}
+{"schema":"event/v1","ts":1789994000,"tick":11,"event":"tick","branch":"sleep","reason":"fixture plateau tick 11","duration_ms":3000}
+{"schema":"event/v1","ts":1789996400,"tick":12,"event":"tick","branch":"analyze_gaps","reason":"fixture plateau tick 12","duration_ms":3000,"agent_called":"coverage-analyst","tokens_in":9000,"tokens_out":1800}
+{"schema":"event/v1","ts":1789996405,"tick":12,"event":"agent_call","agent_called":"coverage-analyst","tokens_in":9000,"tokens_out":1800}

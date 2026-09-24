@@ -1,0 +1,18 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/is-crash.sh",
+    "<ROOT>/tests/fixtures/sanitizer-logs/asan-heap-overflow.log"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {},
+  "stderr": [
+    "awk: cmd. line:5:                     func = $(i+1);",
+    "awk: cmd. line:5:                     ^ syntax error"
+  ],
+  "stdout": [
+    "{\"is_crash\":true,\"category\":\"heap-buffer-overflow\",\"summary_line\":\"SUMMARY: AddressSanitizer: heap-buffer-overflow /src/target/src/parser.c:25:13 in parse_exif\",\"top_frame\":\"\",\"exit_code\":null}"
+  ]
+}

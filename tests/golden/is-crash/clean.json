@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/is-crash.sh",
+    "<ROOT>/tests/fixtures/sanitizer-logs/clean.log"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 1,
+  "files": {},
+  "stderr": [],
+  "stdout": [
+    "{\"is_crash\":false,\"category\":\"none\",\"summary_line\":\"\",\"top_frame\":\"\",\"exit_code\":null}"
+  ]
+}

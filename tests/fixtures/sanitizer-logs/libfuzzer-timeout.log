@@ -1,0 +1,5 @@
+ALARM: working on the last Unit for 25 seconds
+       and the timeout value is 25 (use -timeout=N to change)
+==4444== ERROR: libFuzzer: timeout after 25 seconds
+    #0 0x4f1a2b in parse_exif /src/target/src/parser.c:24:5
+SUMMARY: libFuzzer: timeout

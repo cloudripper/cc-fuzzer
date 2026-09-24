@@ -1,0 +1,18 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/is-crash.sh",
+    "<ROOT>/tests/fixtures/sanitizer-logs/ubsan-shift-nosummary.log"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {},
+  "stderr": [
+    "awk: cmd. line:5:                     func = $(i+1);",
+    "awk: cmd. line:5:                     ^ syntax error"
+  ],
+  "stdout": [
+    "{\"is_crash\":true,\"category\":\"ubsan-shift\",\"summary_line\":\"/src/target/src/encoder.c:12:20: runtime error: shift exponent 40 is too large for 32-bit type 'unsigned int'\",\"top_frame\":\"\",\"exit_code\":null}"
+  ]
+}

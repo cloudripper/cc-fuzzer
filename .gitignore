@@ -11,4 +11,6 @@ __pycache__/
 
 # Campaign workspace + build artifacts
 fuzz/
+# ...except the synthetic fixture campaigns the test suite runs against.
+!/tests/fixtures/*/fuzz/
 *.tar.gz

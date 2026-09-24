@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/validate-state.sh"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "ERROR: not inside a cc-fuzzer project (no fuzz/ directory found in any parent)",
+    "       run from the project root, or set PROJECT_ROOT=/path/to/project"
+  ],
+  "stdout": []
+}

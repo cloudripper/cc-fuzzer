@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/is-crash.sh",
+    "--exit-code",
+    "0"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 1,
+  "files": {},
+  "stderr": [],
+  "stdout": [
+    "{\"is_crash\":false,\"category\":\"none\",\"summary_line\":\"\",\"top_frame\":\"\",\"exit_code\":0}"
+  ]
+}

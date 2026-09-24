@@ -272,11 +272,12 @@
       # target's build deps, locks, then PRINTS the commands to launch Claude
       # (`nix run .#claude …`) and open the shell (`nix develop`). It does NOT
       # launch Claude itself. PATH carries the tools the script needs; host
-      # `nix` stays on PATH (writeShellScriptBin does not reset it). CCFUZZER_SRC
-      # pins the project flake's `ccfuzzer` input to exactly this plugin source.
+      # `nix` stays on PATH (writeShellScriptBin does not reset it). CC_FUZZER_ROOT
+      # (the plugin root, as for every script) pins the project flake's
+      # `ccfuzzer` input to exactly this plugin source.
       initApp = pkgs.writeShellScriptBin "cc-fuzzer-init" ''
         export PATH="${pkgs.lib.makeBinPath [ pkgs.git pkgs.gnused pkgs.gnugrep pkgs.coreutils llm-agents.packages.${system}.claude-code ]}:$PATH"
-        export CCFUZZER_SRC="${self}"
+        export CC_FUZZER_ROOT="${self}"
         export CCFUZZER_SYSTEM="${system}"
         export CCFUZZER_INIT_CAP="''${CCFUZZER_INIT_CAP:-10}"
         exec ${pkgs.bash}/bin/bash ${self}/scripts/campaign-init.sh "$@"

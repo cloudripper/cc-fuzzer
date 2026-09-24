@@ -1,0 +1,19 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/code-review-run.sh",
+    "--no-sast"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {},
+  "stderr": [
+    "[code-review] running prescan: target=<PROJECT>/src max=20 sast=off",
+    "[code-review] prescan complete: 4 candidate function(s), mode=capped"
+  ],
+  "stdout": [
+    "BATCH_PLAN windows=1 batch_size=30 candidates=4 mode=capped",
+    "READY: <PROJECT>/fuzz/state/snapshots/code-review-prescan-1790000000.json"
+  ]
+}

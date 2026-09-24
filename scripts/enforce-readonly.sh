@@ -2,7 +2,7 @@
 # enforce-readonly.sh
 #
 # Filesystem-level enforcement of the plugin-read-only rule. Sets a-w on
-# every file under ${CLAUDE_PLUGIN_ROOT} (EXCEPT flake.lock, which nix must be
+# every file under the plugin root ($CC_FUZZER_ROOT) (EXCEPT flake.lock, which nix must be
 # able to write) so any agent that tries to Edit or Write a plugin source file
 # gets EACCES.
 #
@@ -19,7 +19,9 @@
 
 set -u
 
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+. "$(dirname "${BASH_SOURCE[0]}")/_lib/root.sh"
+
+PLUGIN_ROOT="$CC_FUZZER_ROOT"   # resolved by _lib/root.sh
 
 if [ "${CC_FUZZER_DISABLE_READONLY_LOCK:-0}" = "1" ]; then
   echo "cc-fuzzer: read-only lock DISABLED (CC_FUZZER_DISABLE_READONLY_LOCK=1)"

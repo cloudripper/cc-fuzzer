@@ -1,0 +1,18 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/is-crash.sh",
+    "<ROOT>/tests/fixtures/sanitizer-logs/asan-stack-overflow-noheader.log"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {},
+  "stderr": [
+    "awk: cmd. line:5:                     func = $(i+1);",
+    "awk: cmd. line:5:                     ^ syntax error"
+  ],
+  "stdout": [
+    "{\"is_crash\":true,\"category\":\"stack-overflow\",\"summary_line\":\"==31337==ERROR: AddressSanitizer: stack-overflow on address 0x7ffe7a3b8ff8 (pc 0x4f1a2b bp 0x7ffe sp 0x7ffe T0)\",\"top_frame\":\"\",\"exit_code\":null}"
+  ]
+}

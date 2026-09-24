@@ -1,0 +1,4 @@
+/src/target/src/parser.c:15:31: runtime error: signed integer overflow: 2147483647 + 1 cannot be represented in type 'int'
+    #0 0x4f1a2b in parse_chunk /src/target/src/parser.c:15:31
+    #1 0x4f2000 in LLVMFuzzerTestOneInput /src/fuzz/parser_fuzzer.c:5:5
+SUMMARY: UndefinedBehaviorSanitizer: undefined-behavior /src/target/src/parser.c:15:31 in

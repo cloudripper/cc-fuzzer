@@ -19,10 +19,19 @@
 
 set -u
 
-# Locate the plugin root (this script's own directory minus /scripts/)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PLUGIN_ROOT="$(dirname "$SCRIPT_DIR")"
+# Locate the plugin root (_lib/root.sh: CC_FUZZER_ROOT)
+. "$(dirname "${BASH_SOURCE[0]}")/_lib/root.sh"
+PLUGIN_ROOT="$CC_FUZZER_ROOT"
 MANIFEST="$PLUGIN_ROOT/MANIFEST.md5"
+
+# A pip/site-packages install is covered by the wheel's RECORD (pip verifies
+# hashes itself); MANIFEST.md5 is the plugin-checkout mechanism only.
+case "$PLUGIN_ROOT/" in
+  */site-packages/*|*/dist-packages/*)
+    echo "ok"
+    exit 0
+    ;;
+esac
 
 if [ ! -f "$MANIFEST" ]; then
   echo "WARN: MANIFEST.md5 missing - cannot verify integrity"

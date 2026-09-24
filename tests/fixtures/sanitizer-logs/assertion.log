@@ -1,0 +1,4 @@
+parser_fuzzer: /src/target/src/parser.c:40: int check(int): Assertion `n < 16' failed.
+==6666== ERROR: libFuzzer: deadly signal
+    #0 0x7f00 in __assert_fail
+    #1 0x4f1a2b in check /src/target/src/parser.c:40:5

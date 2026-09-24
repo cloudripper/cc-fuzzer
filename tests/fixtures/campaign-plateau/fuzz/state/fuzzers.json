@@ -1,0 +1,21 @@
+{
+  "schema": "fuzzers/v2",
+  "slots": [
+    {
+      "slot": "main",
+      "harness": "parser",
+      "engine": "libfuzzer",
+      "binary": "fuzz/harnesses/parser/harness/parser_fuzzer",
+      "pid": "2147480001",
+      "pgid": "2147480001",
+      "started_at": "2026-09-21T04:13:20Z",
+      "log_file": "fuzz/state/fuzzer-main.log",
+      "pid_file": "fuzz/state/fuzzer-main.pid",
+      "engine_file": "fuzz/state/fuzzer-main.engine",
+      "role": null,
+      "afl_power_schedule": null,
+      "restart_count": 0,
+      "last_restart_at": null
+    }
+  ]
+}

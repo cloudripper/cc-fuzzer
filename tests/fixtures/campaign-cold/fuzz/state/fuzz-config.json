@@ -1,0 +1,17 @@
+{
+  "schema": "fuzz-config/v3",
+  "fuzz_forks": 2,
+  "harnesses": [
+    {
+      "name": "parser",
+      "entry_function": "parse_chunk"
+    }
+  ],
+  "fuzzer_slots": [
+    {
+      "slot": "main",
+      "harness": "parser",
+      "engine": "libfuzzer"
+    }
+  ]
+}

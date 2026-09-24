@@ -4,7 +4,7 @@
   # Pinned to the exact cc-fuzzer plugin source that `nix run #init` was invoked
   # from. Switch to a tracking ref (e.g. "github:cloudripper/cc-fuzzer") if
   # you'd rather follow upstream, then `nix flake update ccfuzzer`.
-  inputs.ccfuzzer.url = "@CCFUZZER_SRC@";
+  inputs.ccfuzzer.url = "@CC_FUZZER_ROOT@";
   inputs.nixpkgs.follows = "ccfuzzer/nixpkgs";
 
   outputs = { self, ccfuzzer, nixpkgs }:

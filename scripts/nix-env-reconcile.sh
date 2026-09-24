@@ -16,12 +16,13 @@
 
 set -u
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/_lib/root.sh"
+SCRIPT_DIR="$CC_FUZZER_ROOT/scripts"
 . "$SCRIPT_DIR/_lib/path-anchor.sh"
 . "$SCRIPT_DIR/_lib/nix-tools.sh"
 
 FUZZ_ROOT="${FUZZ_ROOT:-fuzz}"
-STATE_DIR="$FUZZ_ROOT/state"
+STATE_DIR="${FUZZ_STATE_DIR:-$FUZZ_ROOT/state}"
 OUT="$STATE_DIR/nix-environment-issues.json"
 export STATE_DIR FUZZ_ROOT OUT
 

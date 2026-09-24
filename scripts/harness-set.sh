@@ -53,7 +53,8 @@
 
 set -u
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/_lib/root.sh"
+SCRIPT_DIR="$CC_FUZZER_ROOT/scripts"
 . "$SCRIPT_DIR/_lib/path-anchor.sh"
 . "$SCRIPT_DIR/_lib/harness-path.sh"
 
@@ -366,7 +367,6 @@ if [ "$ACTION" = "promote-to-nix" ]; then
 
   # Trial build
   echo "promote-to-nix: running trial nix build for harness '$TARGET_NAME'..." >&2
-  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   if ! bash "$SCRIPT_DIR/nix-build.sh" "$TARGET_NAME" --no-log; then
     echo "ERROR: nix build failed; fix the nix derivations before promoting" >&2
     exit 1

@@ -1,0 +1,6 @@
+==2201==ERROR: AddressSanitizer: heap-use-after-free on address 0x603000000040 at pc 0x55d0 bp 0x7ffe sp 0x7ffe
+READ of size 4 at 0x603000000040 thread T0
+    #0 0x55d0a1 in __asan_memcpy compiler-rt/lib/asan/asan_interceptors_memintrinsics.cpp:63:3
+    #1 0x55d0b2 in free_chunk /src/target/src/parser.c:34:9
+    #2 0x55d0c3 in main /src/target/tools/cli.c:88:5
+SUMMARY: AddressSanitizer: heap-use-after-free /src/target/src/parser.c:34:9 in free_chunk

@@ -39,10 +39,10 @@ from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
-# Sibling deterministic SAST module (semgrep / CodeQL). Imported defensively so
-# a stripped checkout without it still runs the grep-only prescan.
+# Sibling deterministic SAST module (semgrep / CodeQL; this file runs as a
+# script, so its directory is already on sys.path). Imported defensively so a
+# stripped checkout without it still runs the grep-only prescan.
 try:
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import sast_scan  # type: ignore
 except Exception:  # noqa: BLE001
     sast_scan = None  # type: ignore
@@ -51,6 +51,21 @@ except Exception:  # noqa: BLE001
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
+
+def _rules_root() -> Path:
+    """The bundled semgrep rules ROOT. Resolved by the core
+    (cc_fuzzer_core.paths.data("rules"), on PYTHONPATH via _lib/root.sh), else
+    $CC_FUZZER_ROOT/rules; a bare manual run with neither falls back to this
+    checkout's rules/ (<root>/scripts/_lib/.. -> <root>/rules)."""
+    try:
+        from cc_fuzzer_core import paths as _core_paths
+        return _core_paths.data("rules")
+    except Exception:  # noqa: BLE001
+        pass
+    if os.environ.get("CC_FUZZER_ROOT"):
+        return Path(os.environ["CC_FUZZER_ROOT"]) / "rules"
+    return Path(__file__).resolve().parents[2] / "rules"
+
 
 # File extensions we consider. C/C++ for now (the plugin's stated scope).
 SOURCE_EXTENSIONS = {".c", ".cc", ".cpp", ".cxx", ".cc", ".C", ".h", ".hh",
@@ -638,11 +653,7 @@ def main() -> int:
         # REGISTRY via an explicit --sast-rules ref (e.g. `p/trailofbits`); they
         # are not vendored. (`auto` is unsupported — telemetry-gated, disabled
         # for privacy.) See run_sast for the local-dir vs registry-token routing.
-        rules_root = Path(os.environ.get("CLAUDE_PLUGIN_ROOT", "")) / "rules"
-        # When CLAUDE_PLUGIN_ROOT is unset (manual run), fall back to the rules
-        # dir relative to this file: <plugin>/scripts/_lib/.. -> <plugin>/rules.
-        if not rules_root.exists():
-            rules_root = Path(__file__).resolve().parents[2] / "rules"
+        rules_root = _rules_root()
         rule_specs: List = []
         if rules_root.is_dir():
             for sub in sorted(p for p in rules_root.iterdir() if p.is_dir()):

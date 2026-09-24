@@ -15,47 +15,34 @@
 # Read-only. Never modifies state. Suggests fixes per problem.
 set -u
 
+. "$(dirname "${BASH_SOURCE[0]}")/_lib/root.sh"
+
 # Don't path-anchor - we want to inspect from wherever the user is, including
-# inside a corrupted tree. We do our own root detection.
-
-# Find project root by walking up
-PROJECT_ROOT=""
-d="$PWD"
-while [ "$d" != "/" ]; do
-  if [ -d "$d/fuzz" ] && [ "$(basename "$d")" != "fuzz" ]; then
-    PROJECT_ROOT="$d"
-    break
+# inside a corrupted tree. Root detection is the core's paths.campaign() in
+# --lenient mode (it does not refuse a recursive fuzz/fuzz/, which check 1
+# below reports) and it never cd's. It sets PROJECT_ROOT, FUZZ_ROOT and
+# STATE_DIR (FUZZ_STATE_DIR honoured, relative => against PROJECT_ROOT).
+_CAMPAIGN_ERR=$(mktemp)
+_CAMPAIGN=$(python3 -m cc_fuzzer_core paths campaign --lenient --missing-ok --format sh 2>"$_CAMPAIGN_ERR")
+_CAMPAIGN_RC=$?
+if [ "$_CAMPAIGN_RC" -ne 0 ]; then
+  if [ "$_CAMPAIGN_RC" -eq 1 ]; then
+    echo "cc-fuzzer:doctor: no fuzz/ directory found in $PWD or parents"
+    echo "  not in a cc-fuzzer project"
+  else
+    echo "cc-fuzzer:doctor: cannot resolve the campaign:"
+    sed 's/^/  /' "$_CAMPAIGN_ERR"
   fi
-  d=$(dirname "$d")
-done
-
-if [ -z "$PROJECT_ROOT" ]; then
-  echo "cc-fuzzer:doctor: no fuzz/ directory found in $PWD or parents"
-  echo "  not in a cc-fuzzer project"
+  rm -f "$_CAMPAIGN_ERR"
   exit 0
 fi
+rm -f "$_CAMPAIGN_ERR"
+eval "$_CAMPAIGN"
 
 echo "cc-fuzzer:doctor inspecting $PROJECT_ROOT"
 echo ""
 
-# Resolve the fuzz tree and state dir the SAME way the rest of the toolchain
-# does (_lib/path-anchor.sh sets FUZZ_ROOT=$PROJECT_ROOT/fuzz; scripts then use
-# STATE_DIR="${FUZZ_STATE_DIR:-$FUZZ_ROOT/state}"). doctor can't source
-# path-anchor — it must inspect corrupted/recursive trees that path-anchor
-# refuses to enter — so we mirror that resolution locally. A relative
-# FUZZ_STATE_DIR resolves against PROJECT_ROOT (path-anchor achieves this by
-# cd'ing to PROJECT_ROOT; doctor doesn't cd, so resolve it explicitly).
-FUZZ_ROOT="$PROJECT_ROOT/fuzz"
-if [ -n "${FUZZ_STATE_DIR:-}" ]; then
-  case "$FUZZ_STATE_DIR" in
-    /*) STATE_DIR="$FUZZ_STATE_DIR" ;;
-    *)  STATE_DIR="$PROJECT_ROOT/$FUZZ_STATE_DIR" ;;
-  esac
-else
-  STATE_DIR="$FUZZ_ROOT/state"
-fi
-
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+PLUGIN_ROOT="$CC_FUZZER_ROOT"   # resolved by _lib/root.sh
 ISSUES=0
 WARNINGS=0
 

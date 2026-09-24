@@ -1,0 +1,40 @@
+{
+  "schema": "tick-coverage/v1",
+  "timestamp": 1789998400,
+  "mode": "multi",
+  "harnesses": [
+    {
+      "name": "parser",
+      "lines_covered": 171,
+      "lines_total": 400,
+      "pct": 42.75,
+      "delta_since_last_tick": 0,
+      "first_seen": false,
+      "instrumentation_ok": true,
+      "snapshot_file": "fuzz/state/snapshots/coverage-parser-1789998200.json",
+      "snapshot_ts": 1789998200,
+      "snapshot_age_seconds": 200,
+      "stale": false
+    },
+    {
+      "name": "encoder",
+      "lines_covered": 44,
+      "lines_total": 90,
+      "pct": 48.89,
+      "delta_since_last_tick": 0,
+      "first_seen": false,
+      "instrumentation_ok": true,
+      "snapshot_file": "fuzz/state/snapshots/coverage-encoder-1789998300.json",
+      "snapshot_ts": 1789998300,
+      "snapshot_age_seconds": 100,
+      "stale": false
+    }
+  ],
+  "overall": {
+    "lines_covered": 215,
+    "lines_total": 490,
+    "weighted_pct": 43.88
+  },
+  "stale_harnesses": [],
+  "stale_threshold_seconds": 600
+}

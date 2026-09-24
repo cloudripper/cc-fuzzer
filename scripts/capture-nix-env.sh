@@ -21,34 +21,21 @@
 
 set -u
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/_lib/root.sh"
+SCRIPT_DIR="$CC_FUZZER_ROOT/scripts"
 
 # Resolve project root without using path-anchor.sh — capture is invoked at
 # session start, sometimes from arbitrary cwds, and we don't want to abort
 # the SessionStart hook just because the user isn't inside a fuzz project.
-if [ -n "${PROJECT_ROOT:-}" ]; then
-  if [ ! -d "$PROJECT_ROOT/fuzz" ]; then
-    echo "ERROR: PROJECT_ROOT=$PROJECT_ROOT has no fuzz/ subdirectory" >&2
-    exit 2
-  fi
-else
-  d="$PWD"
-  PROJECT_ROOT=""
-  while [ "$d" != "/" ]; do
-    if [ -d "$d/fuzz" ] && [ "$(basename "$d")" != "fuzz" ]; then
-      PROJECT_ROOT="$d"
-      break
-    fi
-    d=$(dirname "$d")
-  done
-fi
+# paths.campaign(): honours PROJECT_ROOT (invalid => exit 2), no project =>
+# silent no-op, never cd's; STATE_DIR honours FUZZ_STATE_DIR.
+_CAMPAIGN=$(python3 -m cc_fuzzer_core paths campaign --lenient --missing-ok --format sh)
+case $? in
+  0) eval "$_CAMPAIGN" ;;
+  1) exit 0 ;;   # No fuzz project in scope. Silent no-op so session start isn't noisy.
+  *) exit 2 ;;   # invalid PROJECT_ROOT override (message already on stderr)
+esac
 
-if [ -z "$PROJECT_ROOT" ] || [ ! -d "$PROJECT_ROOT/fuzz" ]; then
-  # No fuzz project in scope. Silent no-op so session start isn't noisy.
-  exit 0
-fi
-
-STATE_DIR="${FUZZ_STATE_DIR:-$PROJECT_ROOT/fuzz/state}"
 mkdir -p "$STATE_DIR"
 
 # Curated tool list. Keep alphabetized within each group. Mirrors what

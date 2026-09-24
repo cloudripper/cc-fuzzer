@@ -18,13 +18,14 @@
 set -u
 
 # Path anchor - refuses cwd inside fuzz/, refuses recursive fuzz/fuzz/
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/_lib/root.sh"
+SCRIPT_DIR="$CC_FUZZER_ROOT/scripts"
 . "$SCRIPT_DIR/_lib/path-anchor.sh"
 
 FUZZ_ROOT="${FUZZ_ROOT:-fuzz}"
-STATE_DIR="$FUZZ_ROOT/state"
+STATE_DIR="${FUZZ_STATE_DIR:-$FUZZ_ROOT/state}"
 HARNESS_INFO="$STATE_DIR/harness-built.json"
-PLUGIN_DICTS="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/dictionaries"
+PLUGIN_DICTS="$CC_FUZZER_ROOT/dictionaries"
 PROJECT_DICTS="$FUZZ_ROOT/dictionaries"
 
 resolve_dict() {
@@ -89,10 +90,10 @@ else:
     ;;
 
   list)
-    bash "$0" available
+    bash "$SCRIPT_DIR/dictionaries.sh" available
     echo ""
     echo "Active in current campaign:"
-    bash "$0" active 2>/dev/null | sed 's/^/  /'
+    bash "$SCRIPT_DIR/dictionaries.sh" active 2>/dev/null | sed 's/^/  /'
     ;;
 
   add)

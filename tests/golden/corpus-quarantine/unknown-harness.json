@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/corpus-quarantine.sh",
+    "--harness",
+    "nope"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 1,
+  "files": {},
+  "stderr": [
+    "ERROR: harness 'nope' is not declared in fuzz-config.json:harnesses[]"
+  ],
+  "stdout": []
+}
