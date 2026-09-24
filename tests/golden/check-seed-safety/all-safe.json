@@ -1,0 +1,13 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/check-seed-safety.sh",
+    "fuzz/harnesses/parser/corpus-quarantine/seed-a.bin"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {},
+  "stderr": [],
+  "stdout": []
+}

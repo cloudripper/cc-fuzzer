@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/snapshot-coverage.sh",
+    "--bogus"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "ERROR: unknown arg '--bogus'"
+  ],
+  "stdout": []
+}

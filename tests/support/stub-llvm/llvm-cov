@@ -1,0 +1,10 @@
+#!/bin/sh
+# Test-only llvm-cov stand-in: `export <bin> [-object X]... -instr-profile=P
+# [--summary-only]` prints a fixed llvm-cov export document.
+summary=0
+for a in "$@"; do [ "$a" = "--summary-only" ] && summary=1; done
+if [ "$summary" = 1 ]; then
+  echo '{"data":[{"totals":{"lines":{"covered":37,"count":120}}}]}'
+else
+  echo '{"data":[{"functions":[{"name":"parse_chunk","count":9},{"name":"parse_exif","count":0},{"name":"free_chunk","count":0}]}]}'
+fi

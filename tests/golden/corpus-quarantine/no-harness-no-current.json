@@ -1,0 +1,14 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/corpus-quarantine.sh"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 1,
+  "files": {},
+  "stderr": [
+    "ERROR: --harness <name> not provided and current.json has no active_harness"
+  ],
+  "stdout": []
+}

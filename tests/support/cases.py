@@ -797,9 +797,224 @@ LIVENESS_CASES = [
          env={"FUZZ_STATE_DIR": "fuzz/alt-state"}),
 ]
 
+
+# ---------------------------------------------------------------------------
+# row 6: extract-cmplog-dict.sh, snapshot-coverage.sh, corpus-quarantine.sh,
+#        check-seed-safety.sh, find-delta-targets.sh
+# ---------------------------------------------------------------------------
+
+EC = "scripts/extract-cmplog-dict.sh"
+AFL_ENC = "fuzz/harnesses/encoder/aflpp-out"
+
+
+def _ec(name, fixture, *args, setup=None, env=None):
+    return Case(f"extract-cmplog-dict/{name}", fixture, bash(EC, *args), core("cmplog", "extract", *args),
+                setup=setup, env=env or {})
+
+
+def _rich_afl(sb):
+    """Two AFL++ instances, both cmplog layouts, noisy strings to filter."""
+    sb.write(f"{AFL_ENC}/default/fuzzer_stats", "execs_done : 10\n")
+    sb.write(f"{AFL_ENC}/default/.cmplog/sub/op-1",
+             b"\x00MAGIC\x00\x00\t tab\"q\\u\x00" + b"x" * 70 + b"\x00/usr/lib/libz.so\x00123456789a\x00MAGIC\x00")
+    sb.write(f"{AFL_ENC}/default/.cmplog/op-2", b"\x01\x02KEYWORD\x00abc\x00")
+    sb.write(f"{AFL_ENC}/default/queue/id:000000,orig:seed", b"QUEUESTR\x00\x00    \x00")
+    sb.write(f"{AFL_ENC}/encoder-s1/queue/id:000003", b"SECONDARY\x00")
+    sb.write(f"{AFL_ENC}/encoder-s1/cmplog/legacy.bin", b"\xffLEGACY_OP\xff")
+    sb.write(f"{AFL_ENC}/not-an-instance/.cmplog/x", b"IGNORED_STR")
+
+
+def _instance_without_cmplog(sb):
+    sb.write("fuzz/harnesses/parser/aflpp-out/default/fuzzer_stats", "execs_done : 10\n")
+
+
+CMPLOG_CASES = [
+    _ec("rich-instances", "campaign-warm", "--harness", "encoder", setup=_rich_afl),
+    _ec("rich-root-as-aflpp-out", "campaign-warm", "--aflpp-out", AFL_ENC, "--output", "out.dict",
+        setup=_rich_afl),
+    _ec("no-cmplog-dirs", "campaign-warm", "--harness", "parser", setup=_instance_without_cmplog),
+    _ec("harness-and-aflpp-out", "campaign-warm", "--harness", "parser", "--aflpp-out",
+        f"{AFL_ENC}/encoder-afl"),
+    _ec("no-declared-harnesses", "campaign-cold",
+        setup=lambda sb: sb.edit_json("fuzz/state/fuzz-config.json", lambda d: d.update(harnesses=[]))),
+    _ec("from-subdir", "campaign-warm", "--harness", "encoder", "--output", "fuzz/d/enc.dict"),
+]
+CMPLOG_CASES[-1].cwd = "src"
+
+SC = "scripts/snapshot-coverage.sh"
+STUB_LLVM_PATH = f"{TESTS / 'support' / 'stub-llvm'}{os.pathsep}{SUPPORT_BIN}{os.pathsep}{os.environ.get('PATH', '/usr/bin:/bin')}"
+_STUB_COV = ('#!/bin/sh\n# test stub coverage binary: one profraw per run\n'
+             'f=$(printf %s "$LLVM_PROFILE_FILE" | sed "s/%p/$$/")\necho "run $1" > "$f"\n')
+
+
+def _sc(name, fixture, *args, setup=None, env=None, cwd=None):
+    return Case(f"snapshot-coverage/{name}", fixture, bash(SC, *args), core("coverage", "snapshot", *args),
+                setup=setup, env=env or {}, cwd=cwd)
+
+
+def _stub_cov(sb):
+    for p in sb.path("fuzz/harnesses").glob("*/harness/*_fuzzer_cov"):
+        sb.write(str(p.relative_to(sb.project)), _STUB_COV, mode=0o755)
+    sb.write("fuzz/harnesses/parser/corpus/seed_magic.bin", b"magic")
+    sb.write("fuzz/harnesses/parser/corpus/seed_notes.txt", b"notes")
+
+
+def _cov_dso(sb):
+    _stub_cov(sb)
+    sb.write("fuzz/lib/libparse.so", b"\x7fELF")
+    sb.edit_json("fuzz/state/harnesses.json", lambda d: d["harnesses"][0].update(
+        coverage_dso=[str(sb.path("fuzz/lib/libparse.so")), "/nonexistent/lib.so"]))
+
+
+def _afl_multi(sb):
+    sb.write(f"{AFL_ENC}/encoder-s1/fuzzer_stats",
+             "execs_done        : 50001\ncorpus_count      : 3\nsaved_crashes     : 1\n"
+             "saved_hangs       : 2\nexecs_per_sec     : 10.25\n")
+    sb.write(f"{AFL_ENC}/encoder-s1/queue/id:000000", b"q")
+
+
+def _fork_log(sb):
+    sb.write("fuzz/state/fuzzer-parser-main.log",
+             "INFO: -fork=2: fuzzing in separate process(s)\nJob 12 exited with exit code 0\n")
+
+
+def _fork_log_status(sb):
+    sb.write("fuzz/state/fuzzer-parser-main.log",
+             "INFO: fork_mode\n#1971: cov: 88 ft: 90 corp: 12 exec/s: 450 rss: 40Mb\n"
+             "#2400: cov: 91 ft: 95 corp: 13 exec/s: 470 rss: 41Mb\n")
+
+
+def _no_tracking(sb):
+    sb.edit_json("fuzz/state/harnesses.json",
+                 lambda d: [h.update(coverage_tracking=False) for h in d["harnesses"]] and None)
+
+
+def _crash_files_new(sb):
+    sb.write("fuzz/crashes/new/parser__aaaabbbbccccdddd.bin", b"x")
+    sb.write("fuzz/crashes/new/other__aaaabbbbccccdddd.bin", b"x")
+
+
+COVERAGE_CASES = [
+    _sc("warm-all-no-llvm", "campaign-warm"),
+    _sc("warm-parser-stub-llvm", "campaign-warm", "--harness", "parser", setup=_stub_cov,
+        env={"PATH": STUB_LLVM_PATH}),
+    _sc("warm-parser-dso-samples", "campaign-warm", "--harness", "parser", setup=_cov_dso,
+        env={"PATH": STUB_LLVM_PATH, "SNAPSHOT_COVERAGE_MAX_SAMPLES": "3"}),
+    _sc("warm-encoder-afl-multi", "campaign-warm", "--harness", "encoder",
+        setup=lambda sb: (_stub_cov(sb), _afl_multi(sb)), env={"PATH": STUB_LLVM_PATH}),
+    _sc("warm-fork-job-lines", "campaign-warm", "--harness", "parser", setup=_fork_log),
+    _sc("warm-fork-status-lines", "campaign-warm", "--harness", "parser", setup=_fork_log_status),
+    _sc("warm-no-tracking", "campaign-warm", setup=_no_tracking),
+    _sc("cold", "campaign-cold"),
+    _sc("crashes", "campaign-crashes", setup=_crash_files_new),
+    _sc("unknown-arg", "campaign-warm", "--bogus"),
+    _sc("from-subdir", "campaign-plateau", "--harness", "parser", cwd="src"),
+]
+
+CQ = "scripts/corpus-quarantine.sh"
+_HANG_HARNESS = '#!/bin/sh\ncase "$1" in *hang*) exec sleep 30 ;; *odd*) exit 3 ;; esac\nexit 0\n'
+
+
+def _cq(name, fixture, *args, setup=None, env=None):
+    return Case(f"corpus-quarantine/{name}", fixture, bash(CQ, *args), core("quarantine", "run", *args),
+                setup=setup, env=env or {})
+
+
+def _hang_seed(sb):
+    sb.write("fuzz/harnesses/parser/harness/parser_fuzzer", _HANG_HARNESS, mode=0o755)
+    sb.write("fuzz/harnesses/parser/corpus-quarantine/seed-hang.bin", b"h")
+    sb.write("fuzz/harnesses/parser/corpus-quarantine/seed-odd.bin", b"k")
+    sb.write("fuzz/harnesses/parser/corpus-quarantine/seed-ok.bin", b"o")
+
+
+def _destructive_variants(sb):
+    q = "fuzz/harnesses/parser/corpus-quarantine"
+    for f in sb.path(q).iterdir():
+        f.unlink()
+    sb.write(f"{q}/fork-bomb.sh", ":(){ :|:& };:\n")
+    sb.write(f"{q}/dd.sh", b"\x00\x01dd if=/dev/zero of=/dev/sda bs=1M\n")
+    sb.write(f"{q}/sysrq.txt", "echo b > /proc/sysrq-trigger\n")
+    sb.write(f"{q}/rm-quoted.sh", "rm -rf '/tmp/x'\n")         # quoted target: allowed
+    sb.write(f"{q}/rm-split.sh", "rm -rf\n/etc\n")            # target on the next line: allowed
+
+
+QUARANTINE_CASES = [
+    _cq("hang-and-odd-exit", "campaign-cold", "--harness", "parser", setup=_hang_seed),
+    _cq("destructive-variants", "campaign-cold", "--harness", "parser", setup=_destructive_variants),
+    _cq("allow-destructive", "campaign-cold", "--harness", "parser",
+        env={"CCFUZZ_ALLOW_DESTRUCTIVE_SEEDS": "1"}),
+    _cq("missing-explicit-file", "campaign-cold", "--harness", "parser", "nope.bin",
+        "fuzz/harnesses/parser/corpus-quarantine/seed-b.bin"),
+    _cq("no-harness-no-current", "campaign-cold"),
+]
+
+CSS = "scripts/check-seed-safety.sh"
+_SAFE_FILES = ("fuzz/harnesses/parser/corpus-quarantine/seed-a.bin",
+               "fuzz/harnesses/parser/corpus-quarantine/seed-destructive.sh")
+
+
+def _css(name, fixture, *args, setup=None, env=None, stdin=None, cwd=None):
+    return Case(f"check-seed-safety/{name}", fixture, bash(CSS, *args), core("quarantine", "safety", *args),
+                setup=setup, env=env or {}, stdin=stdin, cwd=cwd)
+
+
+SAFETY_CASES = [
+    _css("files", "campaign-cold", *_SAFE_FILES, "missing.bin"),
+    _css("stdin-list", "campaign-cold", stdin="\n".join(_SAFE_FILES) + "\n\n"),
+    _css("all-safe", "campaign-cold", _SAFE_FILES[0]),
+    _css("override", "campaign-cold", *_SAFE_FILES, env={"CCFUZZ_ALLOW_DESTRUCTIVE_SEEDS": "1"}),
+    _css("empty-stdin", "campaign-cold", stdin=""),
+    _css("from-subdir", "campaign-cold", "../" + _SAFE_FILES[1], cwd="src"),
+]
+
+FD = "scripts/find-delta-targets.sh"
+
+
+def _git_repo(sb, *, branch="main"):
+    sb.write(".gitignore", "fuzz/\n")
+    sb.git("init", "-q", "-b", branch)
+    sb.git("add", ".gitignore", "src")
+    sb.git("commit", "-q", "-m", "base")
+
+
+def _delta_master(sb):
+    _git_repo(sb, branch="master")
+    sb.git("checkout", "-q", "-b", "topic")
+    sb.write("src/parser.c", sb.path("src/parser.c").read_text() + "/* tail */\n")
+    sb.git("commit", "-q", "-am", "tail comment")
+    sb.git("rm", "-q", "src/encoder.c")
+    sb.git("commit", "-q", "-m", "drop encoder")
+
+
+def _delta_on_main(sb):
+    _git_repo(sb)
+    sb.write("src/parser.c", "/* head */\n" + sb.path("src/parser.c").read_text())
+    sb.git("commit", "-q", "-am", "head comment")
+
+
+def _fd(name, fixture, *args, setup=None, env=None, cwd=None):
+    return Case(f"find-delta-targets/{name}", fixture, bash(FD, *args), core("delta", "find", *args),
+                setup=setup, env=env or {}, cwd=cwd)
+
+
+DELTA_CASES = [
+    _fd("auto-master-deleted-file", "campaign-warm", setup=_delta_master),
+    _fd("on-main-head30-fallback", "campaign-warm", setup=_delta_on_main),
+    _fd("three-dot-range", "campaign-warm", "--range", "master...topic", setup=_delta_master),
+    _fd("bad-tip", "campaign-warm", "--range", "master..nope", setup=_delta_master),
+    _fd("empty-base", "campaign-warm", "--range", "..HEAD", setup=_delta_master),
+    _fd("quote-in-range", "campaign-warm", "--range", 'master..topic"', setup=_delta_master),
+    _fd("unknown-arg", "campaign-warm", "--since", "x"),
+    _fd("state-dir-override", "campaign-warm", "--range", "master..topic",
+        setup=lambda sb: (_delta_master(sb), shutil.move(str(sb.path("fuzz/state")), str(sb.path("fuzz/alt")))),
+        env={"FUZZ_STATE_DIR": "fuzz/alt"}),
+    _fd("from-subdir", "campaign-warm", setup=_delta_master, cwd="src"),
+]
+
 ROW1_CASES = CONFIG_CASES + ENUMS_CASES
 ROW2_CASES = VALIDATE_CASES
 ROW3_CASES = YOLO_CASES + ROUNDUP_CASES + CEILING_CASES + DERIVE_CASES + UPDATE_CASES
 ROW4_CASES = CLASSIFY_CASES + DETECT_CASES
 ROW5_CASES = LAUNCH_CASES + LIVENESS_CASES
-ALL_CASES = ROW1_CASES + ROW2_CASES + ROW3_CASES + ROW4_CASES + ROW5_CASES
+ROW6_CASES = CMPLOG_CASES + COVERAGE_CASES + QUARANTINE_CASES + SAFETY_CASES + DELTA_CASES
+ALL_CASES = ROW1_CASES + ROW2_CASES + ROW3_CASES + ROW4_CASES + ROW5_CASES + ROW6_CASES

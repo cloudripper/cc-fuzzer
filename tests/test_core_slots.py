@@ -147,9 +147,19 @@ class TestToolsWhich(unittest.TestCase):
             self.assertIsNone(tools.which("absent-tool", c, env=env))
 
     def test_no_host_scans_in_core(self):
-        src = (REPO / "src" / "cc_fuzzer_core").rglob("*.py")
-        hits = [str(p) for p in src if "/usr/lib/llvm" in p.read_text() or "/nix/store" in p.read_text()]
+        # The core never walks host layouts for tools. (coverage.py still
+        # names /nix/store to pick instrumented libs out of `ldd` output, and
+        # keeps the script's "not found in PATH or /usr/lib/llvm-*/bin/"
+        # message, which the plugin-side provider makes true.)
+        import re
+        scan = re.compile(r"(glob|listdir|scandir|walk|iterdir|Path)\(.{0,40}(/usr/lib/llvm|/nix/store)")
+        hits = []
+        for p in (REPO / "src" / "cc_fuzzer_core").rglob("*.py"):
+            hits += [f"{p.name}: {ln.strip()}" for ln in p.read_text().splitlines() if scan.search(ln)]
         self.assertEqual(hits, [])
+        text = (REPO / "src" / "cc_fuzzer_core" / "tools.py").read_text()
+        self.assertNotIn("/usr/lib/llvm", text)
+        self.assertNotIn("/nix/store", text)
 
     def test_cli_and_nix_tools_provider(self):
         with tempfile.TemporaryDirectory() as d:

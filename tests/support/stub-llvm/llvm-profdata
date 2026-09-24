@@ -1,0 +1,14 @@
+#!/bin/sh
+# Test-only llvm-profdata stand-in: `merge [-sparse] <in>... -o <out>` writes
+# <out> listing how many inputs it merged (no real profile format).
+out=""; n=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    merge|-sparse) ;;
+    -o) out="$2"; shift ;;
+    *) n=$((n + 1)) ;;
+  esac
+  shift
+done
+[ -n "$out" ] || exit 1
+echo "stub-profdata inputs=$n" > "$out"
