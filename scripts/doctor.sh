@@ -136,7 +136,7 @@ if [ -f "$PLUGIN_ROOT/scripts/_lib/enums.py" ] && [ -f "$PLUGIN_ROOT/STATE_SCHEM
   else
     issue "STATE_SCHEMA.md enum list(s) disagree with enums.py (the machine SSOT)"
     while IFS= read -r line; do [ -n "$line" ] && echo "       $line"; done <<< "$DRIFT_OUT"
-    echo "       Fix: edit the enum in scripts/_lib/enums.py AND its mirror list in STATE_SCHEMA.md."
+    echo "       Fix: edit the enum in src/cc_fuzzer_core/enums.py AND its mirror list in STATE_SCHEMA.md."
   fi
 else
   warn "enums.py or STATE_SCHEMA.md missing - cannot check enum drift"

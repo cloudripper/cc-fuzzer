@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import unittest
 
+from tests.support.cases import ALL_CASES, run_case
 from tests.support.golden import (FIXTURES, FROZEN_NOW, GoldenTestCase, bash,
                                   python_script, require_tools)
 
@@ -441,6 +442,21 @@ class TestCodeReviewPrescan(GoldenTestCase):
         self.assertEqual(first.exit_code, 0, first.stderr)
         self.assertGolden("code-review-prescan/warm-rerun",
                           sb.run(bash("scripts/code-review-run.sh", "--no-sast")))
+
+
+# ---------------------------------------------------------------------------
+# Extra cases for the §2 ports (tests/support/cases.py): fuzz-config.sh,
+# enums.py, validate-state.sh, yolo-state.sh, tick-coverage-roundup.sh,
+# ceiling-probe.sh, derive-tick-state.py, update-current.sh. Recorded from the
+# pre-port implementations; the ports are held to the same goldens by
+# tests/test_core_*.py.
+# ---------------------------------------------------------------------------
+
+class TestExtraCases(GoldenTestCase):
+    def test_bash_entry_points(self):
+        for case in ALL_CASES:
+            with self.subTest(case=case.name):
+                self.assertGolden(case.name, run_case(self, case, case.bash_argv))
 
 
 if __name__ == "__main__":

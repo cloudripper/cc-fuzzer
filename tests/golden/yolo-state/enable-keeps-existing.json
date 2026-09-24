@@ -1,0 +1,66 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/yolo-state.sh",
+    "enable",
+    "--aggressiveness",
+    "balanced",
+    "--cap",
+    "--soft-cost-fraction",
+    "0.7",
+    "--redundancy-threshold",
+    "3",
+    "--crash-storm-threshold",
+    "4",
+    "--max-backoff-multiplier",
+    "2"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {
+    "fuzz/state/fuzz-config.json": {
+      "lines": [
+        "{",
+        "  \"schema\": \"fuzz-config/v3\",",
+        "  \"fuzz_forks\": 2,",
+        "  \"harnesses\": [",
+        "    {",
+        "      \"name\": \"parser\",",
+        "      \"entry_function\": \"parse_chunk\"",
+        "    }",
+        "  ],",
+        "  \"fuzzer_slots\": [",
+        "    {",
+        "      \"slot\": \"main\",",
+        "      \"harness\": \"parser\",",
+        "      \"engine\": \"libfuzzer\"",
+        "    }",
+        "  ],",
+        "  \"yolo\": {",
+        "    \"enabled\": true,",
+        "    \"mode\": \"self_loop\",",
+        "    \"aggressiveness\": \"balanced\",",
+        "    \"interval_seconds\": 1800,",
+        "    \"max_ticks\": 24,",
+        "    \"max_cost_usd\": 10.0,",
+        "    \"stop_on_no_progress_ticks\": 10,",
+        "    \"plateau_escalate_ticks\": 4,",
+        "    \"crash_storm_threshold\": 4,",
+        "    \"redundancy_threshold\": 3,",
+        "    \"soft_cost_fraction\": 0.7,",
+        "    \"cost_cap_enabled\": true,",
+        "    \"max_backoff_multiplier\": 2,",
+        "    \"enabled_at_ts\": 1790000000,",
+        "    \"enabled_at_tick\": 12,",
+        "    \"last_halt_reason\": null",
+        "  }",
+        "}"
+      ]
+    }
+  },
+  "stderr": [],
+  "stdout": [
+    "yolo enabled mode=self_loop aggressiveness=balanced at tick=12 interval=1800s max_ticks=24 max_cost=$10.00 stop_on_no_progress=10 plateau_escalate=4 redundancy=3 soft_cost=0.7 cost_cap=on"
+  ]
+}

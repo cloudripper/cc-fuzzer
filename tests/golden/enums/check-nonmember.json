@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "/usr/bin/python3",
+    "<ROOT>/scripts/_lib/enums.py",
+    "check",
+    "engines",
+    "honggfuzz"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 1,
+  "files": {},
+  "stderr": [],
+  "stdout": []
+}

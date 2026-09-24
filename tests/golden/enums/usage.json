@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "/usr/bin/python3",
+    "<ROOT>/scripts/_lib/enums.py",
+    "print"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "usage: enums.py print <name> [--sep <s>] | check <name> <value> | doc-drift [STATE_SCHEMA.md]"
+  ],
+  "stdout": []
+}

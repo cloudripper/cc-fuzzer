@@ -1,0 +1,18 @@
+{
+  "argv": [
+    "/usr/bin/python3",
+    "<ROOT>/scripts/_lib/enums.py",
+    "print",
+    "REC_BRANCHES",
+    "--sep",
+    ","
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {},
+  "stderr": [],
+  "stdout": [
+    "analyze_gaps,concolic,fix_instrumentation,generate_seeds,mutator,reanalyze_gaps,restart_fuzzer,sleep,stop,triage"
+  ]
+}

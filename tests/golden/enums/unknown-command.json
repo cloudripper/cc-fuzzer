@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "/usr/bin/python3",
+    "<ROOT>/scripts/_lib/enums.py",
+    "frob",
+    "engines"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "enums.py: unknown command 'frob'"
+  ],
+  "stdout": []
+}

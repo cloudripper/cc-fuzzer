@@ -1,0 +1,28 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/yolo-state.sh",
+    "status"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {},
+  "stderr": [],
+  "stdout": [
+    "yolo: ENABLED",
+    "  mode:                     guided",
+    "  aggressiveness:           balanced",
+    "  interval:                 ?s",
+    "  max_ticks:                3",
+    "  max_cost_usd:             $0.00",
+    "  stop_on_no_progress:      ? ticks",
+    "  plateau_escalate:         8 ticks (self_loop reshape→consult→halt ladder)",
+    "  crash_storm_threshold:    ? findings/tick",
+    "  redundancy_threshold:     2 unproductive dispatches",
+    "  soft_cost_fraction:       0.6 of max_cost (throttle Opus)",
+    "  cost_cap:                 on",
+    "  enabled_at_tick:          ?",
+    "  enabled_at_ts:            ?"
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/_lib/fuzz-config.sh",
+    "get",
+    "fuzz_forks"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {},
+  "stderr": [],
+  "stdout": [
+    "0"
+  ]
+}

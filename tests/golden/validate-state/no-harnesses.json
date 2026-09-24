@@ -1,0 +1,25 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/validate-state.sh"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 1,
+  "files": {},
+  "stderr": [],
+  "stdout": [
+    "WARNINGS (2):",
+    "  no FINDINGS-REPORT-*.md in <PROJECT>/fuzz/state (run /cc-fuzzer:report to generate)",
+    "  harness-built.json: coverage_tracking=false but no coverage_disabled_reason set. Rebuild with /cc-fuzzer:campaign --reset to enable coverage.",
+    "",
+    "ERRORS (3):",
+    "  fuzz-config.json declares no harnesses[] (or could not be read). v0.30 is multi-harness only; the singular flat layout was retired. Declare a harness set with 'harness-set.sh init --entry <fn>', or /fuzz-reset and start fresh.",
+    "  fuzz-config.json: fuzzer_slots[0] ('main') references undeclared harness \"parser\"",
+    "  fuzz-config.json: multi mode requires non-empty harnesses[]",
+    "",
+    "FAIL: state validation failed. See errors above.",
+    "  - Run '/fuzz-reset' to wipe state and start over (v0.30 requires schema v12; older state cannot be migrated)",
+    "  - Or fix individual issues manually"
+  ]
+}

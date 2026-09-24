@@ -23,6 +23,8 @@ from cc_fuzzer_core import __version__
 # Order is the order subsystems appear in `cc-fuzzer --help`.
 SUBSYSTEMS = (
     "cc_fuzzer_core.paths",
+    "cc_fuzzer_core.enums",
+    "cc_fuzzer_core.config",
     "cc_fuzzer_core.manifest",
 )
 

@@ -1,0 +1,29 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/_lib/fuzz-config.sh",
+    "set",
+    "fuzz_forks",
+    "3"
+  ],
+  "created_dirs": [
+    "fuzz/state"
+  ],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {
+    "fuzz/state/fuzz-config.json": {
+      "lines": [
+        "{",
+        "  \"fuzz_forks\": 3,",
+        "  \"schema\": \"fuzz-config/v3\"",
+        "}"
+      ],
+      "trailing_newline": false
+    }
+  },
+  "stderr": [],
+  "stdout": [
+    "set fuzz_forks = 3 in fuzz/state/fuzz-config.json"
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "argv": [
+    "/usr/bin/python3",
+    "<ROOT>/scripts/_lib/enums.py",
+    "print",
+    "categories"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {},
+  "stderr": [],
+  "stdout": [
+    "access-control",
+    "assertion-failure",
+    "auth-bypass",
+    "canonicalization",
+    "differential-divergence",
+    "flaky",
+    "global-buffer-overflow",
+    "harness-artifact",
+    "heap-buffer-overflow",
+    "heap-use-after-free",
+    "incorrect-validation",
+    "integer-truncation",
+    "invariant-violation",
+    "logic-error",
+    "null-deref",
+    "oom",
+    "parser-differential",
+    "roundtrip-mismatch",
+    "stack-buffer-overflow",
+    "stack-overflow",
+    "state-confusion",
+    "timeout"
+  ]
+}

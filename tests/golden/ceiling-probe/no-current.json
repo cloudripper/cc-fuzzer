@@ -1,0 +1,14 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/ceiling-probe.sh"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 1,
+  "files": {},
+  "stderr": [
+    "ceiling-probe: no current.json at <PROJECT>/fuzz/state/current.json — run a tick first."
+  ],
+  "stdout": []
+}

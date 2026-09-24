@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/yolo-state.sh",
+    "frob"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 2,
+  "files": {},
+  "stderr": [
+    "ERROR: unknown subcommand 'frob' (try: enable | disable | status | check-halt | next-tick)"
+  ],
+  "stdout": []
+}

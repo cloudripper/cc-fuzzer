@@ -1,0 +1,71 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/_lib/fuzz-config.sh",
+    "set",
+    "note",
+    "hello world"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {
+    "fuzz/state/fuzz-config.json": {
+      "lines": [
+        "{",
+        "  \"code_review\": {",
+        "    \"default_tier\": \"sonnet\",",
+        "    \"enabled\": true,",
+        "    \"excluded_paths\": [",
+        "      \"tests/\",",
+        "      \"vendor/\"",
+        "    ],",
+        "    \"max_functions_to_review\": 20,",
+        "    \"sast\": {",
+        "      \"codeql_db\": null,",
+        "      \"mode\": \"auto\"",
+        "    },",
+        "    \"scan_paths\": null",
+        "  },",
+        "  \"fuzz_forks\": 2,",
+        "  \"fuzzer_slots\": [",
+        "    {",
+        "      \"engine\": \"libfuzzer\",",
+        "      \"harness\": \"parser\",",
+        "      \"slot\": \"parser-main\"",
+        "    },",
+        "    {",
+        "      \"afl_power_schedule\": \"explore\",",
+        "      \"engine\": \"aflpp\",",
+        "      \"harness\": \"encoder\",",
+        "      \"role\": \"master\",",
+        "      \"slot\": \"encoder-afl\",",
+        "      \"timeout_ms\": 1000",
+        "    }",
+        "  ],",
+        "  \"harnesses\": [",
+        "    {",
+        "      \"entry_function\": \"parse_chunk\",",
+        "      \"name\": \"parser\"",
+        "    },",
+        "    {",
+        "      \"entry_function\": \"encode_chunk\",",
+        "      \"name\": \"encoder\"",
+        "    }",
+        "  ],",
+        "  \"note\": \"hello world\",",
+        "  \"schema\": \"fuzz-config/v3\",",
+        "  \"tick\": {",
+        "    \"consult_every_n\": 5,",
+        "    \"consult_on_coverage_stall\": true",
+        "  }",
+        "}"
+      ],
+      "trailing_newline": false
+    }
+  },
+  "stderr": [],
+  "stdout": [
+    "set note = hello world in fuzz/state/fuzz-config.json"
+  ]
+}

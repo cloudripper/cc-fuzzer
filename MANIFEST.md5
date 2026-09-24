@@ -10,7 +10,7 @@
 # refreshed out of band), so drift there is expected and must not trip the
 # integrity check. The SAST driver scripts/_lib/sast_scan.py IS tracked.
 95fc52ef9ab27fb6b44c133450defa86  .claude-plugin/plugin.json
-0b593c7a9d5d6e524a4979ada0d4dfd1  STATE_SCHEMA.md
+e9b0b211535233b891e2d91fe9b9b4c5  STATE_SCHEMA.md
 c05485b772d32ee68ba123de7bdf4c0d  agents/campaign-planner.md
 db8b420f1ff14d5c16673a2543a4da6d  agents/code-reviewer-deep.md
 2ac8e75500155efff720afbabae5fd5d  agents/code-reviewer.md
@@ -47,9 +47,9 @@ f0af64be49401f6d7b3375e7cf3ecea3  scripts/_lib/ceiling_probe.py
 3e5421f0c317575da597fe7089b5aa80  scripts/_lib/cve_poc_trust.py
 728a80eba881d2adbf3cbce07400125b  scripts/_lib/cve_sources.py
 9f6c3020234fd9db75ea05f924d84a0c  scripts/_lib/derive-tick-state.py
-1e5e75284ea24fc07de81fefd37129b0  scripts/_lib/enums.py
+6de2ca6bede1f2f79d828e29b3feda9b  scripts/_lib/enums.py
 b0c4a8a3cf4d38f9be995c5651203ad8  scripts/_lib/findings_ops.py
-6c3351db721dc2e205046629bef3a9f5  scripts/_lib/fuzz-config.sh
+fd143692dde7ec039a8eaecb7c02673f  scripts/_lib/fuzz-config.sh
 459abfe39165788d2819f690d648c52f  scripts/_lib/harness-path.sh
 0ea5f36484f2ea501539c0c743b7f68d  scripts/_lib/launch_slot.py
 e961fa87edde123666067ba55c6f762e  scripts/_lib/nix-tools.sh
@@ -78,7 +78,7 @@ d53a559c6137248f64d0c4cf7af72ca9  scripts/corpus-quarantine.sh
 6cc42ad94c0d4c4fa38189aace915f9e  scripts/cve-lookup.py
 f7a442502d7ae441cb79dc969a6948e9  scripts/detect-crashes.sh
 ded9c4697f621e5f3380f94944c803fe  scripts/dictionaries.sh
-e67655d382390239b485dd9428360cb3  scripts/doctor.sh
+430f103a67bfe4b0594ac1b14202b9d0  scripts/doctor.sh
 8e692cae3d9f755ef8cf5a7dac1cf4fb  scripts/enforce-readonly.sh
 786c00f3a917c4a6cc60395ab487ffcb  scripts/env-check.sh
 beae5002de6e2da68b1f86f5bc0cdee1  scripts/events.sh
@@ -137,7 +137,9 @@ e290baf96ab206f60000850d6b4a9891  skills/report/SKILL.md
 b6243c453ddf3c899989d80db09f886a  skills/yolo/SKILL.md
 7a0c7c6f7ff94edcf52f367204c63f55  src/cc_fuzzer_core/__init__.py
 81df487b0971d3b41a1613371d67df65  src/cc_fuzzer_core/__main__.py
-be1a6dc3fab6113a9572b62c4ac52d3a  src/cc_fuzzer_core/cli.py
+0f816cf85612fd8418ac7f1504eef0a3  src/cc_fuzzer_core/cli.py
+b72bfbf569f1d0c6aded6b744fc93529  src/cc_fuzzer_core/config.py
+5aac804d28e009a87237b76ae01fa930  src/cc_fuzzer_core/enums.py
 82c7724d8024f81554ebcd34959503e0  src/cc_fuzzer_core/manifest.py
 5012e0a9eede85aa427b9bd36086ea7c  src/cc_fuzzer_core/paths.py
 a012158cbac7a2b368f75bde83f60060  templates/authorization.json

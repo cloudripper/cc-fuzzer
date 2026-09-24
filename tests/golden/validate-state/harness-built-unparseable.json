@@ -1,0 +1,27 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/validate-state.sh"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 1,
+  "files": {},
+  "stderr": [],
+  "stdout": [
+    "WARNINGS (3):",
+    "  no FINDINGS-REPORT-*.md in <PROJECT>/fuzz/state (run /cc-fuzzer:report to generate)",
+    "  harness-built.json: coverage_tracking=false but no coverage_disabled_reason set. Rebuild with /cc-fuzzer:campaign --reset to enable coverage.",
+    "  harness-built.json: cmplog_enabled=false but no cmplog_disabled_reason set.",
+    "",
+    "ERRORS (4):",
+    "  <PROJECT>/fuzz/state/harness-built.json: PARSE_ERROR: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)",
+    "  harness-built.json: fuzzing_mode missing — rebuild with /cc-fuzzer:campaign --reset",
+    "  harness-built.json: parse_error=Expecting property name enclosed in double quotes: line 1 column 2 (char 1) is not 16-char lowercase hex (placeholder stub?). Rebuild via /cc-fuzzer:campaign --reset, or run scripts/write-harness-built.sh to repair.",
+    "  harness-built.json: parse error reading mirror: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)",
+    "",
+    "FAIL: state validation failed. See errors above.",
+    "  - Run '/fuzz-reset' to wipe state and start over (v0.30 requires schema v12; older state cannot be migrated)",
+    "  - Or fix individual issues manually"
+  ]
+}

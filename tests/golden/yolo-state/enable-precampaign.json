@@ -1,0 +1,48 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/yolo-state.sh",
+    "enable",
+    "--mode",
+    "guided"
+  ],
+  "created_dirs": [
+    "fuzz/state"
+  ],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {
+    "fuzz/state/fuzz-config.json": {
+      "lines": [
+        "{",
+        "  \"fuzz_forks\": 2,",
+        "  \"yolo\": {",
+        "    \"mode\": \"guided\",",
+        "    \"aggressiveness\": \"conservative\",",
+        "    \"cost_cap_enabled\": true,",
+        "    \"interval_seconds\": 1800,",
+        "    \"max_ticks\": 24,",
+        "    \"max_cost_usd\": 10.0,",
+        "    \"stop_on_no_progress_ticks\": 30,",
+        "    \"crash_storm_threshold\": 10,",
+        "    \"redundancy_threshold\": 2,",
+        "    \"soft_cost_fraction\": 0.6,",
+        "    \"max_backoff_multiplier\": 4,",
+        "    \"plateau_escalate_ticks\": 8,",
+        "    \"enabled\": true,",
+        "    \"enabled_at_ts\": 1790000000,",
+        "    \"enabled_at_tick\": 0,",
+        "    \"last_halt_reason\": null",
+        "  }",
+        "}"
+      ]
+    }
+  },
+  "stderr": [
+    "note: no campaign yet — created <PROJECT>/fuzz/state/fuzz-config.json to hold the YOLO config.",
+    "      The next /cc-fuzzer:campaign (COLD) reads yolo.enabled and starts the self-loop automatically."
+  ],
+  "stdout": [
+    "yolo enabled mode=guided aggressiveness=conservative at tick=0 interval=1800s max_ticks=24 max_cost=$10.00 stop_on_no_progress=30 plateau_escalate=8 redundancy=2 soft_cost=0.6 cost_cap=on"
+  ]
+}

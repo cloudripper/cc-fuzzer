@@ -10,7 +10,7 @@ Every campaign is multi-harness. The Nix build backend, `harness-built/v7`, and 
 
 ### Enum source of truth
 
-The centralized state enums (finding `status`/`category`/`exploitability`, code-review `status`/`pattern`/`confidence`, `oracle_type`/`oracle_kind`, `recommendation.branch`, gap reasons, etc.) live in **`scripts/_lib/enums.py`** — that module is the *machine* source of truth, imported by the Python validators and shelled out to by bash (`python3 enums.py print|check <name>`). The enum lists reproduced throughout this document are the *human-readable mirror*: when an enum changes, edit `enums.py` **and** the corresponding list here so the two never drift.
+The centralized state enums (finding `status`/`category`/`exploitability`, code-review `status`/`pattern`/`confidence`, `oracle_type`/`oracle_kind`, `recommendation.branch`, gap reasons, etc.) live in **`src/cc_fuzzer_core/enums.py`** (`scripts/_lib/enums.py` is a re-export shim, so references to `enums.py` below mean this module) — that module is the *machine* source of truth, imported by the Python validators and shelled out to by bash (`python3 enums.py print|check <name>` / `cc-fuzzer enums print|check <name>`). The enum lists reproduced throughout this document are the *human-readable mirror*: when an enum changes, edit `cc_fuzzer_core/enums.py` **and** the corresponding list here so the two never drift.
 
 ## Filesystem Layout
 

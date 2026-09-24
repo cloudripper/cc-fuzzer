@@ -1,0 +1,25 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/_lib/fuzz-config.sh",
+    "help"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {},
+  "stderr": [],
+  "stdout": [
+    "fuzz-config.sh - per-project cc-fuzzer configuration",
+    "",
+    "Commands:",
+    "  get <key>          Print resolved value (env > override > file > default)",
+    "  set <key> <value>  Write to fuzz/state/fuzz-config.json",
+    "  show               Show resolution trace for fuzz_forks",
+    "",
+    "Recognized keys:",
+    "  fuzz_forks         libFuzzer -fork=N. Default 2, cap nproc-1.",
+    "",
+    "Resolution order: FUZZ_FORKS env > FUZZ_FORKS_OVERRIDE > config file > default"
+  ]
+}
