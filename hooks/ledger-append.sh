@@ -17,9 +17,13 @@
 #
 # The core (ledger.usage_from_transcript) sums the per-message usage of the
 # transcript's assistant turns, each message id once, and takes the model from
-# it; this script only translates hook input into that call. The append is
-# idempotent on the agent id, and host-hook rows supersede the orchestrator's
-# own `events.sh agent_call` rows for the same agent and tick.
+# it; this script only translates hook input into that call. Per agent id the
+# ledger keeps the largest report: a re-fired hook with the same total writes
+# nothing, a grown transcript (the subagent was blocked and continued, or the
+# async flush caught up) appends a replacing row; the row stores the
+# transcript path so `cc-fuzzer ledger reconcile` can catch up later. Host-hook
+# rows supersede the orchestrator's own `events.sh agent_call` rows for the
+# same agent and tick.
 #
 # Never blocks: always exits 0 with nothing on stdout. It is a no-op outside a
 # campaign (no fuzz/ above the hook's cwd, or no state dir yet) and for the

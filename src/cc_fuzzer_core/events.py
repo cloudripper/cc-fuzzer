@@ -79,9 +79,11 @@ class Log:
         self._f = f
         self.rows = rows
 
-    def append(self, event: str, fields: dict, *, now: float | None = None) -> dict:
+    def append(self, event: str, fields: dict, *, now: float | None = None, tick=None) -> dict:
+        """Write one row; `tick` defaults to the tick count (a ledger row
+        replacing an earlier report keeps that report's tick)."""
         row = {"schema": SCHEMA, "ts": int(time.time() if now is None else now),
-               "tick": _ticks(self.rows), "event": event}
+               "tick": _ticks(self.rows) if tick is None else tick, "event": event}
         row.update(fields)
         self._f.write(json.dumps(row, separators=(",", ":")) + "\n")
         self._f.flush()

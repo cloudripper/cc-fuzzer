@@ -78,6 +78,43 @@ class TestAppend(_Tmp):
                                    "cache_read": 3000, "cache_write": 400, "model": "claude-opus-4-1",
                                    "source": "host-hook", "call_id": "x1"})
 
+    def test_larger_report_replaces_append_only(self):
+        a = ledger.append(self.sd, agent="crash-triager", usage=Usage(10, 100, 1000, 0), source="host-hook",
+                          call_id="c", transcript="/t/agent-c.jsonl")
+        events.append(self.sd, "tick", branch="triage", reason="", duration_ms=1)
+        same = ledger.append(self.sd, agent="crash-triager", usage=Usage(10, 100, 1000, 0), source="host-hook",
+                             call_id="c")
+        smaller = ledger.append(self.sd, agent="crash-triager", usage=Usage(10, 50, 1000, 0), source="driver",
+                                call_id="c")
+        self.assertFalse(same.appended)
+        self.assertFalse(smaller.appended)
+        self.assertEqual(same.row, a.row)
+        before = (self.sd / "events.jsonl").read_text()
+        big = ledger.append(self.sd, agent="crash-triager", usage=Usage(12, 400, 1000, 50), source="host-hook",
+                            call_id="c", transcript="/t/agent-c.jsonl")
+        self.assertTrue(big.appended)
+        after = (self.sd / "events.jsonl").read_text()
+        self.assertTrue(after.startswith(before))          # nothing rewritten
+        self.assertEqual(big.row["tick"], a.row["tick"])   # the call's own tick, not the current one
+        self.assertEqual(big.row["transcript"], "/t/agent-c.jsonl")
+        again = ledger.append(self.sd, agent="crash-triager", usage=Usage(12, 400, 1000, 50), source="host-hook",
+                              call_id="c")
+        self.assertFalse(again.appended)
+        self.assertEqual(again.row, big.row)
+        self.assertEqual(len(_rows(self.sd)), 2)
+        sp = ledger.spend(self.sd, model_map=MM)
+        self.assertEqual((sp.calls, sp.replaced), (1, 1))
+        self.assertEqual(sp.tokens["tokens_out"], 400)
+        self.assertAlmostEqual(sp.usd, MM.cost(12, 400, agent="crash-triager", cache_read=1000, cache_write=50))
+
+    def test_replacing_row_keeps_precedence_on_the_calls_tick(self):
+        ledger.append(self.sd, agent="mutator", usage=Usage(500, 50), source="orchestrator")
+        ledger.append(self.sd, agent="mutator", usage=Usage(5, 5), source="host-hook", call_id="h")
+        events.append(self.sd, "tick", branch="mutator", reason="", duration_ms=1)
+        ledger.append(self.sd, agent="mutator", usage=Usage(9, 9), source="host-hook", call_id="h")
+        st = [x for _r, x in ledger.classify(events.read(self.sd))]
+        self.assertEqual(st, ["superseded", "replaced", "counted"])
+
     def test_orchestrator_rows_are_not_deduped(self):
         for _ in range(2):
             ledger.append(self.sd, agent="mutator", usage=Usage(10, 1), source="orchestrator")
@@ -149,15 +186,15 @@ class TestPrecedence(_Tmp):
             {"tick": 6, "agent_called": "seed-generator", "tokens_in": 1, "tokens_out": 1, "source": "orchestrator"},
             {"tick": 6, "agent_called": "seed-generator", "tokens_in": 70, "tokens_out": 7,
              "source": "driver", "call_id": "d1"},
-            # a duplicate call_id (e.g. a hand-copied row): ignored
+            # the same report again (e.g. a hand-copied row): one counts
             {"tick": 6, "agent_called": "seed-generator", "tokens_in": 70, "tokens_out": 7,
              "source": "driver", "call_id": "d1"},
         )
         st = [s for _r, s in ledger.classify(events.read(self.sd))]
         self.assertEqual(st, ["superseded", "superseded", "counted", "counted", "counted",
-                              "superseded", "counted", "duplicate"])
+                              "superseded", "counted", "replaced"])
         sp = ledger.spend(self.sd, model_map=MM)
-        self.assertEqual((sp.calls, sp.superseded, sp.duplicates), (4, 3, 1))
+        self.assertEqual((sp.calls, sp.superseded, sp.replaced), (4, 3, 1))
         self.assertEqual(sp.by_agent["crash-triager"]["calls"], 2)
         self.assertEqual(sp.by_agent["crash-triager"]["tokens_in"], 2050)
         self.assertEqual(set(sp.by_source), {"host-hook", "orchestrator", "driver"})
@@ -233,6 +270,56 @@ class TestSpendPricing(_Tmp):
         # 3 coverage-analyst/seed-generator agent_call rows + the host row
         self.assertEqual(ys["evaluation"]["cost"]["opus_calls"], 1)
         self.assertEqual(ys["evaluation"]["agent_ledger"]["crash-triager"]["dispatches"], 1)
+
+
+class TestReconcile(GoldenTestCase):
+    def test_reconcile_catches_up_a_grown_transcript(self):
+        sb = self.sandbox("campaign-warm")
+        sd = sb.path("fuzz/state")
+        t = sb.tmp / "agent-x.jsonl"
+        full = (RECORDED / "session/subagents/agent-a1c9e0f2b3d4.jsonl").read_text().splitlines(True)
+        t.write_text("".join(full[:4]))   # the hook fired before the last turn was flushed
+        r = sb.run(core("ledger", "append", "--agent", "crash-triager", "--source", "host-hook",
+                        "--call-id", "x", "--transcript", str(t)))
+        self.assertEqual(r.exit_code, 0, r.stderr)
+        first = ledger.spend(sd, model_map=MM).by_source["host-hook"]
+        self.assertEqual(first["tokens_out"], 410)
+        # nothing grew yet: reconcile is a no-op
+        r = sb.run(core("ledger", "reconcile", "--json"))
+        self.assertEqual([x["appended"] for x in json.loads(r.stdout)], [False])
+        t.write_text("".join(full))
+        r = sb.run(core("ledger", "reconcile"))
+        self.assertEqual(r.exit_code, 0, r.stderr)
+        self.assertIn("1 grew", r.stdout)
+        hh = ledger.spend(sd, model_map=MM).by_source["host-hook"]
+        self.assertEqual((hh["calls"], hh["tokens_out"]), (1, 1360))
+        self.assertEqual(ledger.usage_from_transcript(t).total,
+                         Usage.of_row([x for x in _rows(sd) if x.get("call_id") == "x"][-1]).total)
+        # idempotent: a second pass appends nothing
+        n = len(_rows(sd))
+        sb.run(core("ledger", "reconcile"))
+        self.assertEqual(len(_rows(sd)), n)
+        # a vanished transcript is reported, not fatal
+        t.unlink()
+        res = ledger.reconcile(sd)
+        self.assertEqual(len(res), 1)
+        self.assertIsNotNone(res[0].error)
+        self.assertEqual(len(_rows(sd)), n)
+
+
+class TestTickBriefing(GoldenTestCase):
+    def test_dispatched_applies_precedence(self):
+        sb = self.sandbox("campaign-warm")
+        sd = sb.path("fuzz/state")
+        ledger.append(sd, agent="crash-triager", usage=Usage(4000, 500), source="orchestrator")
+        ledger.append(sd, agent="crash-triager", usage=Usage(30, 900), source="host-hook", call_id="h")
+        ledger.append(sd, agent="crash-triager", usage=Usage(30, 1200), source="host-hook", call_id="h")
+        r = sb.run(bash("scripts/tick-briefing.sh"))
+        self.assertEqual(r.exit_code, 0, r.stderr)
+        out = next(k for k in r.files if "tick-briefing-" in k)
+        got = [d for d in r.file_json(out)["dispatched_since_last_consult"]
+               if d["agent"] == "crash-triager"]
+        self.assertEqual(got, [{"agent": "crash-triager", "tick": 3, "tokens_in": 30, "tokens_out": 1200}])
 
 
 class TestTranscript(unittest.TestCase):
@@ -325,6 +412,22 @@ class TestHook(GoldenTestCase):
                            cwd=sb.project, env=sb.env(None))
         self.assertEqual((r.returncode, r.stdout), (0, ""))
         self.assertIn("ledger append failed", sb.path("fuzz/state/ledger-hook.log").read_text())
+
+    def test_refire_after_the_transcript_grew(self):
+        sb = self.sandbox("campaign-warm")
+        session = self._session(sb)
+        stop = _stops(session, sb.project)[0]
+        path = Path(stop["agent_transcript_path"])
+        full = path.read_text()
+        path.write_text("".join(full.splitlines(True)[:4]))
+        self.assertEqual(self._fire(sb, stop).exit_code, 0)
+        path.write_text(full)
+        self.assertEqual(self._fire(sb, {**stop, "stop_hook_active": True}).exit_code, 0)
+        host = [x for x in _rows(sb.path("fuzz/state")) if x.get("source") == "host-hook"]
+        self.assertEqual([x["tokens_out"] for x in host], [410, 1360])
+        self.assertEqual(host[0]["transcript"], str(path))
+        sp = ledger.spend(sb.path("fuzz/state"), model_map=MM)
+        self.assertEqual((sp.by_source["host-hook"]["calls"], sp.by_source["host-hook"]["tokens_out"]), (1, 1360))
 
     def test_derives_the_subagent_transcript(self):
         sb = self.sandbox("campaign-warm")

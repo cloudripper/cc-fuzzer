@@ -10,7 +10,7 @@
 # refreshed out of band), so drift there is expected and must not trip the
 # integrity check. The SAST driver scripts/_lib/sast_scan.py IS tracked.
 95fc52ef9ab27fb6b44c133450defa86  .claude-plugin/plugin.json
-0cf3852ceb90e00252e0480b4d39c976  STATE_SCHEMA.md
+5d1232bf8f770287b01a545e1c18c466  STATE_SCHEMA.md
 c05485b772d32ee68ba123de7bdf4c0d  agents/campaign-planner.md
 db8b420f1ff14d5c16673a2543a4da6d  agents/code-reviewer-deep.md
 2ac8e75500155efff720afbabae5fd5d  agents/code-reviewer.md
@@ -102,7 +102,7 @@ d5a306732a71a55481fe8a3a0377faf7  scripts/run-concolic.sh
 5ba49d2b137293792cc4c420f1a5ce2a  scripts/snapshot-coverage.sh
 bfdc1ca59252ee9bc6f5ec16686c721c  scripts/status.sh
 cc472daddbbcaf2ccd1727e0fbbce637  scripts/stop-fuzzer.sh
-3859ef11abb6fe0fc057d4a28a4b02cc  scripts/tick-briefing.sh
+7255c542a0e4b020a30b13e8a83fc60b  scripts/tick-briefing.sh
 fb4b69a64e237630bc843fc4f3da335f  scripts/tick-coverage-roundup.sh
 66eea33324630e35cbef70f4cb85c615  scripts/update-current.sh
 b31fd19c17b10ca9c3604e67289155a0  scripts/validate-state.sh
@@ -144,15 +144,15 @@ d8b8695c4bd96bd7df2ea0eaf287c67b  src/cc_fuzzer_core/crash/detect.py
 126ddcd5c81cf200d43f5b54d3c7bebf  src/cc_fuzzer_core/data/models.json
 96647041941d2e3a73c59f26581a607b  src/cc_fuzzer_core/delta.py
 ef9dc641ecf51da60acc0e9a695f29c0  src/cc_fuzzer_core/enums.py
-a04bf0adf5673c8cc2e0310854a24d57  src/cc_fuzzer_core/events.py
-7d14525e6d1acf0e32d0c2383bcae857  src/cc_fuzzer_core/ledger.py
+5fcdb1075b43c3a193d755781fdd3939  src/cc_fuzzer_core/events.py
+24e0b9f93714c4b5fa5fe11393b08d06  src/cc_fuzzer_core/ledger.py
 82c7724d8024f81554ebcd34959503e0  src/cc_fuzzer_core/manifest.py
 2c385e54cedae3970219c9de7d2d16b3  src/cc_fuzzer_core/models.py
 e886a95f3444ff5e6fcce0985a0ef253  src/cc_fuzzer_core/paths.py
 512501ecc74b66966d8484caafb7318d  src/cc_fuzzer_core/quarantine.py
 4d6d423c89ad954f275dd88a937b64fb  src/cc_fuzzer_core/schema/__init__.py
 49be6e9d5fe0c847ba6ee8097e385495  src/cc_fuzzer_core/schema/checks.py
-f27af911c7718eeb9fa9aa4e9035d3d1  src/cc_fuzzer_core/schema/fields.py
+044e363cd64dd7fc5fe0e77edf735c57  src/cc_fuzzer_core/schema/fields.py
 4812bd8dec710013a4dedb9f7077cd35  src/cc_fuzzer_core/schema/validate.py
 15c6c3edc54dd1bb267e9d3da12e0fd5  src/cc_fuzzer_core/slots/__init__.py
 fef26e3919f3d2b26f2ed62c3e5fa8b2  src/cc_fuzzer_core/slots/launcher.py
