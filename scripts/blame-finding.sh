@@ -23,6 +23,7 @@
 #   }
 #
 # All fields are optional. `in_delta_range` is null when no delta-*.json exists.
+# With the disclosure_reporting feature off it prints nothing and exits 0.
 # The agent should treat any missing/null field as "unknown".
 
 set -u
@@ -30,6 +31,12 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/_lib/root.sh"
 SCRIPT_DIR="$CC_FUZZER_ROOT/scripts"
 . "$SCRIPT_DIR/_lib/path-anchor.sh"
+
+# Feature gate (§9): only the disclosure report uses this helper.
+if ! python3 -m cc_fuzzer_core feature enabled disclosure_reporting; then
+  echo "blame-finding.sh: disclosure_reporting feature disabled (skip)" >&2
+  exit 0
+fi
 
 if [ $# -lt 2 ]; then
   echo "Usage: blame-finding.sh <file> <line>" >&2

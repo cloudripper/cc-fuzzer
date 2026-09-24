@@ -461,6 +461,8 @@ def _load_cve_hotspots(cve_context_path: Optional[Path]) -> Tuple[Set[str], Set[
             doc = json.load(f)
     except Exception:
         return set(), set(), set()
+    if not isinstance(doc, dict):
+        return set(), set(), set()
     hotspots = doc.get("hotspots") or {}
     files = {(h.get("path") or "") for h in (hotspots.get("by_file") or []) if h.get("path")}
     funcs = {(h.get("name") or "") for h in (hotspots.get("by_function") or []) if h.get("name")}

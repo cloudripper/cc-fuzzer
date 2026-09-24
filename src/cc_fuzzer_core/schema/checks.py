@@ -274,6 +274,16 @@ def slots(cfg_path, declared) -> list[str]:
     return out
 
 
+def features_block(cfg_path) -> list[str]:
+    """fuzz-config.json `features` (§9): known flag names, bool values."""
+    from cc_fuzzer_core import features
+    try:
+        d = _load(cfg_path)
+    except Exception:
+        return []
+    return features.block_problems(d.get("features")) if isinstance(d, dict) else []
+
+
 # ---------------------------------------------------------------------------
 # fuzzers.json live manifest
 # ---------------------------------------------------------------------------

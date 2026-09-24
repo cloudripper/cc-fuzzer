@@ -43,7 +43,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from cc_fuzzer_core import enums
+from cc_fuzzer_core import enums, features
 from cc_fuzzer_core.paths import Campaign
 from cc_fuzzer_core.state._common import (last_gain_ts, load_json as _load,
                                           load_jsonl as _load_jsonl, roundup_series, ticks_since)
@@ -125,8 +125,14 @@ def compute(state_dir, snaps_dir, doc, events, enabled_at_ts, gain_ts,
             cr_by_func.setdefault(f["function"], f)
 
     # ---- CVE hotspots -------------------------------------------------------
-    cve_path = _latest(snaps_dir, "cve-context", harness) or _latest(snaps_dir, "cve-context")
-    cve_doc = _load(cve_path) or {}
+    # Optional intel: a missing (or unreadable) cve-context contributes nothing,
+    # and with advisory_lookup off (§9) any stale one on disk is ignored.
+    cve_path = None
+    if features.enabled(features.ADVISORY_LOOKUP, state_dir):
+        cve_path = _latest(snaps_dir, "cve-context", harness) or _latest(snaps_dir, "cve-context")
+    cve_doc = (_load(cve_path) if cve_path else None) or {}
+    if not isinstance(cve_doc, dict):
+        cve_doc = {}
     hot = (cve_doc.get("hotspots") or {})
     cve_funcs = {h.get("name") for h in (hot.get("by_function") or []) if h.get("name")}
     for bf in (hot.get("by_file") or []):

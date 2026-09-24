@@ -25,7 +25,8 @@
 # Usage:  oracle-smoke-test.sh [--harness <name>] [--max-seeds N] [--stage-max M]
 #
 # Exit codes:
-#   0   pass, or skipped (crash-only oracle | no verify_binary | empty corpus)
+#   0   pass, or skipped (crash-only oracle | no verify_binary | empty corpus |
+#       logic_oracles feature disabled)
 #   10  oracle TRIPPED — tripping seed(s) staged to fuzz/crashes/new/;
 #       the caller (orchestrator) must dispatch crash-triager before launch.
 
@@ -51,6 +52,13 @@ while [ $# -gt 0 ]; do
     *) echo "oracle-smoke-test: unknown arg '$1'" >&2; exit 2 ;;
   esac
 done
+
+# Feature gate (§9): with logic_oracles off only the crash oracle exists, so
+# there is nothing to validate.
+if ! python3 -m cc_fuzzer_core feature enabled logic_oracles --state-dir "$STATE_DIR"; then
+  echo "oracle-smoke-test: logic_oracles feature disabled — nothing to validate (skip)"
+  exit 0
+fi
 
 # Resolve the harness name, defaulting to the first declared harness.
 if [ -z "$HARNESS_NAME" ]; then

@@ -31,7 +31,7 @@ import glob
 import os
 
 from cc_fuzzer_core import config as _config
-from cc_fuzzer_core import enums, models
+from cc_fuzzer_core import enums, features as _features, models
 from cc_fuzzer_core.state._common import load_json as _load_json, load_jsonl as _load_jsonl
 
 
@@ -222,7 +222,15 @@ def compute(state_dir, snaps_dir, cfg, doc, events, findings,
     n_conf = len(confirmed)
     need_verif = [f for f in confirmed if not (f.get("verification") or {}).get("deterministic_replay")]
     need_poc = [f for f in confirmed if not _has_poc(f, fuzz_dir)]
-    weak_poc = [f for f in confirmed if _has_poc(f, fuzz_dir) and _weak_poc(f, n_conf)]
+    # config gates (§9 feature flags; cve.enabled is the advisory_lookup alias)
+    full_cfg = _full_config(state_dir)
+    feats = _features.load(full_cfg)
+    impact_on = feats.enabled(_features.IMPACT_TIERING)
+    advisory_on = feats.enabled(_features.ADVISORY_LOOKUP)
+    # _weak_poc is an impact-tier judgement (Tier C / weaponization / chaining):
+    # quiet when impact_tiering is off.
+    weak_poc = [f for f in confirmed
+                if impact_on and _has_poc(f, fuzz_dir) and _weak_poc(f, n_conf)]
 
     pending_crashes = int(((doc or {}).get("fuzzer_stats") or {}).get("new_crashes_since_previous") or 0)
 
@@ -238,9 +246,7 @@ def compute(state_dir, snaps_dir, cfg, doc, events, findings,
     cmplog = sorted(glob.glob(os.path.join(state_dir, "cmplog-dict-*.dict")))
     cmplog_latest = cmplog[-1] if cmplog else None
 
-    # config gates
-    full_cfg = _full_config(state_dir)
-    cve_enabled = (full_cfg.get("cve") or {}).get("enabled", True)
+    cve_enabled = advisory_on
     cve_ttl_days = int((full_cfg.get("cve") or {}).get("cache_ttl_days", 30) or 30)
     cr_cfg = full_cfg.get("code_review") or {}
     cr_enabled = cr_cfg.get("enabled", True)
@@ -311,7 +317,14 @@ def compute(state_dir, snaps_dir, cfg, doc, events, findings,
     # reports stage ≥ 1 AND (any open candidates with a high-impact oracle_kind
     # OR no `code-reviewer-deep` dispatch since the last coverage gain).
     _stage = (ceiling or {}).get("ladder_stage", 0)
-    _gain_ts = (ceiling or {}).get("gain_ts") or enabled_at_ts
+    # The probe reports ticks_since_gain (roundups since the last coverage
+    # gain), not a gain timestamp; map it onto this board's tick timeline: the
+    # gain landed at or before the (ticks_since_gain + 1)-th most recent tick.
+    _since = (ceiling or {}).get("ticks_since_gain")
+    if isinstance(_since, int) and 0 <= _since < len(tick_ts):
+        _gain_ts = tick_ts[-(_since + 1)]
+    else:
+        _gain_ts = enabled_at_ts
     last_impact_ts = 0
     for e in events:
         if int(e.get("ts") or 0) < _gain_ts:
@@ -331,7 +344,8 @@ def compute(state_dir, snaps_dir, cfg, doc, events, findings,
             or f.get("category") in enums.HIGH_IMPACT_CATEGORIES)
     ]
     impact_eligible = (
-        _stage >= 1
+        impact_on
+        and _stage >= 1
         and (bool(_impact_candidates) or last_impact_ts == 0)
     )
     if _impact_candidates and impact_eligible:
@@ -460,7 +474,8 @@ def compute(state_dir, snaps_dir, cfg, doc, events, findings,
             break
 
     # ---- operator-supplied references (the creativity hook) ----------------
-    references = _references(fuzz_dir, enabled_at_ts, now)
+    references = _references(fuzz_dir, enabled_at_ts, now, state_dir=state_dir,
+                             advisory=advisory_on)
 
     return {
         "non_exhaustive": True,
@@ -481,12 +496,14 @@ def compute(state_dir, snaps_dir, cfg, doc, events, findings,
     }
 
 
-def _references(fuzz_dir, enabled_at_ts, now):
+def _references(fuzz_dir, enabled_at_ts, now, *, state_dir=None, advisory=True):
     """Surface operator steering AND already-built intel so the model re-reads it
     and reasons beyond the catalog. We report presence + recency, NOT contents —
     the orchestrator reads the files itself when prompted. `cve_patterns_md` is
-    the CVE-review output (fuzz/state/cve-patterns.md): surfaced here so the model
-    reads the patterns it already paid for instead of re-running `cve_refresh`."""
+    the CVE-review output (<state_dir>/cve-patterns.md; the campaign state dir,
+    which FUZZ_STATE_DIR may move out of fuzz/): surfaced here so the model
+    reads the patterns it already paid for instead of re-running `cve_refresh`.
+    Omitted when advisory_lookup is off."""
     out = {"guidance_md": None, "cve_patterns_md": None, "docs": [],
            "changed_recently": False}
     g = os.path.join(fuzz_dir, "guidance.md")
@@ -496,18 +513,19 @@ def _references(fuzz_dir, enabled_at_ts, now):
         out["guidance_md"] = {"path": "fuzz/guidance.md", "mtime": mt,
                               "changed_since_enable": changed}
         out["changed_recently"] = out["changed_recently"] or changed
-    cve_md = os.path.join(fuzz_dir, "state", "cve-patterns.md")
-    if os.path.exists(cve_md):
+    project_root = os.path.dirname(fuzz_dir)
+    state_dir = str(state_dir) if state_dir is not None else os.path.join(fuzz_dir, "state")
+    cve_md = os.path.join(state_dir, "cve-patterns.md")
+    if advisory and os.path.exists(cve_md):
         mt = _mtime(cve_md)
         changed = mt >= enabled_at_ts
         out["cve_patterns_md"] = {
-            "path": "fuzz/state/cve-patterns.md", "mtime": mt,
+            "path": _display_path(cve_md, project_root), "mtime": mt,
             "changed_since_enable": changed,
             "note": "CVE-review output already built — read this instead of "
                     "re-dispatching cve_refresh."}
         out["changed_recently"] = out["changed_recently"] or changed
     docs_dir = os.path.join(fuzz_dir, "docs")
-    project_root = os.path.dirname(fuzz_dir)
     if os.path.isdir(docs_dir):
         files = []
         for root, _, names in os.walk(docs_dir):
@@ -525,6 +543,13 @@ def _references(fuzz_dir, enabled_at_ts, now):
                        "fuzz/docs/ dir, when present, are read for domain "
                        "knowledge and creative direction.")
     return out
+
+
+def _display_path(path, project_root):
+    """Project-relative (e.g. "fuzz/state/cve-patterns.md") when under the
+    project root, else absolute."""
+    ap, root = os.path.abspath(path), os.path.abspath(project_root)
+    return os.path.relpath(ap, root) if ap.startswith(root + os.sep) else ap
 
 
 def _full_config(state_dir):
