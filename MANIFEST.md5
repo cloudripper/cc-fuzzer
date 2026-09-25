@@ -114,7 +114,7 @@ fe3b8d694186b83378094e38a6b18f61  src/cc_fuzzer_core/builders/__init__.py
 48b5c0243876cf7c1af7724bf4559cb5  src/cc_fuzzer_core/builders/ossfuzz.py
 20ac54ed256dd5041ecfa708b7a51a90  src/cc_fuzzer_core/builders/script.py
 e9f82154f2827218549d284fe6a331dc  src/cc_fuzzer_core/builders/toolchain.py
-6f1a3a58e007f93c361ab75a4c8950bf  src/cc_fuzzer_core/cli.py
+a7dfbc40a5f2d5cf83101d39bce65e78  src/cc_fuzzer_core/cli.py
 b749542267f72f8d13d502718b1e6a7c  src/cc_fuzzer_core/cmplog.py
 546441c1cfd7f30452d96f205b7b8fca  src/cc_fuzzer_core/config.py
 82b020ef6ef7e983722bb0485f8d4d89  src/cc_fuzzer_core/coverage.py
@@ -134,6 +134,7 @@ ff05da461b38bef049093e0f855d4b2f  src/cc_fuzzer_core/features.py
 8f2ff2acc2c0f513237aeaf2452ed073  src/cc_fuzzer_core/findings.py
 2494348832f18c182e0c50d716cfa266  src/cc_fuzzer_core/gate.py
 24e0b9f93714c4b5fa5fe11393b08d06  src/cc_fuzzer_core/ledger.py
+be7549d573d58c0aca8725bb3985f482  src/cc_fuzzer_core/loop.py
 bb55e017ba8a659b9c8eccc1b73bec33  src/cc_fuzzer_core/manifest.py
 2c385e54cedae3970219c9de7d2d16b3  src/cc_fuzzer_core/models.py
 e886a95f3444ff5e6fcce0985a0ef253  src/cc_fuzzer_core/paths.py
