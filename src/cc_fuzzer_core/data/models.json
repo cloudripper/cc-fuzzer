@@ -21,11 +21,21 @@
     "planner-consult": "deep",
     "poc-builder": "deep",
     "reporting-agent": "deep",
-    "seed-generator": "fast"
+    "seed-generator": "fast",
+    "query-analyst": "standard"
   },
   "pricing": {
-    "opus": {"input_per_mtok": 15.0, "output_per_mtok": 75.0},
-    "sonnet": {"input_per_mtok": 3.0, "output_per_mtok": 15.0},
-    "haiku": {"input_per_mtok": 0.8, "output_per_mtok": 4.0}
+    "opus": {
+      "input_per_mtok": 15.0,
+      "output_per_mtok": 75.0
+    },
+    "sonnet": {
+      "input_per_mtok": 3.0,
+      "output_per_mtok": 15.0
+    },
+    "haiku": {
+      "input_per_mtok": 0.8,
+      "output_per_mtok": 4.0
+    }
   }
 }

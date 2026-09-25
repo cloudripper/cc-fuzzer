@@ -31,6 +31,7 @@ c0cf59e4ec94f75cc22a36ed416c3af5  prompts/poc-builder.md
 e16960e16238671e6813f60dc60dc48d  prompts/profiles/host.md
 792617b0a6cb746e2293b43b8951911a  prompts/profiles/nix.md
 0eb355a19b368690fa28e6093a68c38d  prompts/profiles/oss-fuzz.md
+1df23406f1e8e69a37ea9a60385d2656  prompts/query-analyst.md
 cd53b2ea1de4ffc5de235597321de597  prompts/render.json
 d71b8ed507b5ce77261907808db25d54  prompts/reporting-agent.md
 fc52cdc9b4466f9a0b20df91ac8035db  prompts/seed-generator.md
@@ -126,7 +127,7 @@ edd2ef13c1a14be5d257860ed72a34e8  src/cc_fuzzer_core/crash/classify.py
 b4a327b96ea7e0f3f3786d50b1a3fc53  src/cc_fuzzer_core/crash/verifiers/__init__.py
 801c359f838b2557782307b3b64c8cad  src/cc_fuzzer_core/crash/verifiers/command.py
 f1774217b1b8c3afd3e5b8f7ced2b6eb  src/cc_fuzzer_core/crash/verifiers/realism.py
-126ddcd5c81cf200d43f5b54d3c7bebf  src/cc_fuzzer_core/data/models.json
+5a7be1f37b34d774d4ea9f5664051169  src/cc_fuzzer_core/data/models.json
 96647041941d2e3a73c59f26581a607b  src/cc_fuzzer_core/delta.py
 8fabcb44c591fee602b0f0c33c9d618a  src/cc_fuzzer_core/enums.py
 5fcdb1075b43c3a193d755781fdd3939  src/cc_fuzzer_core/events.py
@@ -158,7 +159,7 @@ acce6c2b090cf8507636eab3e8e282b2  src/cc_fuzzer_core/state/_common.py
 50c0450600863a567df65474806ee0a2  src/cc_fuzzer_core/state/ceiling.py
 ad3c4b5882edecf12ee28c92f8124bef  src/cc_fuzzer_core/state/derive_tick.py
 5597175efa4cf65e80a2ec4b7152228d  src/cc_fuzzer_core/state/roundup.py
-b7a39e9253538f8e96faf5ef2d973b1b  src/cc_fuzzer_core/state/toolbox.py
+2d73811f7cb097926e06c719f29e9262  src/cc_fuzzer_core/state/toolbox.py
 8acb8673ee9a410485991685fb295990  src/cc_fuzzer_core/state/yolo_evaluate.py
 705eb14b7954b6469f0f25e05b3d9365  src/cc_fuzzer_core/state/yolo_state.py
 ebe65bef6bb78b6bc6140e533d78c51f  src/cc_fuzzer_core/tools.py

@@ -13,6 +13,6 @@
   "files": {},
   "stderr": [],
   "stdout": [
-    "analyze_gaps,concolic,fix_instrumentation,generate_seeds,mutator,reanalyze_gaps,restart_fuzzer,sleep,stop,triage"
+    "analyze_gaps,concolic,fix_instrumentation,generate_seeds,mutator,query,reanalyze_gaps,restart_fuzzer,sleep,stop,triage"
   ]
 }
