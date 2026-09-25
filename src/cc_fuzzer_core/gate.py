@@ -137,6 +137,75 @@ def classify_command(command: str, *, record=None, harness: str = "") -> Verdict
 
 
 # ---------------------------------------------------------------------------
+# §11: nothing enters fuzz/findings/ except through the promote path
+# ---------------------------------------------------------------------------
+
+FINDINGS_DIR = "findings"
+PROMOTE_COMMAND = "cc-fuzzer findings promote <id>"
+
+# A Bash command that writes into a path: redirections and the usual movers.
+_WRITE_RE = re.compile(
+    r"(>>?|\b(?:cp|mv|mkdir|tee|install|rsync|touch|ln|dd)\b|\brm\b)")
+
+
+def check_finding_dir(path) -> Verdict:
+    """Whether a finding directory carries a valid verification marker (§11)."""
+    from cc_fuzzer_core.crash import pipeline
+    problems = pipeline.marker_problems(path)
+    if not problems:
+        return Verdict(ALLOW, f"{path} is verified")
+    return Verdict(DENY, "; ".join(problems),
+                   suggestion=f"promote it through {PROMOTE_COMMAND}")
+
+
+def _touches_findings(command: str) -> tuple:
+    """Tokens in `command` that point inside fuzz/findings/."""
+    hits = []
+    for tok in _tokens(command):
+        cleaned = tok.lstrip("<>")
+        if re.search(rf"(^|/){FINDINGS_DIR}/", cleaned) or cleaned.endswith(f"/{FINDINGS_DIR}"):
+            hits.append(tok)
+    if not hits and re.search(rf"\b{FINDINGS_DIR}/", command):
+        hits.append(FINDINGS_DIR + "/")
+    return tuple(hits)
+
+
+def classify_finding_write(command: str, *, tool: str = "Bash",
+                           path: str = "") -> Verdict:
+    """Refuse a write under fuzz/findings/ that does not go through promote.
+
+    The rule is not "be careful writing there": a finding directory IS the
+    claim that something was verified, so creating one by hand asserts a
+    verification that never happened.
+    """
+    if tool in ("Write", "Edit", "MultiEdit"):
+        target = path or ""
+        if not re.search(rf"(^|/){FINDINGS_DIR}/", target):
+            return Verdict(ALLOW)
+        return Verdict(DENY,
+                       f"{target} is under fuzz/{FINDINGS_DIR}/. A finding directory is the "
+                       f"claim that a crash was verified, so it is created only by the "
+                       f"promote path, which writes a verification marker after a verifier "
+                       f"confirms the crash.",
+                       suggestion=PROMOTE_COMMAND, matched=(target,))
+
+    if not command:
+        return Verdict(ALLOW)
+    if "cc-fuzzer findings promote" in command or "findings.sh promote" in command \
+            or "findings finalize" in command:
+        return Verdict(ALLOW, "the promote path may write findings")
+    hits = _touches_findings(command)
+    if not hits or not _WRITE_RE.search(command):
+        return Verdict(ALLOW)
+    return Verdict(DENY,
+                   f"this command writes under fuzz/{FINDINGS_DIR}/ ({hits[0]}). A finding "
+                   f"directory is the claim that a crash was verified; it is created only "
+                   f"by the promote path, which writes a verification marker after a "
+                   f"verifier confirms the crash.",
+                   suggestion=PROMOTE_COMMAND, matched=hits)
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -164,6 +233,27 @@ def _cmd_classify(a):
     return 0 if v.allowed else 1
 
 
+def _cmd_check_finding(a):
+    v = check_finding_dir(a.path)
+    if a.json:
+        print(json.dumps(v.as_dict(), indent=2))
+    elif not v.allowed:
+        print(v.reason, file=sys.stderr)
+    return 0 if v.allowed else 1
+
+
+def _cmd_classify_write(a):
+    command = a.command if a.command is not None else (sys.stdin.read() if not a.path else "")
+    v = classify_finding_write(command, tool=a.tool, path=a.path or "")
+    if a.json:
+        print(json.dumps(v.as_dict(), indent=2))
+    elif not v.allowed:
+        print(v.reason, file=sys.stderr)
+        if v.suggestion:
+            print(f"run instead: {v.suggestion}", file=sys.stderr)
+    return 0 if v.allowed else 1
+
+
 def register_cli(subparsers):
     from cc_fuzzer_core.cli import add_subsystem
     _p, verbs = add_subsystem(subparsers, "gate",
@@ -175,3 +265,17 @@ def register_cli(subparsers):
     v.add_argument("--harness", default="")
     v.add_argument("--json", action="store_true")
     v.set_defaults(func=_cmd_classify)
+
+    v = verbs.add_parser("check-finding",
+                         help="does this finding dir carry a valid verification marker?")
+    v.add_argument("path")
+    v.add_argument("--json", action="store_true")
+    v.set_defaults(func=_cmd_check_finding)
+
+    v = verbs.add_parser("classify-write",
+                         help="may this write under fuzz/findings/ proceed? (exit 1 = deny)")
+    v.add_argument("--command", help="a Bash command (default: stdin)")
+    v.add_argument("--tool", default="Bash")
+    v.add_argument("--path", default="", help="the target path, for Write/Edit")
+    v.add_argument("--json", action="store_true")
+    v.set_defaults(func=_cmd_classify_write)
