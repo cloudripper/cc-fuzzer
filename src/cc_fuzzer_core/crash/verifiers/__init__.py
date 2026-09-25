@@ -19,6 +19,17 @@ is not universal, so it is chosen by `fuzz-config.json`:
   python:<module>:<call>   an in-process callable, for a host that already has
                            its oracle as a Python function.
 
+An oracle can also be declared AUTHORITATIVE:
+
+    "verification": {"final_step": "command:/opt/run-pov-oracle", "authoritative": true}
+
+That is the host saying "my oracle reproduces on the reference build, so its
+confirmation is submission-grade evidence on its own". It matters when every
+binary the core can see is a fuzzing build (OSS-CRS ships libFuzzer builds
+only): local replay then grades `weak`, and without this nothing could ever be
+submittable even though the scoring oracle itself confirmed it. It is ignored
+for poc-realism, which is the core checking an agent's work, not an oracle.
+
 A Verdict is confirmed | rejected | inconclusive. `inconclusive` is a real
 answer, deliberately not folded into `rejected`: "the oracle could not decide"
 and "the oracle says no" lead to different next actions, and collapsing them
@@ -121,6 +132,32 @@ def timeout_of(config: Mapping | None) -> int:
         return max(1, int(block.get("timeout_s", DEFAULT_TIMEOUT_S)))
     except (TypeError, ValueError):
         return DEFAULT_TIMEOUT_S
+
+
+def authoritative(config: Mapping | None) -> bool:
+    """True when the configured final step is an oracle whose confirmation is
+    submission-grade evidence by itself (see module docstring)."""
+    block = (config or {}).get("verification") or {}
+    if not isinstance(block, Mapping) or block.get("authoritative") is not True:
+        return False
+    return not is_agent_backed(step_of(config))
+
+
+# where a finding's evidence grade came from
+SOURCE_REPLAY, SOURCE_ORACLE = "replay", "oracle"
+
+
+def evidence(replay_grade: str, verdict: "Verdict", config: Mapping | None) -> tuple:
+    """(grade, source) for a verdict on top of a local replay.
+
+    Only an authoritative oracle's CONFIRMATION upgrades the grade. A local
+    replay's `strong` is never downgraded, and an oracle that rejects or
+    cannot decide adds nothing.
+    """
+    from cc_fuzzer_core import variants as _v
+    if verdict.status == CONFIRMED and authoritative(config) and replay_grade != _v.STRONG:
+        return _v.STRONG, SOURCE_ORACLE
+    return replay_grade, SOURCE_REPLAY
 
 
 def is_agent_backed(step: str) -> bool:
