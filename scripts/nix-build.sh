@@ -246,31 +246,30 @@ in c.mkCcFuzzerBinary {{
     open(path, "w").write(content)
     print(f"  wrote {path}")
 
-# Fuzzer variant
-if variants.get("fuzzer", {}).get("enabled", True):
-    san = variants.get("fuzzer", {}).get("sanitizers", ["address","undefined","fuzzer"])
-    cflags = ["-g", "-O1", "-fno-omit-frame-pointer"] + [f"-fsanitize={','.join(san)}"]
-    write_variant("fuzzer", "clang++", cflags)
+# Variants: the core owns BOTH what each variant needs
+# (cc_fuzzer_core.variants) and how those needs become clang flags
+# (cc_fuzzer_core.builders). This script only puts the answer into the
+# derivation -- it no longer carries its own copy of the flag table, which is
+# what let the two drift. tests/test_builders.py pins the parity.
+from cc_fuzzer_core import builders as _builders, variants as _variants
 
-# Coverage variant
-if variants.get("coverage", {}).get("enabled", True):
-    cflags = ["-g", "-O0", "-fprofile-instr-generate", "-fcoverage-mapping"]
-    write_variant("coverage", "clang++", cflags)
+_KNOWN = ("enabled", "sanitizers", "instrumentation", "link_mode", "purpose",
+          "debug_info", "frame_pointer", "optimization", "required")
+_over = {}
+for _name, _block in (variants or {}).items():
+    if isinstance(_block, dict):
+        _over[_name] = {k: v for k, v in _block.items() if k in _KNOWN}
 
-# Verify variant
-if variants.get("verify", {}).get("enabled", True):
-    cflags = ["-g", "-O1", "-fno-omit-frame-pointer", "-fsanitize=address,undefined"]
-    write_variant("verify", "clang++", cflags)
+try:
+    _spec = _variants.spec({"variants": _over}, harness)
+except _variants.VariantError as e:
+    sys.stderr.write(f"nix-build: bad variants block in the manifest: {e}\n")
+    sys.exit(2)
 
-# Cmplog variant
-if variants.get("cmplog", {}).get("enabled", False):
-    cflags = ["-g", "-O1", "-fno-omit-frame-pointer"]
-    write_variant("cmplog", "afl-clang-fast++", cflags, '{ AFL_LLVM_CMPLOG = "1"; }')
-
-# SymCC variant
-if variants.get("symcc", {}).get("enabled", False):
-    cflags = ["-g", "-O1"]
-    write_variant("symcc", "sym++", cflags)
+for _s in _builders.plan(_spec, "nix", harness=harness)["steps"]:
+    _env = "{ " + " ".join(f'{k} = "{v}";' for k, v in _s["env"].items()) + " }" \
+           if _s["env"] else "{}"
+    write_variant(_s["variant"], _s["compiler"], _s["cflags"], _env)
 
 # Mock derivations
 for mock in mocks:

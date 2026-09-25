@@ -32,6 +32,13 @@
 #     [--attempts N]               (default: 1)
 #     [--build-command CMD]        (optional; recorded verbatim)
 #
+#     --build-result PATH          a builder's build-result/v1. Expands to the
+#                                  binary/--no-* flags above via
+#                                  `cc-fuzzer build record-args`, so a caller
+#                                  never picks paths out of it by hand. Can be
+#                                  combined with the explicit flags; anything
+#                                  given after it wins.
+#
 # Exits non-zero on any validation failure (missing required arg, bad path,
 # unexecutable binary, conflicting flags). No partial writes — the file is
 # only renamed into place after every check passes.
@@ -75,6 +82,27 @@ usage_err() {
   echo "       run with no args for usage" >&2
   exit 2
 }
+
+# --build-result FILE expands to the flags that record it, so a builder's
+# build-result/v1 can be handed straight in instead of the caller picking the
+# binary paths back out of it by hand. The core owns that mapping
+# (cc_fuzzer_core.builders.record_args) and refuses a result whose required
+# variant is missing, so a failed build cannot be recorded as a ready one.
+_expanded=()
+_args=()
+while [ $# -gt 0 ]; do
+  if [ "$1" = "--build-result" ]; then
+    [ -n "${2:-}" ] || { echo "write-harness-built: --build-result needs a path" >&2; exit 2; }
+    mapfile -t _expanded < <(python3 -m cc_fuzzer_core build record-args --result "$2") || {
+      echo "write-harness-built: cannot read build-result $2" >&2; exit 2; }
+    _args+=("${_expanded[@]}")
+    shift 2
+    continue
+  fi
+  _args+=("$1")
+  shift
+done
+set -- "${_args[@]}"
 
 while [ $# -gt 0 ]; do
   case "$1" in

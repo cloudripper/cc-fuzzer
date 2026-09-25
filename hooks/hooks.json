@@ -1,5 +1,5 @@
 {
-  "description": "cc-fuzzer hooks: detect new crash files mid-campaign, validate the build environment at session start, and record each subagent call's measured token usage in the spend ledger.",
+  "description": "cc-fuzzer hooks: detect new crash files mid-campaign, validate the build environment at session start, record each subagent call's measured token usage in the spend ledger, and refuse a command that would run a crash against the wrong build of the harness.",
   "hooks": {
     "PostToolUse": [
       {
@@ -30,6 +30,18 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/ledger-append.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/gate-verify-build.sh",
             "timeout": 10
           }
         ]

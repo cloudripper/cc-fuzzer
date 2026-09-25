@@ -176,6 +176,13 @@ HARNESS_ACTIONS = frozenset({
 # ---------------------------------------------------------------------------
 ENGINES = frozenset({"libfuzzer", "aflpp"})
 
+# How a harness gets built. `legacy` is the harness's own build.sh driven
+# directly; `nix` is the plugin's derivation; `script` hands that same build.sh
+# a build-spec/v1 through the environment; `clang` compiles the harness
+# directly from the spec; `oss-fuzz` builds inside an OSS-Fuzz image
+# ($SANITIZER / $FUZZING_ENGINE / $OUT). See cc_fuzzer_core.variants (§6).
+BUILD_BACKEND = frozenset({"legacy", "nix", "script", "clang", "oss-fuzz"})
+
 # ---------------------------------------------------------------------------
 # YOLO self-loop directive verbs (yolo-route.sh / yolo_evaluate.py).
 # ---------------------------------------------------------------------------
@@ -233,6 +240,7 @@ _REGISTRY = {
     "gap_reasons": GAP_REASONS,
     "harness_actions": HARNESS_ACTIONS,
     "engines": ENGINES,
+    "build_backend": BUILD_BACKEND,
     "yolo_verbs": YOLO_VERBS,
     "cr_lens_tokens": CR_LENS_TOKENS,
     "snapshot_prefixes": SNAPSHOT_PREFIXES,
