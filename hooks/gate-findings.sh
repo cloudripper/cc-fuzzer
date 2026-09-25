@@ -15,19 +15,26 @@
 # the same call the core makes at its own API, so the hook and the API cannot
 # disagree about what is allowed.
 #
-# Fails open on anything unexpected: a hook that blocks the campaign over its
-# own bug is worse than the rule it enforces.
+# The decision is read through hooks/_lib/gate.sh, which is the one place that
+# reads the core's answer: `cc-fuzzer gate` exits non-zero to mean NOT
+# ALLOWED, so reading that exit status as "the call failed" is what turns a
+# refusal into a silent permit.
+#
+# Fails open when no verdict can be obtained -- see the posture note at the
+# bottom, which says why that is affordable here.
 
 set -u
 
 _allow() { exit 0; }
+
+. "$(dirname "${BASH_SOURCE[0]}")/_lib/gate.sh"
 
 INPUT="$(cat 2>/dev/null)" || _allow
 [ -n "$INPUT" ] || _allow
 
 . "$(dirname "${BASH_SOURCE[0]}")/../scripts/_lib/root.sh" 2>/dev/null || _allow
 
-# tool<TAB>command<TAB>path  (empty tool => not a tool we gate)
+# tool<TAB>command<TAB>path  (empty => not a tool we gate)
 FIELDS="$(printf '%s' "$INPUT" | python3 -c 'import json,sys
 try: d = json.load(sys.stdin)
 except Exception: raise SystemExit(0)
@@ -44,25 +51,22 @@ CMD="$(printf '%s' "$FIELDS" | cut -f2)"
 TPATH="$(printf '%s' "$FIELDS" | cut -f3)"
 [ -n "$TOOL" ] || _allow
 
-# NOTE the `|| true`: `gate classify-write` exits 1 to MEAN deny. Letting that
-# exit status reach a `|| _allow` would turn every refusal into a silent
-# allow -- the failure mode a gate must never have.
-VERDICT="$(python3 -m cc_fuzzer_core gate classify-write --json \
-             --tool "$TOOL" --command "$CMD" --path "$TPATH" 2>/dev/null || true)"
-[ -n "$VERDICT" ] || _allow
+gate_ask classify-write --tool "$TOOL" --command "$CMD" --path "$TPATH"
 
-OUT="$(printf '%s' "$VERDICT" | python3 -c 'import json,sys
-try: v = json.load(sys.stdin)
-except Exception: raise SystemExit(0)
-if v.get("decision") != "deny": raise SystemExit(0)
-reason = v.get("reason") or "refused by cc-fuzzer gate"
-if v.get("suggestion"):
-    reason += "\n\nRun instead: " + v["suggestion"]
-print(json.dumps({"hookSpecificOutput": {
-    "hookEventName": "PreToolUse",
-    "permissionDecision": "deny",
-    "permissionDecisionReason": reason}}))' 2>/dev/null || true)"
-
-[ -n "$OUT" ] || _allow
-printf '%s\n' "$OUT"
-exit 0
+case "$GATE_DECISION" in
+  deny)
+    gate_deny_json "$GATE_REASON" "$GATE_SUGGESTION"
+    exit 0
+    ;;
+  allow)
+    exit 0
+    ;;
+  *)
+    # unavailable: no verdict. Fails OPEN, which is affordable only because
+    # pipeline.finalize is still the only thing that can write a valid
+    # verification marker. A directory created behind this hook's back never
+    # reads as verified -- `gate check-finding` and `schema validate` both
+    # report it -- so the rule survives the hook being down.
+    exit 0
+    ;;
+esac

@@ -216,8 +216,19 @@ If your CRS shells out to run a crash, gate the command first:
 cc-fuzzer gate classify-command --command "$CMD" --json   # exit 1 = deny
 ```
 
-Note the exit codes: `gate` returns **1 to mean deny**, so `cmd || allow` is a
-fail-open bug. Read the JSON `decision`, not the status.
+The exit contract is total: **0 means allowed, and any non-zero means NOT
+allowed** — denied, or the gate could not decide. There is deliberately no
+exit code meaning "the tool broke, carry on", so the natural idiom is the
+correct one:
+
+```bash
+if ! cc-fuzzer gate classify-command --command "$CMD"; then
+    refuse "$CMD"
+fi
+```
+
+To tell a refusal from a failure, read `decision` from `--json` (`deny` vs
+`error`) — explicitly, rather than inferring it from a status code.
 
 ## 9. Budgets and accounting
 
@@ -253,8 +264,10 @@ cc-fuzzer ledger spend --json
 
 ## Things that will bite
 
-1. **`gate` exits 1 to mean deny.** `|| allow` turns every refusal into a
-   silent allow. Read the JSON.
+1. **Any non-zero from `gate` means not allowed.** Never treat a non-zero
+   status as "the tool failed, proceed" — that turns every refusal into a
+   silent permit. The CLI has no success-but-broken exit code for exactly
+   this reason.
 2. **Report real token usage** or the cost cap silently does nothing.
 3. **`stale` and `corrupted` are not `stopped`.** Acting on them relaunches a
    campaign whose state failed validation.
