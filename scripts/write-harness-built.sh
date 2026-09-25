@@ -190,6 +190,18 @@ for df in "${DICT_FILES[@]}"; do
   [ -f "$df" ] || usage_err "dict file not found: $df"
 done
 
+# --- Oracle (§9): only the crash oracle while logic_oracles is off ---
+if [ -n "$ORACLE_JSON" ] && ! python3 -m cc_fuzzer_core feature enabled logic_oracles --state-dir "$STATE_DIR"; then
+  ORACLE_T=$(printf '%s' "$ORACLE_JSON" | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    d = {}
+print((d.get("type") if isinstance(d, dict) else "") or "crash")')
+  [ "$ORACLE_T" = "crash" ] || usage_err "--oracle-config type '$ORACLE_T' refused: the logic_oracles feature is disabled (only the crash oracle is allowed)"
+fi
+
 # --- Compute hashes ---
 TARGET_HASH=$(sha256sum -- "$TARGET_SOURCE" | cut -c1-16)
 BUILD_HASH=$(sha256sum -- "$BUILD_SCRIPT" | cut -c1-16)

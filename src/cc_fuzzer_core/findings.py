@@ -44,7 +44,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from cc_fuzzer_core import enums
+from cc_fuzzer_core import enums, features
 from cc_fuzzer_core.paths import Campaign, CampaignError, HarnessLayout, campaign as _campaign, state_dir_text
 
 LEDGER = "findings.jsonl"
@@ -462,6 +462,15 @@ def build_finding(fid, stack_hash, category, location, exploitability, root_caus
     return d
 
 
+def check_oracle_type(c: Campaign, oracle_type: str) -> None:
+    """While logic_oracles is off (§9) ORACLE_TYPE may only be `crash` (or
+    unset: the implicit crash oracle). With it on, any value is recorded as
+    before."""
+    if oracle_type and oracle_type != "crash" and not features.enabled(features.LOGIC_ORACLES, c):
+        raise FindingsError(f"ERROR: ORACLE_TYPE '{oracle_type}' refused: the logic_oracles feature "
+                            "is disabled (only the crash oracle is allowed)", 2)
+
+
 def add(c: Campaign, stack_hash: str, category: str, location: str, exploitability: str,
         root_cause: str, reproducer: str, excerpt: str = "", *, harness: str | None = None,
         skip_verify: bool = False, oracle_type: str = "", divergence: str = "",
@@ -472,6 +481,7 @@ def add(c: Campaign, stack_hash: str, category: str, location: str, exploitabili
     ensure_ledger(c)
     harness = harness_context(c, harness)
     _check_add_args(stack_hash, category, exploitability)
+    check_oracle_type(c, oracle_type)
     if find_by_hash(c, stack_hash):
         raise FindingsError(f"ERROR: stack_hash {stack_hash} already exists - use 'dedup' instead", 1)
     hbin, s1, s2 = "", None, None
@@ -715,13 +725,18 @@ def promote(c: Campaign, fid: str, *, driver: str, verifier: str, boundary: str,
     fuzz-config.json poc.verifier_complexity_soft_max_lines / _tools).
     Refuses: missing fields or files, an unknown id, a status other than
     candidate (an existing finding is re-attested with a warning).
+    With impact_tiering off (§9) the boundary / precondition / projected
+    statements are optional (recorded only when given); driver and verifier
+    stay required.
 
     §4/§11 replace this with pipeline.finalize(id) + a verification marker;
     keep every promotion going through this one function until then."""
     ensure_ledger(c)
-    missing = "".join(f" {flag}" for flag, v in (
-        ("--driver", driver), ("--verifier", verifier), ("--boundary", boundary),
-        ("--precondition", precondition), ("--projected", projected)) if not v)
+    required = [("--driver", driver), ("--verifier", verifier)]
+    impact_on = features.enabled(features.IMPACT_TIERING, c)
+    if impact_on:
+        required += [("--boundary", boundary), ("--precondition", precondition), ("--projected", projected)]
+    missing = "".join(f" {flag}" for flag, v in required if not v)
     if missing:
         raise FindingsError(f"ERROR: promote: missing required attestation fields:{missing}\n"
                             "       schema v12 REQUIRES the 3-point realism gate — see\n"
@@ -768,6 +783,11 @@ def promote(c: Campaign, fid: str, *, driver: str, verifier: str, boundary: str,
         "verifier_tools": v_tools,
         "promoted_at": now,
     }
+    if not impact_on:
+        for k, v in (("boundary", boundary), ("precondition", precondition),
+                     ("projected_vs_demonstrated", projected)):
+            if not v:
+                del attestation[k]
 
     def flip(d):
         if d.get("id") == fid:

@@ -24,6 +24,7 @@ TRACKED = (
     "STATE_SCHEMA.md",
     "bin",
     "dictionaries",
+    "prompts",
     "references",
     "scripts",
     "src/cc_fuzzer_core",

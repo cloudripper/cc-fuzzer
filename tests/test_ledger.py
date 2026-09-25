@@ -404,10 +404,15 @@ class TestHook(GoldenTestCase):
         log = sb.path("fuzz/state/ledger-hook.log").read_text()
         self.assertIn("/nope.jsonl' not found", log)
         self.assertIn("no agent_id", log)
-        # a failing core call (unwritable log) is logged, still exit 0
+        # a failing core call (unwritable ledger) is logged, still exit 0.
+        # events.jsonl is replaced by a DIRECTORY rather than chmod 0: a test
+        # must not assume it runs unprivileged, and root ignores the mode bits
+        # (that is exactly how this assertion silently stopped testing
+        # anything in a container).
         ev = sb.path("fuzz/state/events.jsonl")
-        ev.chmod(0o000)
-        self.addCleanup(ev.chmod, 0o644)
+        ev.unlink()
+        ev.mkdir()
+        self.addCleanup(lambda: (ev.rmdir(), ev.write_text("")))
         r = subprocess.run(["bash", str(HOOK)], input=json.dumps(stop), text=True, capture_output=True,
                            cwd=sb.project, env=sb.env(None))
         self.assertEqual((r.returncode, r.stdout), (0, ""))

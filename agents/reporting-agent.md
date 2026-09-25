@@ -84,7 +84,7 @@ What appears in each per-finding H3 by mode:
 ## Outputs (write only these)
 
 1. `fuzz/state/FINDINGS-REPORT-<target>.md` (atomic: `.tmp` → `mv`)
-2. Run `bash ${CLAUDE_PLUGIN_ROOT}/scripts/update-current.sh` after writing to refresh `current.json.last_report_at`
+2. Run `${CLAUDE_PLUGIN_ROOT}/bin/cc-fuzzer state update-current` after writing to refresh `current.json.last_report_at`
 
 Never write to `findings.jsonl`, `events.jsonl`, or any crash file.
 
@@ -130,7 +130,7 @@ cd "$(dirname '<finding.poc_path>')/repro"
 Pipe each captured output through `is-crash.sh` to determine whether it crashed and what bug class it reported:
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/is-crash.sh < harness_run.log
+${CLAUDE_PLUGIN_ROOT}/bin/cc-fuzzer crash classify < harness_run.log
 # stdout: {"is_crash": <bool>, "category": "<class>", "summary_line": "<line>", "top_frame": "<fn @ file:line>"}
 # exit 0 if crash detected, 1 if not
 ```
@@ -206,7 +206,7 @@ Write to `fuzz/state/FINDINGS-REPORT-<target>.md.tmp`, then `mv` atomically to `
 After writing:
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/update-current.sh
+${CLAUDE_PLUGIN_ROOT}/bin/cc-fuzzer state update-current
 ```
 
 ### Step 7 — Print summary
@@ -490,7 +490,7 @@ Bundle contents: `README.md`, `EXPLOIT.md`, `REACHABILITY.md`, `ENV.md`, `exploi
 To verify:
 
     cd fuzz/findings/f001/repro
-    ./build.sh                          # apt-get install libxml2-utils (no-op if installed)
+    ./build.sh                          # installs the tools the exploit needs (no-op if present)
     ./run.sh                            # setup → exploit → verify
     echo "Final exit: $?"               # 0 = cross-boundary secret leaked, primitive confirmed
 

@@ -6,7 +6,8 @@
 # Reads:
 #   fuzz/state/snapshots/code-review-*.json   (latest by mtime)
 #   fuzz/state/snapshots/cve-context-*.json   (latest by mtime)
-# Either may be absent — the helper returns empty arrays in that case.
+# Either may be absent — the helper returns empty arrays in that case. The
+# cve-context is ignored while the advisory_lookup feature is off.
 #
 # Output schema (always valid JSON, single line):
 #   {
@@ -38,7 +39,8 @@
 #   }
 #
 # Exit status:
-#   0 — success (matches may be empty)
+#   0 — success (matches may be empty); also a skip (no output) when the
+#       disclosure_reporting feature is off
 #   2 — usage error (bad location format)
 #
 # Usage:
@@ -85,6 +87,17 @@ if [[ -z "$LOCATION" ]]; then
     exit 2
 fi
 
+# --- Feature gates (§9) ---------------------------------------------------
+# This helper exists only for the disclosure report: with disclosure_reporting
+# off it skips (exit 0, no JSON). With advisory_lookup off any cve-context
+# snapshot on disk is ignored (cve_history stays empty).
+if ! python3 -m cc_fuzzer_core feature enabled disclosure_reporting; then
+    echo "cross-ref-findings.sh: disclosure_reporting feature disabled (skip)" >&2
+    exit 0
+fi
+ADVISORY_ON=true
+python3 -m cc_fuzzer_core feature enabled advisory_lookup || ADVISORY_ON=false
+
 # --- Parse location -------------------------------------------------------
 #
 # Canonical form: "<function>@<file>:<line>"
@@ -114,7 +127,9 @@ CVE_CONTEXT_FILE=""
 if [[ -d "$SNAPSHOTS_DIR" ]]; then
     # ls -t sorts by mtime descending; head -1 picks the newest.
     CODE_REVIEW_FILE=$(ls -1t "$SNAPSHOTS_DIR"/code-review-*.json 2>/dev/null | head -1 || true)
-    CVE_CONTEXT_FILE=$(ls -1t "$SNAPSHOTS_DIR"/cve-context-*.json 2>/dev/null | head -1 || true)
+    if [[ "$ADVISORY_ON" == true ]]; then
+        CVE_CONTEXT_FILE=$(ls -1t "$SNAPSHOTS_DIR"/cve-context-*.json 2>/dev/null | head -1 || true)
+    fi
 fi
 
 # --- Helpers ---------------------------------------------------------------

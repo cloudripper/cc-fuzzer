@@ -45,9 +45,9 @@
   },
   "stderr": [],
   "stdout": [
-    "REJECTED: UNSAFE <PROJECT>/fuzz/harnesses/parser/corpus-quarantine/sysrq.txt: write to /proc/sysrq-trigger (kernel control)",
-    "REJECTED: UNSAFE <PROJECT>/fuzz/harnesses/parser/corpus-quarantine/fork-bomb.sh: fork bomb signature",
     "REJECTED: UNSAFE <PROJECT>/fuzz/harnesses/parser/corpus-quarantine/dd.sh: dd writing to a real block device",
+    "REJECTED: UNSAFE <PROJECT>/fuzz/harnesses/parser/corpus-quarantine/fork-bomb.sh: fork bomb signature",
+    "REJECTED: UNSAFE <PROJECT>/fuzz/harnesses/parser/corpus-quarantine/sysrq.txt: write to /proc/sysrq-trigger (kernel control)",
     "promoted=2   crashed=0 (-> crashes/new/)   hung=0 (-> flaky/)   rejected=3 (-> corpus-quarantine/rejected/)"
   ]
 }

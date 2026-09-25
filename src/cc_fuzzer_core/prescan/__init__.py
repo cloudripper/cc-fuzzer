@@ -30,6 +30,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from cc_fuzzer_core import features
 from cc_fuzzer_core.paths import Campaign, CampaignError, campaign as _campaign, state_dir_text
 
 DEFAULT_MAX_FUNCTIONS = "50"
@@ -225,7 +226,10 @@ def plan_review(c: Campaign, opts: ReviewOptions, *, now: int | None = None) -> 
             "       and auto-detect from harness-built.json:target_source.\n"
             "       Pass --target-root <dir> or set code_review.scan_paths in fuzz-config.json.")
     snaps = f"{state_dir_text(c)}/snapshots"
-    cve = "" if opts.no_cve_context else _latest(
+    # advisory_lookup off (§9) == --no-cve-context: a stale cve-context on disk
+    # is not cross-linked.
+    no_cve = opts.no_cve_context or not features.enabled(features.ADVISORY_LOOKUP, c)
+    cve = "" if no_cve else _latest(
         f"{glob.escape(_io(c, snaps))}/cve-context-*.json")
     if cve:
         cve = f"{snaps}/{os.path.basename(cve)}"

@@ -133,12 +133,13 @@ A compact 10-20 line text digest of campaign state, written by `scripts/campaign
 === cc-fuzzer campaign-header / v1 / <ts> ===
 campaign:    <name>           mode:    <mode>    tick:    <n>
 target:      <target>         schema:  v12       version: <plugin v>
+Features disabled: <comma list>          (only when a feature flag is off)
 
 harnesses:   <count> live, <count> stale; engines: <comma list>
 coverage:    <weighted_pct>% (line/branch <l/b>); last-gain at tick <n-k>
 last-halt:   <reason or "—">
 
-authorization:
+authorization:                           (omitted while disclosure_reporting is off)
   ownership: <target_ownership>
   disclosure: <disclosure_intent>
   framing: <demo_framing>
@@ -167,7 +168,7 @@ Recommended fields (all optional, all strings):
 - `scope_limits` — any boundaries (e.g. `"only local-loopback validation, no remote IPs"`)
 - `contact` — maintainer email / security contact for the disclosure
 
-Templates: `fuzz/state/authorization.json.example` (in the plugin tree, ships with the release) and `templates/authorization.json` (the canonical scaffolding source `campaign-init.sh` / `harness-writer` can copy from).
+Templates: `templates/authorization.json.example` (ships with the plugin and the core package) is copied by `campaign-init.sh` to `fuzz/state/authorization.json.example` (never overwriting, and not while `disclosure_reporting` is off); copy it to `authorization.json` and fill it in. `templates/authorization.json` carries the same fields. `campaign-header.sh` reads `target_ownership`, `disclosure_intent` and `demo_framing`; it neither reads nor asks for the file while the `disclosure_reporting` feature is off.
 
 ### `state/nix-env.json` — REWRITABLE (session-start snapshot)
 
@@ -469,7 +470,7 @@ The orchestrator dispatches based on the top-level `recommendation` (`branch` + 
 
 ### `state/fuzz-config.json` — REWRITABLE (user-editable)
 
-Schema: **`fuzz-config/v3`**. The user-editable launch config: it declares the campaign's `harnesses[]` and the `fuzzer_slots[]` that run against them. The full required/cross-reference rules and the `harnesses[]` shape are under "`state/fuzz-config.json` — `fuzz-config/v3`" in the Multi-Harness Layout section below; this section documents the per-slot fields and the optional `tick` / `cve` / `code_review` / `yolo` / `models` blocks.
+Schema: **`fuzz-config/v3`**. The user-editable launch config: it declares the campaign's `harnesses[]` and the `fuzzer_slots[]` that run against them. The full required/cross-reference rules and the `harnesses[]` shape are under "`state/fuzz-config.json` — `fuzz-config/v3`" in the Multi-Harness Layout section below; this section documents the per-slot fields and the optional `tick` / `cve` / `code_review` / `yolo` / `models` / `features` blocks.
 
 ```json
 {
@@ -522,6 +523,7 @@ Schema: **`fuzz-config/v3`**. The user-editable launch config: it declares the c
   "poc_size_cap_bytes": 5242880
 }
 ```
+- `enabled` — a legacy alias for the `advisory_lookup` feature flag (see the `features` block): `false` turns CVE intel off everywhere, not just the `cve_refresh` lever. A `features.advisory_lookup` value or `$CC_FUZZER_FEATURES` wins over it.
 - `query` — NVD keyword (required when `enabled: true`). No auto-detect; if absent at COLD, the orchestrator prompts the user.
 - `include_pocs_as_seeds` — when true (default), Tier-A PoC blobs are auto-promoted to `fuzz/corpus/cve_<id>.<ext>` after passing `check-seed-safety.sh`.
 - `promote_tier_b` — when true, Tier-B blob PoCs are also promotion-eligible. Default false (recognised-security-org sources are retained as reference, not auto-fed to the fuzzer).
@@ -608,6 +610,23 @@ Toggled via `/cc-fuzzer:yolo on [--mode ...] [--aggressiveness ...]|off|status` 
 - `agents` — agent → tier name, or a literal model id. Unknown agents run on `default_tier`.
 - `pricing` — model id → USD per million input/output tokens, plus optional `cache_read_per_mtok` / `cache_write_per_mtok` (default 0.1× / 1.25× the input rate). Advisory: drives `yolo_state.estimated_cost_usd`, the `cost_cap` halt and `evaluation.cost` (whose `opus_usd` / `opus_calls` count the **deep** tier). An unpriced model is charged at the default tier's rate.
 - Every key is a partial overlay on the packaged mapping; a JSON file named by `$CC_FUZZER_MODELS` (same shape) is layered on top of this block and wins.
+
+**`features` block** (optional) — feature flags for the unscored subsystems (`cc_fuzzer_core/features.py`; `cc-fuzzer feature list [--json]` prints the effective values, `cc-fuzzer feature enabled <name>` answers with its exit code: 0 on, 1 off, 2 unknown name). Every flag defaults to `true`; turning one off gates its subsystem (nothing is deleted):
+```json
+"features": {
+  "impact_tiering": true,
+  "disclosure_reporting": true,
+  "logic_oracles": true,
+  "advisory_lookup": true
+}
+```
+- `impact_tiering` — exploit-tier / CVSS / weaponization work. Off: the `impact_review` lever and the `poc_upgrade` weak-PoC signal are never eligible, and `findings.sh promote` no longer requires `--boundary` / `--precondition` / `--projected` (recorded in `realism_attestation` only when given).
+- `disclosure_reporting` — disclosure reports. Off: `cross-ref-findings.sh` and `blame-finding.sh` (report-only helpers) print nothing and exit 0, `campaign-header.sh` drops its `authorization:` block (and never reads `authorization.json`), and `campaign-init.sh` does not emit `authorization.json.example`.
+- `logic_oracles` — oracle-driven (logic-bug) fuzzing. Off: only the `crash` oracle is accepted — `write-harness-built.sh --oracle-config` with another `type` and `findings.sh add` with a non-`crash` `ORACLE_TYPE` exit 2 — and `oracle-smoke-test.sh` is a no-op (exit 0).
+- `advisory_lookup` — CVE / advisory intel. Off: `cve-context-build.sh` exits 0 with a skip notice and writes nothing, the `cve_refresh` lever is ineligible, `toolbox.references.cve_patterns_md` is omitted, and `cross-ref-findings.sh`, the ceiling probe and the code-review prescan ignore any `cve-context-*.json` on disk (all of them already tolerate a missing one).
+- Precedence, lowest to highest: the default (`true`) < `cve.enabled` (alias for `advisory_lookup` only) < this block < `$CC_FUZZER_FEATURES`. The env var is a comma/space-separated list: `-name` turns a flag off, `+name` or a bare `name` turns it on, later entries win (e.g. `CC_FUZZER_FEATURES="-advisory_lookup,-disclosure_reporting"`).
+- Values must be booleans and names must be one of the four above; `validate-state.sh` reports anything else as an error (the flag reader ignores such entries and keeps the default).
+- When any flag is off, `campaign-header.sh` prints `Features disabled: <names>` under the campaign meta, so plugin agents skip the matching `<!-- feature:<name> -->…<!-- /feature -->` sections of their prompts (the §3 renderer strips them from rendered prompts).
 
 **Lifecycle**: REWRITABLE. Single canonical version. Replaced atomically.
 

@@ -62,6 +62,27 @@ FROZEN_NOW = 1790000000
 FIXTURE_MTIME = FROZEN_NOW - 60
 
 UPDATE = os.environ.get("CC_FUZZER_UPDATE_GOLDEN") == "1"
+# A golden belongs to ONE entry point: the bash command it is named after, in
+# tests/test_golden_bash.py. Every other test that replays a recorded case
+# through a different command (the bash-vs-core parity tests do exactly that)
+# must COMPARE, never rewrite -- otherwise an UPDATE_GOLDEN run silently
+# restamps the file with the other command's argv, which is how argv from the
+# core leaked into 40 goldens. So recording is opt-in, not opt-out.
+RECORDING_ALLOWED = False
+
+
+class allow_recording:
+    """`with allow_recording():` -- inside, CC_FUZZER_UPDATE_GOLDEN=1 rewrites.
+    test_golden_bash enables it for its own module; nothing else should."""
+    def __enter__(self):
+        global RECORDING_ALLOWED
+        self._prev = RECORDING_ALLOWED
+        RECORDING_ALLOWED = True
+
+    def __exit__(self, *exc):
+        global RECORDING_ALLOWED
+        RECORDING_ALLOWED = self._prev
+        return False
 
 _SCRUB_PREFIXES = ("CLAUDE", "FUZZ_", "CC_FUZZER_", "CCFUZZ", "PYTHON")
 _SCRUB_EXACT = {"PROJECT_ROOT", "STATE_DIR", "OUT", "SANITIZER"}
@@ -267,6 +288,14 @@ class Sandbox:
             "CC_FUZZER_TEST_NOW": str(self.now),
             "CC_FUZZER_REAL_DATE": _REAL_DATE,
             "CC_FUZZER_ROOT": str(REPO),
+            # Hermeticity: a golden must not record a fact about the machine
+            # that ran it. Pin the CPU budget (fuzz_forks caps at nproc-1) and
+            # pin the coverage toolchain ABSENT, so a host that happens to
+            # ship llvm-cov does not change the recorded output. Cases that
+            # want llvm point CC_FUZZER_TOOL_LLVM_* at tests/support/stub-llvm.
+            "CC_FUZZER_CPUS": "2",
+            "CC_FUZZER_TOOL_LLVM_COV": "",
+            "CC_FUZZER_TOOL_LLVM_PROFDATA": "",
             # Never let a script under test chmod the checkout read-only.
             "CC_FUZZER_DISABLE_READONLY_LOCK": "1",
         })
@@ -280,6 +309,10 @@ class Sandbox:
 
     def normalize(self, text: str) -> str:
         subs = list(self._subs) + [
+            # the interpreter's absolute path is a fact about the machine
+            # (/usr/bin vs /usr/local/bin vs a venv), never about the behaviour
+            # under test
+            (sys.executable, "<PYTHON>"),
             (str(self.project), "<PROJECT>"),
             (str(self.tmp), "<TMP>"),
             (str(REPO), "<ROOT>"),
@@ -357,7 +390,7 @@ class GoldenTestCase(unittest.TestCase):
         path = GOLDEN_DIR / f"{name}.json"
         actual = result.to_golden()
         actual["argv"] = result.argv
-        if UPDATE:
+        if UPDATE and RECORDING_ALLOWED:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(_dump(actual))
             return

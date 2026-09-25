@@ -26,8 +26,8 @@ Your only writable scope is `fuzz/`. Never edit anything under `${CLAUDE_PLUGIN_
 You are always invoked with `--harness <name>`. Every path scopes to that harness:
 
 ```bash
-QUARANTINE=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/_lib/harness-path.sh quarantine_dir "$HARNESS")
-CORPUS=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/_lib/harness-path.sh corpus_dir "$HARNESS")
+QUARANTINE=$(${CLAUDE_PLUGIN_ROOT}/bin/cc-fuzzer paths quarantine_dir "$HARNESS")
+CORPUS=$(${CLAUDE_PLUGIN_ROOT}/bin/cc-fuzzer paths corpus_dir "$HARNESS")
 ```
 
 The cmplog dict is also per-harness — pick the newest `fuzz/state/cmplog-dict-<HARNESS>-*.dict`. Plan strategy lives under `### <harness>` (H3) → `#### Seed Strategy` / `#### Dictionaries` / `#### Target` (H4).
@@ -100,7 +100,7 @@ The `.note` sibling file records the source signal (pattern class + strategy lin
 **Never write directly to `fuzz/corpus/`.** Write to `fuzz/corpus-quarantine/` (per-harness path in multi mode), then:
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/corpus-quarantine.sh [--harness <name>]
+${CLAUDE_PLUGIN_ROOT}/bin/cc-fuzzer quarantine run [--harness <name>]
 ```
 
 The script runs each new input through the harness with a short timeout. Non-crashing inputs promote to corpus; crashing inputs go to `fuzz/crashes/new/` for triage; hanging inputs go to `fuzz/crashes/flaky/`. Safety scan (`check-seed-safety.sh`) runs first and rejects destructive payloads (see "Safety").
@@ -150,7 +150,7 @@ with open("fuzz/corpus-quarantine/seed_target_g003.bin", "wb") as f:
     f.write(b'\x89PNG\r\n\x1a\n')  # PNG magic from cmplog dict
 ```
 
-Then `bash ${CLAUDE_PLUGIN_ROOT}/scripts/corpus-quarantine.sh` to promote.
+Then `${CLAUDE_PLUGIN_ROOT}/bin/cc-fuzzer quarantine run` to promote.
 
 ## Failure recovery
 

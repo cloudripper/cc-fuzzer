@@ -54,7 +54,7 @@ You're on Sonnet — keep dispatches focused:
 
 2. **Latest coverage snapshot** — path is `current.json.coverage.snapshot_file` (or per-harness path in multi mode).
 
-3. **Cmplog dictionary** — refresh first via `${CLAUDE_PLUGIN_ROOT}/scripts/extract-cmplog-dict.sh [--harness <name>]`, then read `fuzz/state/cmplog-dict-*.dict` (newest by mtime). Holds operands cmplog observed at runtime comparison sites. Critical for distinguishing `direct_compare` (cmplog solving it) vs `checksum_barrier` (cmplog cannot help).
+3. **Cmplog dictionary** — refresh first via `${CLAUDE_PLUGIN_ROOT}/bin/cc-fuzzer cmplog extract [--harness <name>]`, then read `fuzz/state/cmplog-dict-*.dict` (newest by mtime). Holds operands cmplog observed at runtime comparison sites. Critical for distinguishing `direct_compare` (cmplog solving it) vs `checksum_barrier` (cmplog cannot help).
 
 4. **Optional delta artifact** — `ls -t fuzz/state/snapshots/delta-*.json 2>/dev/null | head -1`. Produced on-demand by `/cc-fuzzer:delta`; never auto-generated. When present, lists git-diff-touched files / line ranges / functions. Use to boost priority — recently-changed code is the densest region for new bugs. When absent, ignore (no implicit enabling).
 

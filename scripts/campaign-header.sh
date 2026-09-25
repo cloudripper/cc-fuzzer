@@ -11,10 +11,15 @@
 #   fuzz/state/findings.jsonl          — promoted-findings recent slice
 #   fuzz/state/snapshots/ceiling-probe-*.json — last-halt context (optional)
 #   fuzz/state/fuzz-config.json        — yolo block (mode)
-#   fuzz/state/authorization.json      — disclosure framing (optional)
+#   fuzz/state/authorization.json      — disclosure framing (optional; not
+#                                        read at all while the
+#                                        disclosure_reporting feature is off)
 #   fuzz/state/plan.md                 — schema-version surrogate
 #
 # Output is plain text to stdout. Callers redirect to header.txt themselves.
+# When any feature flag is off (cc-fuzzer feature list) a
+# `Features disabled: <a>, <b>` line follows the campaign meta so every agent
+# reading the header skips those sections of its prompt.
 #
 # Exits 0 even when the campaign is uninitialized — prints a minimal "no
 # campaign yet" header so the digest is always safe to read.
@@ -87,7 +92,18 @@ def _load_jsonl(p):
 state_dir = os.environ["STATE_DIR"]
 cur = _load_json(os.environ["CURRENT"]) or {}
 cfg = _load_json(os.environ["CONFIG"]) or {}
-authz = _load_json(os.environ["AUTHZ"]) or {}
+if not isinstance(cfg, dict):
+    cfg = {}
+# Feature flags (§9): fuzz-config.json features, the cve.enabled alias and
+# $CC_FUZZER_FEATURES. Best-effort like the rest of the header: all on if the
+# core cannot be imported.
+try:
+    from cc_fuzzer_core import features as _features
+    feats_disabled = _features.load(cfg).disabled()
+except Exception:
+    feats_disabled = []
+disclosure_on = "disclosure_reporting" not in feats_disabled
+authz = (_load_json(os.environ["AUTHZ"]) or {}) if disclosure_on else {}
 schema_v = _slurp(os.environ["SCHEMA_VERSION_FILE"]) or "v12"
 
 # --- header line --------------------------------------------------------
@@ -113,6 +129,8 @@ if plugin_root:
 
 print(f"campaign:    {name:<16} mode:    {mode:<8} tick:    {tick}")
 print(f"target:      {target:<16} schema:  {schema_v:<8} version: {plugin_v}")
+if feats_disabled:
+    print(f"Features disabled: {', '.join(feats_disabled)}")
 
 # --- harnesses + coverage -----------------------------------------------
 harnesses = cur.get("harnesses") or []
@@ -190,15 +208,18 @@ if cr_latest:
             print(f"code-review:  {rev}/{inv} fns ({pct}%) INCOMPLETE [mode={cs.get('mode','capped')}]")
 
 # --- authorization ------------------------------------------------------
-print()
-print("authorization:")
-ownership = authz.get("target_ownership") or \
-    "<not declared — campaign-planner / user should populate fuzz/state/authorization.json>"
-disclosure = authz.get("disclosure_intent") or "responsible-disclosure research"
-framing   = authz.get("demo_framing") or "PoC demonstration for maintainer-facing reproducer bundle"
-print(f"  ownership: {ownership}")
-print(f"  disclosure: {disclosure}")
-print(f"  framing: {framing}")
+# Disclosure framing: only while disclosure_reporting is on (off, the file is
+# neither read nor asked for).
+if disclosure_on:
+    print()
+    print("authorization:")
+    ownership = authz.get("target_ownership") or \
+        "<not declared — campaign-planner / user should populate fuzz/state/authorization.json>"
+    disclosure = authz.get("disclosure_intent") or "responsible-disclosure research"
+    framing   = authz.get("demo_framing") or "PoC demonstration for maintainer-facing reproducer bundle"
+    print(f"  ownership: {ownership}")
+    print(f"  disclosure: {disclosure}")
+    print(f"  framing: {framing}")
 
 # --- open candidates ----------------------------------------------------
 # A "candidate" is a gap OR a code-review finding still being chased. We

@@ -28,9 +28,9 @@
         "# concolic-executor.",
         "#",
         "",
+        "\"~ESCAPE_SEQ\"",
         "\"TAG=encoder\"",
         "\"DELIM\\\"q\\\\\"",
-        "\"~ESCAPE_SEQ\"",
         "\"MAGIC_HEADER}PAYLOADxx\""
       ]
     }

@@ -219,6 +219,7 @@ def validate(c) -> list[Problem]:
     if cfg.is_file():
         out.json_file(cfg, F.FUZZ_CONFIG)
         out.lines(ERROR, C.slots(cfg, declared))
+        out.lines(ERROR, C.features_block(cfg))
 
     if (state / "fuzzers.json").is_file():
         out.json_file(state / "fuzzers.json", F.FUZZERS)

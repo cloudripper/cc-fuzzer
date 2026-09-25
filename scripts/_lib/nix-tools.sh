@@ -81,7 +81,10 @@ nix_export_tools() {
   local name var p
   for name in "$@"; do
     var="CC_FUZZER_TOOL_$(printf '%s' "$name" | tr -c 'A-Za-z0-9' '_' | tr 'a-z' 'A-Z')"
-    [ -n "${!var:-}" ] && continue
+    # ${var+set}, not ${var:-}: an explicitly EMPTY override pins the tool as
+    # unavailable (same contract as the core's tools.which), so a host scan
+    # must not quietly put it back.
+    [ -n "${!var+set}" ] && continue
     python3 -m cc_fuzzer_core tool which "$name" >/dev/null 2>&1 && continue
     if p=$(_nix_tools_host_scan "$name"); then
       export "$var=$p"

@@ -1,6 +1,6 @@
 {
   "argv": [
-    "/usr/bin/python3",
+    "<PYTHON>",
     "<ROOT>/scripts/_lib/enums.py",
     "doc-drift"
   ],

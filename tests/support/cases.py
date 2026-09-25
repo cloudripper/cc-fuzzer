@@ -852,7 +852,13 @@ CMPLOG_CASES = [
 CMPLOG_CASES[-1].cwd = "src"
 
 SC = "scripts/snapshot-coverage.sh"
-STUB_LLVM_PATH = f"{TESTS / 'support' / 'stub-llvm'}{os.pathsep}{SUPPORT_BIN}{os.pathsep}{os.environ.get('PATH', '/usr/bin:/bin')}"
+_STUB_LLVM = TESTS / "support" / "stub-llvm"
+STUB_LLVM_PATH = f"{_STUB_LLVM}{os.pathsep}{SUPPORT_BIN}{os.pathsep}{os.environ.get('PATH', '/usr/bin:/bin')}"
+# The sandbox pins the coverage toolchain ABSENT by default (golden.py), so a
+# case that wants it names the stub outright instead of hoping PATH has one.
+STUB_LLVM_ENV = {"PATH": STUB_LLVM_PATH,
+                 "CC_FUZZER_TOOL_LLVM_COV": str(_STUB_LLVM / "llvm-cov"),
+                 "CC_FUZZER_TOOL_LLVM_PROFDATA": str(_STUB_LLVM / "llvm-profdata")}
 _STUB_COV = ('#!/bin/sh\n# test stub coverage binary: one profraw per run\n'
              'f=$(printf %s "$LLVM_PROFILE_FILE" | sed "s/%p/$$/")\necho "run $1" > "$f"\n')
 
@@ -907,11 +913,11 @@ def _crash_files_new(sb):
 COVERAGE_CASES = [
     _sc("warm-all-no-llvm", "campaign-warm"),
     _sc("warm-parser-stub-llvm", "campaign-warm", "--harness", "parser", setup=_stub_cov,
-        env={"PATH": STUB_LLVM_PATH}),
+        env=dict(STUB_LLVM_ENV)),
     _sc("warm-parser-dso-samples", "campaign-warm", "--harness", "parser", setup=_cov_dso,
-        env={"PATH": STUB_LLVM_PATH, "SNAPSHOT_COVERAGE_MAX_SAMPLES": "3"}),
+        env={**STUB_LLVM_ENV, "SNAPSHOT_COVERAGE_MAX_SAMPLES": "3"}),
     _sc("warm-encoder-afl-multi", "campaign-warm", "--harness", "encoder",
-        setup=lambda sb: (_stub_cov(sb), _afl_multi(sb)), env={"PATH": STUB_LLVM_PATH}),
+        setup=lambda sb: (_stub_cov(sb), _afl_multi(sb)), env=dict(STUB_LLVM_ENV)),
     _sc("warm-fork-job-lines", "campaign-warm", "--harness", "parser", setup=_fork_log),
     _sc("warm-fork-status-lines", "campaign-warm", "--harness", "parser", setup=_fork_log_status),
     _sc("warm-no-tracking", "campaign-warm", setup=_no_tracking),

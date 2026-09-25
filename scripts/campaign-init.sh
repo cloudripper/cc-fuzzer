@@ -110,6 +110,22 @@ if [ ! -f "$PROJECT_ROOT/fuzz/.gitignore" ] && [ -f "$SRC/templates/fuzz.gitigno
   echo "wrote $PROJECT_ROOT/fuzz/.gitignore (keeps findings/ tracked by default)"
 fi
 
+# fuzz/state/authorization.json.example — the disclosure-framing template that
+# campaign-header.sh asks the operator to fill in (copy it to
+# authorization.json). Never overwrites; skipped while the disclosure_reporting
+# feature is off (§9). Without python3 on PATH the flags read as their default (on).
+feature_on() {
+  command -v python3 >/dev/null 2>&1 || return 0
+  python3 -m cc_fuzzer_core feature enabled "$1" --state-dir "$PROJECT_ROOT/fuzz/state"
+}
+AUTHZ_EXAMPLE="$PROJECT_ROOT/fuzz/state/authorization.json.example"
+if [ ! -f "$AUTHZ_EXAMPLE" ] && [ -f "$SRC/templates/authorization.json.example" ] \
+   && feature_on disclosure_reporting; then
+  mkdir -p "$PROJECT_ROOT/fuzz/state"
+  cp "$SRC/templates/authorization.json.example" "$AUTHZ_EXAMPLE"
+  echo "wrote $AUTHZ_EXAMPLE (copy to authorization.json and fill in the disclosure framing)"
+fi
+
 sed -e "s|@CC_FUZZER_ROOT@|$SRC|g" -e "s|@SYSTEM@|$SYS|g" \
   "$SRC/templates/project-flake.nix" > "$FLAKE"
 echo "wrote $FLAKE (ccfuzzer input: $SRC)"

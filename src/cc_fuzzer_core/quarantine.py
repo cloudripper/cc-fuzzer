@@ -164,7 +164,9 @@ def quarantine(c: Campaign, harness: str = "", inputs=None, *, env=None) -> Quar
         todo = list(inputs)
     else:
         try:
-            todo = [e.path for e in os.scandir(quar) if e.is_file(follow_symlinks=False)]
+            # sorted: the promote/reject report is an output artifact, and
+            # readdir order varies by filesystem
+            todo = sorted(e.path for e in os.scandir(quar) if e.is_file(follow_symlinks=False))
         except OSError:
             todo = []
     if not todo:

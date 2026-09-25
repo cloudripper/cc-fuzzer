@@ -3,7 +3,12 @@
 which(name) is the ONE way the core finds a tool binary. Resolution order:
 
   1. $CC_FUZZER_TOOL_<NAME>    NAME = the tool name upper-cased with every
-                               non-alphanumeric as "_" (llvm-cov -> LLVM_COV)
+                               non-alphanumeric as "_" (llvm-cov -> LLVM_COV).
+                               Set it EMPTY to pin the tool as UNAVAILABLE:
+                               resolution stops there and never reaches PATH,
+                               so a host can state "this image has no symcc"
+                               (and a test can stop depending on what happens
+                               to be installed on the machine running it).
   2. <state_dir>/nix-env.json  tools[<name>]: the pin the plugin's nix profile
                                captures (scripts/capture-nix-env.sh)
   3. PATH
@@ -70,6 +75,8 @@ def which(name: str, c: Campaign | None = None, *, env: Mapping[str, str] | None
         return None
     env = os.environ if env is None else env
     override = env.get(env_var(name))
+    if override is not None and not override.strip():
+        return None                       # pinned unavailable
     if override and _executable(override):
         return os.path.abspath(override)
     p = pinned(name, c)

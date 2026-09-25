@@ -13,7 +13,7 @@ You characterize the security impact of confirmed findings for responsible discl
 A candidate becomes a finding ONLY by calling:
 
 ```bash
-${CLAUDE_PLUGIN_ROOT}/scripts/findings.sh promote <id> \
+${CLAUDE_PLUGIN_ROOT}/bin/cc-fuzzer findings promote <id> \
   --driver       <path-to-mechanical-reproducer> \
   --verifier     <path-to-verify-poc.sh>          \
   --boundary     "<trust/privilege boundary crossed>" \
@@ -227,7 +227,8 @@ fuzz/findings/<id>/repro/
   input.bin           — the crashing input (raw material for the exploit, copied from finding.reproducer)
   exploit.{c,py,sh}   — the exploit code (NOT just a reproducer that re-runs the input)
   setup.sh            — pre-exploit setup (heap-spray prep, env vars, helper processes)
-  build.sh            — environment + compile setup (apt install, clang invocation)
+  build.sh            — environment + compile setup (whatever this environment needs to
+                        install and compile: package manager, compiler invocation)
   run.sh              — runs the exploit end-to-end (calls setup, runs exploit, runs verify)
   verify.sh           — MECHANICAL impact check. Exit 0 = exploit succeeded. Exit 1 = failed.
   output.log          — captured output from a fresh end-to-end run showing verify exited 0
@@ -287,7 +288,7 @@ Independent of the exploit tier — describes what infrastructure your exploit r
 | Tier | What it runs against |
 |---|---|
 | **1 — In-the-wild binary** | A pre-installed system binary, distro-shipped consumer, stock protocol client, or the actual setuid binary on the system |
-| **2 — Downstream consumer** | A standard downstream tool installed via apt/nix as the exploit's first step |
+| **2 — Downstream consumer** | A standard downstream tool, installed the way this environment installs software, as the exploit's first step |
 | **3 — Public-API program** | A small driver that **links/calls the real target code** through its public headers/API — a thin harness over the actual target, NEVER a from-scratch reimplementation of the vulnerable logic (see Realism) |
 
 Prefer Tier 1 reproducibility — the real installed binary/service in its real configuration is both the most convincing proof and the strongest false-positive filter. Tier 3 is the fallback when no system binary or downstream consumer reaches the bug, and even then it must exercise the target's own compiled code, not a lookalike. **If the only way you can make the bug "fire" is a Tier-3 program you had to write to be vulnerable, that is not a fallback — it is a disputed finding** (see "When the finding doesn't hold up").
@@ -531,7 +532,7 @@ fields = {
 **6b. Promote — if and only if the 3-point realism gate is satisfied.**
 
 ```bash
-${CLAUDE_PLUGIN_ROOT}/scripts/findings.sh promote <id> \
+${CLAUDE_PLUGIN_ROOT}/bin/cc-fuzzer findings promote <id> \
   --driver       "fuzz/findings/<id>/repro/input.bin" \
   --verifier     "fuzz/findings/<id>/repro/verify.sh"   `# or verify-poc-netem.sh when timing-sensitive` \
   --boundary     "<the trust/privilege boundary crossed — from threat-model.md>" \
