@@ -13,7 +13,7 @@
     "ERRORS (10):",
     "  timestamped file in wrong location: <PROJECT>/fuzz/state/coverage-parser-123.json (must be in <PROJECT>/fuzz/state/snapshots/)",
     "  non-conforming crash directory name: <PROJECT>/fuzz/crashes/known/bogus (must match ^f\\d{3,}$)",
-    "  schema version mismatch: state has 'v11', plugin requires 'v12'. v0.30 requires schema v12; older campaigns cannot be migrated. Start a fresh campaign with /cc-fuzzer:campaign.",
+    "  schema version mismatch: state has 'v11', plugin requires 'v13'. v0.30 requires schema v13; older campaigns cannot be migrated. Start a fresh campaign with /cc-fuzzer:campaign.",
     "  harnesses[] declared but <PROJECT>/fuzz/state/harnesses.json is missing",
     "  current.json: active_harness 'nope' is not a declared harness",
     "  findings.jsonl line 3: missing fields ['category', 'dedup_count', 'exploitability', 'first_seen', 'harnesses', 'last_seen', 'location', 'reproducer', 'root_cause', 'stack_hash']",
@@ -23,7 +23,7 @@
     "  crashes/new/unknown__0123456789abcdef.bin: prefix references undeclared harness 'unknown'",
     "",
     "FAIL: state validation failed. See errors above.",
-    "  - Run '/fuzz-reset' to wipe state and start over (v0.30 requires schema v12; older state cannot be migrated)",
+    "  - Run '/fuzz-reset' to wipe state and start over (v0.30 requires schema v13; older state cannot be migrated)",
     "  - Or fix individual issues manually"
   ]
 }

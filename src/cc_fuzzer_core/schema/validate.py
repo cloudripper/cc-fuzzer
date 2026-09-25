@@ -12,7 +12,7 @@ Strictness rules (STATE_SCHEMA.md):
   - unrecognized fields are an ERROR (a WARNING for immutable snapshots)
   - file locations must match STATE_SCHEMA.md exactly
 
-Multi-harness only (schema v12): a campaign with state present MUST declare a
+Multi-harness only (schema v13): a campaign with state present MUST declare a
 non-empty fuzz-config.json:harnesses[]; there is no singular fallback.
 """
 from __future__ import annotations
@@ -344,8 +344,8 @@ def render(problems: list[Problem]) -> tuple[str, int]:
         lines += ["", f"ERRORS ({len(errors)}):"]
         lines += [f"  {e}" for e in errors]
         lines += ["", "FAIL: state validation failed. See errors above.",
-                  "  - Run '/fuzz-reset' to wipe state and start over (v0.30 requires schema v12; "
-                  "older state cannot be migrated)",
+                  f"  - Run '/fuzz-reset' to wipe state and start over (v0.30 requires "
+                  f"schema {F.SCHEMA_VERSION}; older state cannot be migrated)",
                   "  - Or fix individual issues manually"]
         return "\n".join(lines) + "\n", 1
     lines.append("ok")

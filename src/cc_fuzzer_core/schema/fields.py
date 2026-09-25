@@ -11,7 +11,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 # The only supported state schema (v0.30+). Older campaigns cannot be migrated.
-SCHEMA_VERSION = "v12"
+# v13 (§4): a promoted finding's receipt depends on which verifier confirmed
+# it -- realism_attestation for the default poc-realism step, a confirmed
+# `verification` block for any other final_step.
+SCHEMA_VERSION = "v13"
 
 
 def _f(s: str) -> tuple[str, ...]:

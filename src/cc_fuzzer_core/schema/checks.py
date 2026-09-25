@@ -385,8 +385,24 @@ def findings(findings_path, declared, base=None) -> list[str]:
         rep = d.get("reproducer", "")
         status = d.get("status", "")
         # A promoted (status==finding) record MUST carry its promotion receipt.
-        if status == "finding" and "realism_attestation" not in keys:
-            out.append(f"findings.jsonl line {ln}: status 'finding' requires field 'realism_attestation'")
+        # Which receipt depends on WHICH verifier confirmed it (§4): the
+        # realism attestation is what `poc-realism` produces, and a host that
+        # plugged in its own final step has no such bundle to attest to -- it
+        # has a `verification` block naming its step and verdict instead.
+        # Requiring realism_attestation regardless would make every
+        # non-default verifier's findings invalid.
+        if status == "finding":
+            ver = d.get("verification")
+            step = ver.get("step") if isinstance(ver, dict) else None
+            if step and step != "poc-realism":
+                if not isinstance(ver, dict) or ver.get("status") != "confirmed":
+                    out.append(f"findings.jsonl line {ln}: status 'finding' with "
+                               f"verification.step '{step}' requires "
+                               f"verification.status 'confirmed'")
+            elif "realism_attestation" not in keys:
+                out.append(f"findings.jsonl line {ln}: status 'finding' requires field "
+                           f"'realism_attestation' (or a verification block naming a "
+                           f"non-default final_step)")
         if rep and fid:
             if status == "stale":
                 expected = f"fuzz/crashes/stale/{fid}/repro.bin"

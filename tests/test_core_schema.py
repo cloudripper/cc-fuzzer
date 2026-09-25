@@ -101,7 +101,7 @@ class TestValidateApi(unittest.TestCase):
 
 class TestSchemaVersion(unittest.TestCase):
     def test_matches_docs_and_fixtures(self):
-        self.assertEqual(fields.SCHEMA_VERSION, "v12")
+        self.assertEqual(fields.SCHEMA_VERSION, "v13")
         self.assertIn(f"schema {fields.SCHEMA_VERSION}", (REPO / "STATE_SCHEMA.md").read_text())
         for sv in FIXTURES.glob("campaign-*/fuzz/state/schema-version"):
             self.assertEqual(sv.read_text().strip(), fields.SCHEMA_VERSION, sv)
@@ -109,7 +109,7 @@ class TestSchemaVersion(unittest.TestCase):
     def test_cli(self):
         r = subprocess.run(core("schema", "version"), capture_output=True, text=True, timeout=60,
                            env={**os.environ, "PYTHONPATH": str(REPO / "src")})
-        self.assertEqual(r.stdout, "v12\n")
+        self.assertEqual(r.stdout, "v13\n")
 
     def test_harness_built_field_lists_compose(self):
         self.assertEqual(fields.HARNESS_BUILT_REQUIRED_V7[:2], ("name", "build_backend"))

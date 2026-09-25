@@ -1,10 +1,10 @@
-# cc-fuzzer State Schema (v12)
+# cc-fuzzer State Schema (v13)
 
 This document is the **single source of truth** for the cc-fuzzer plugin's filesystem layout, JSON schemas, and lifecycle rules. Every subagent, command, and script must conform to what's defined here. If a subagent's prompt and this document disagree, this document wins.
 
-Schema version: **v12** (cc-fuzzer plugin v0.30+)
+Schema version: **v13** (cc-fuzzer plugin v0.30+)
 
-**`schema-version` (v12) is the framework epoch — a single integer that gates whether a campaign's whole state tree is compatible with this plugin. The per-object `<name>/vN` versions on individual JSON files (e.g. `finding/v2`, `harness-built/v7`) are independent: they identify the shape of one object and do not have to match the epoch number.** There is no back-compat path: older campaigns cannot be migrated, they must be started fresh with `/cc-fuzzer:campaign`.
+**`schema-version` (v13) is the framework epoch — a single integer that gates whether a campaign's whole state tree is compatible with this plugin. The per-object `<name>/vN` versions on individual JSON files (e.g. `finding/v2`, `harness-built/v7`) are independent: they identify the shape of one object and do not have to match the epoch number.** There is no back-compat path: older campaigns cannot be migrated, they must be started fresh with `/cc-fuzzer:campaign`.
 
 Every campaign is multi-harness. The Nix build backend, `harness-built/v7`, and the per-harness layout under `fuzz/harnesses/<name>/` are the only supported shapes; a single-harness campaign is just the degenerate one-entry case.
 
@@ -123,7 +123,7 @@ v12
 
 A single line containing the framework schema version. The orchestrator reads this on session start and refuses to operate if it doesn't match the plugin's expected version.
 
-**v0.30+ requires schema v12; older versions are not supported. Run `/fuzz-reset` then `/cc-fuzzer:campaign` to start fresh.** There is no migration path. Older campaigns cannot be upgraded in place.
+**v0.30+ requires schema v13; older versions are not supported. Run `/fuzz-reset` then `/cc-fuzzer:campaign` to start fresh.** There is no migration path. Older campaigns cannot be upgraded in place.
 
 ### `state/header.txt` — DERIVED-VIEW (regenerated on demand)
 

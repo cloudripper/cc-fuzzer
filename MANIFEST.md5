@@ -9,7 +9,7 @@
 # plugin releases (the submodule tracks upstream; the bundled pack may be
 # refreshed out of band), so drift there is expected and must not trip the
 # integrity check. The SAST driver (src/cc_fuzzer_core/prescan/sast_scan.py) IS tracked.
-27efaf3b889cdbb5e32ed85591bbd618  STATE_SCHEMA.md
+beb5b3a20a17bf5884caaa409eddea88  STATE_SCHEMA.md
 8fae3fd33e21efd25b36a89856d5e076  bin/cc-fuzzer
 6b4787d332f9fc179dfa1823ec79050d  dictionaries/INDEX.md
 070c1e76492ecaf0bf37c051628df96c  dictionaries/bidi-controls.dict
@@ -144,9 +144,9 @@ fdbe9c652691f3fc1132df68d060d907  src/cc_fuzzer_core/prescan/sast_scan.py
 c1888e45a51159c8e090d74186ad92f7  src/cc_fuzzer_core/prompts.py
 268b2e2e7bc6a92f432fe588a3bb6131  src/cc_fuzzer_core/quarantine.py
 4d6d423c89ad954f275dd88a937b64fb  src/cc_fuzzer_core/schema/__init__.py
-e824df09e2a3178e28605bfad407daeb  src/cc_fuzzer_core/schema/checks.py
-435e4147c8b31a775f88ac454223c2be  src/cc_fuzzer_core/schema/fields.py
-c4509ad369caf77f58b9238086ae3c8f  src/cc_fuzzer_core/schema/validate.py
+daa8526e9b2e5fbbd2ad4df92b0a9059  src/cc_fuzzer_core/schema/checks.py
+493a3af932dc69de2ea0b39001a54e6b  src/cc_fuzzer_core/schema/fields.py
+89ac03b7100c81fc89ccdfb950ee8bc5  src/cc_fuzzer_core/schema/validate.py
 15c6c3edc54dd1bb267e9d3da12e0fd5  src/cc_fuzzer_core/slots/__init__.py
 0eb272559fb277faaa098ed2d3afc6e2  src/cc_fuzzer_core/slots/launcher.py
 e9acab8ebd3a088f2b7b75d79c5cf1eb  src/cc_fuzzer_core/slots/liveness.py

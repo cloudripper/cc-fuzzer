@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+from cc_fuzzer_core.schema.fields import SCHEMA_VERSION
 import shutil
 import subprocess
 import time
@@ -295,7 +296,7 @@ def _break_logs(sb):
 def _missing_dirs(sb):
     for d in ("fuzz/state/snapshots", "fuzz/crashes/flaky", "fuzz/crashes/known"):
         shutil.rmtree(sb.path(d))
-    sb.write("fuzz/state/schema-version", "  v12  \nextra line\n")
+    sb.write("fuzz/state/schema-version", f"  {SCHEMA_VERSION}  \nextra line\n")
     sb.write("fuzz/state/nix-environment-issues.json", "not json\n")
 
 
