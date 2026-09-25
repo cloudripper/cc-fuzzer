@@ -152,23 +152,34 @@ def cr_to_category(pattern):
 # Reconciled across the two current.json builders and validate-state.sh.
 # ---------------------------------------------------------------------------
 REC_BRANCHES = frozenset({
+    # `query` (§5): the loop writes a fresh semgrep/CodeQL query to test a
+    # hypothesis about a gap, instead of only re-reading the coverage it
+    # already has.
     "sleep", "restart_fuzzer", "fix_instrumentation", "triage",
     "analyze_gaps", "reanalyze_gaps", "generate_seeds", "concolic",
-    "mutator", "stop",
+    "mutator", "query", "stop",
 })
 
 # ---------------------------------------------------------------------------
 # gaps-report/v1 gap `reason` (why a path is uncovered).
 # ---------------------------------------------------------------------------
+# These are the values STATE_SCHEMA.md documents and the agents actually
+# emit. The set here used to be a different six -- magic_value,
+# unreached_function, format_invariant and resource_guard, which nothing ever
+# wrote -- while `value_constraint`, which the prompts emit ten times over, was
+# not a member at all. Nothing validated against it, so the disagreement was
+# invisible; gap_reasons is now under the doc-mirror check (_DOC_MIRRORS) so it
+# cannot drift again.
 GAP_REASONS = frozenset({
-    "checksum_barrier", "deep_path_condition", "magic_value",
-    "unreached_function", "format_invariant", "resource_guard",
+    "harness_gap", "format_barrier", "state_precondition", "value_constraint",
+    "direct_compare", "checksum_barrier", "deep_path_condition", "delta_target",
+    "cve_hotspot", "code_review_target", "dead",
 })
 
 # Specialist agent a gap recommends (gaps-report `recommended_agent`).
 HARNESS_ACTIONS = frozenset({
     "harness-writer", "seed-generator", "concolic-executor", "mutator",
-    "coverage-analyst",
+    "coverage-analyst", "query-analyst",
 })
 
 # ---------------------------------------------------------------------------
@@ -206,6 +217,7 @@ CR_LENS_TOKENS = frozenset({
 SNAPSHOT_PREFIXES = frozenset({
     "coverage-snapshot", "gaps-report", "concolic-result",
     "code-review-prescan", "code-review", "tick-coverage", "tick-briefing",
+    "query-result",
     "ceiling-probe", "planner-consult", "cve-context", "plan",
 })
 
@@ -274,6 +286,7 @@ _DOC_MIRRORS = {
     "oracle_type": "ORACLE_TYPE",
     "oracle_kind": "ORACLE_KIND",
     "cr_review_mode": "CR_REVIEW_MODE",
+    "gap_reasons": "GAP_REASONS",
 }
 
 

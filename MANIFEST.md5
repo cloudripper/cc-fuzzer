@@ -9,7 +9,7 @@
 # plugin releases (the submodule tracks upstream; the bundled pack may be
 # refreshed out of band), so drift there is expected and must not trip the
 # integrity check. The SAST driver (src/cc_fuzzer_core/prescan/sast_scan.py) IS tracked.
-beb5b3a20a17bf5884caaa409eddea88  STATE_SCHEMA.md
+a1682a9f7c157c0eaa36e5e7f44cb246  STATE_SCHEMA.md
 8fae3fd33e21efd25b36a89856d5e076  bin/cc-fuzzer
 6b4787d332f9fc179dfa1823ec79050d  dictionaries/INDEX.md
 070c1e76492ecaf0bf37c051628df96c  dictionaries/bidi-controls.dict
@@ -114,7 +114,7 @@ fe3b8d694186b83378094e38a6b18f61  src/cc_fuzzer_core/builders/__init__.py
 48b5c0243876cf7c1af7724bf4559cb5  src/cc_fuzzer_core/builders/ossfuzz.py
 20ac54ed256dd5041ecfa708b7a51a90  src/cc_fuzzer_core/builders/script.py
 e9f82154f2827218549d284fe6a331dc  src/cc_fuzzer_core/builders/toolchain.py
-a7dfbc40a5f2d5cf83101d39bce65e78  src/cc_fuzzer_core/cli.py
+147f77697a5cfccd415d66e356775434  src/cc_fuzzer_core/cli.py
 b749542267f72f8d13d502718b1e6a7c  src/cc_fuzzer_core/cmplog.py
 546441c1cfd7f30452d96f205b7b8fca  src/cc_fuzzer_core/config.py
 82b020ef6ef7e983722bb0485f8d4d89  src/cc_fuzzer_core/coverage.py
@@ -128,7 +128,7 @@ b4a327b96ea7e0f3f3786d50b1a3fc53  src/cc_fuzzer_core/crash/verifiers/__init__.py
 f1774217b1b8c3afd3e5b8f7ced2b6eb  src/cc_fuzzer_core/crash/verifiers/realism.py
 126ddcd5c81cf200d43f5b54d3c7bebf  src/cc_fuzzer_core/data/models.json
 96647041941d2e3a73c59f26581a607b  src/cc_fuzzer_core/delta.py
-488745cb58490161b0b7802d6d66ce12  src/cc_fuzzer_core/enums.py
+8fabcb44c591fee602b0f0c33c9d618a  src/cc_fuzzer_core/enums.py
 5fcdb1075b43c3a193d755781fdd3939  src/cc_fuzzer_core/events.py
 ff05da461b38bef049093e0f855d4b2f  src/cc_fuzzer_core/features.py
 8f2ff2acc2c0f513237aeaf2452ed073  src/cc_fuzzer_core/findings.py
@@ -144,6 +144,7 @@ a1359881b6f12e7f34457f4ecaf39d4a  src/cc_fuzzer_core/prescan/merge.py
 fdbe9c652691f3fc1132df68d060d907  src/cc_fuzzer_core/prescan/sast_scan.py
 c1888e45a51159c8e090d74186ad92f7  src/cc_fuzzer_core/prompts.py
 268b2e2e7bc6a92f432fe588a3bb6131  src/cc_fuzzer_core/quarantine.py
+43d287e54de0190bf273c264ac8e1a27  src/cc_fuzzer_core/query.py
 4d6d423c89ad954f275dd88a937b64fb  src/cc_fuzzer_core/schema/__init__.py
 daa8526e9b2e5fbbd2ad4df92b0a9059  src/cc_fuzzer_core/schema/checks.py
 493a3af932dc69de2ea0b39001a54e6b  src/cc_fuzzer_core/schema/fields.py

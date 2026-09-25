@@ -38,6 +38,7 @@ SUBSYSTEMS = (
     "cc_fuzzer_core.builders",
     "cc_fuzzer_core.gate",
     "cc_fuzzer_core.loop",
+    "cc_fuzzer_core.query",
     "cc_fuzzer_core.findings",
     "cc_fuzzer_core.tools",
     "cc_fuzzer_core.models",
