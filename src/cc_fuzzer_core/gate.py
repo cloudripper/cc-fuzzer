@@ -17,8 +17,20 @@ statement about the instrumentation -- and under time pressure a triager
 reaches for whichever binary is already built. classify_command() reads a
 shell command the model is about to run and says whether it crosses that line.
 
-CLI: `cc-fuzzer gate classify-command` (stdin or --command), exit 0 allow,
-1 deny; `--json` for the hook.
+EXIT CONTRACT, and it is total: **0 means allowed, and any non-zero means NOT
+allowed** -- denied, or the gate could not reach a decision. There is
+deliberately no exit code that means "the tool broke, carry on": a gate whose
+failure is distinguishable from a refusal invites `gate ... || allow`, which
+turns every refusal into a silent permit. That is the one bug a gate must not
+have, and it is the bug the first version of this project's own PreToolUse
+hook shipped with.
+
+So the only correct shell idiom is the natural one:
+
+    if ! cc-fuzzer gate classify-command --command "$CMD"; then refuse; fi
+
+A caller that wants to distinguish the two reads `decision` from `--json`
+("deny" vs "error"), which is explicit rather than incidental.
 """
 from __future__ import annotations
 
@@ -233,6 +245,22 @@ def _cmd_classify(a):
     return 0 if v.allowed else 1
 
 
+def _guard(fn):
+    """Any failure to reach a verdict exits as a REFUSAL, not as an error the
+    caller might read as success. See the exit contract in the module doc."""
+    def wrapper(a):
+        try:
+            return fn(a)
+        except Exception as e:  # noqa: BLE001 - a gate never fails open
+            v = Verdict(DENY, f"gate could not classify this: {type(e).__name__}: {e}")
+            if getattr(a, "json", False):
+                print(json.dumps({**v.as_dict(), "decision": DENY, "error": True}, indent=2))
+            else:
+                print(v.reason, file=sys.stderr)
+            return 1
+    return wrapper
+
+
 def _cmd_check_finding(a):
     v = check_finding_dir(a.path)
     if a.json:
@@ -264,13 +292,13 @@ def register_cli(subparsers):
     v.add_argument("--command", help="the command (default: stdin)")
     v.add_argument("--harness", default="")
     v.add_argument("--json", action="store_true")
-    v.set_defaults(func=_cmd_classify)
+    v.set_defaults(func=_guard(_cmd_classify))
 
     v = verbs.add_parser("check-finding",
                          help="does this finding dir carry a valid verification marker?")
     v.add_argument("path")
     v.add_argument("--json", action="store_true")
-    v.set_defaults(func=_cmd_check_finding)
+    v.set_defaults(func=_guard(_cmd_check_finding))
 
     v = verbs.add_parser("classify-write",
                          help="may this write under fuzz/findings/ proceed? (exit 1 = deny)")
@@ -278,4 +306,4 @@ def register_cli(subparsers):
     v.add_argument("--tool", default="Bash")
     v.add_argument("--path", default="", help="the target path, for Write/Edit")
     v.add_argument("--json", action="store_true")
-    v.set_defaults(func=_cmd_classify_write)
+    v.set_defaults(func=_guard(_cmd_classify_write))

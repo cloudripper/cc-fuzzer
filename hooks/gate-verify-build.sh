@@ -15,7 +15,10 @@
 #
 # This script only translates. Every decision is `cc-fuzzer gate
 # classify-command`, the same call the core makes at its own API, so the hook
-# and the API cannot disagree about what is allowed.
+# and the API cannot disagree about what is allowed. The call goes through
+# hooks/_lib/gate.sh, which is the one place that reads the core's answer --
+# an earlier version of this hook read the exit status directly and chained
+# it into `|| _allow`, which turned every refusal into a silent permit.
 #
 # Claude Code hands this hook the tool call on stdin:
 #   {"hook_event_name":"PreToolUse","tool_name":"Bash",
@@ -37,6 +40,8 @@ _log() {
 
 _allow() { exit 0; }
 
+. "$(dirname "${BASH_SOURCE[0]}")/_lib/gate.sh"
+
 INPUT="$(cat 2>/dev/null)" || _allow
 [ -n "$INPUT" ] || _allow
 
@@ -55,30 +60,24 @@ try: sys.stdout.write(json.load(sys.stdin).get("cwd") or ".")
 except Exception: sys.stdout.write(".")' 2>/dev/null)" || HOOK_CWD="."
 cd "${HOOK_CWD:-.}" 2>/dev/null || _allow
 
-# The decision is the core's, not this script's.
-#
-# NOTE the `|| true`: `gate classify-command` exits 1 to MEAN deny, which is
-# what a caller using it as a test wants. Letting that exit code reach a
-# `|| _allow` here turns every refusal into a silent allow -- the one failure
-# mode this hook exists to prevent. The decision is read from the JSON, never
-# from the exit status.
-VERDICT="$(printf '%s' "$CMD" | python3 -m cc_fuzzer_core gate classify-command --json 2>/dev/null || true)"
-[ -n "$VERDICT" ] || _allow
+gate_ask classify-command --command "$CMD"
 
-# Deny -> a PreToolUse denial carrying the reason AND what to run instead.
-OUT="$(printf '%s' "$VERDICT" | python3 -c 'import json,sys
-try: v = json.load(sys.stdin)
-except Exception: raise SystemExit(0)
-if v.get("decision") != "deny": raise SystemExit(0)
-reason = v.get("reason") or "refused by cc-fuzzer gate"
-if v.get("suggestion"):
-    reason += "\n\nRun instead: " + v["suggestion"]
-print(json.dumps({"hookSpecificOutput": {
-    "hookEventName": "PreToolUse",
-    "permissionDecision": "deny",
-    "permissionDecisionReason": reason}}))' 2>/dev/null)" || _allow
-
-[ -n "$OUT" ] || _allow
-_log "denied: $CMD"
-printf '%s\n' "$OUT"
-exit 0
+case "$GATE_DECISION" in
+  deny)
+    _log "denied: $CMD"
+    gate_deny_json "$GATE_REASON" "$GATE_SUGGESTION"
+    exit 0
+    ;;
+  allow)
+    exit 0
+    ;;
+  *)
+    # unavailable: no verdict. This hook fails OPEN, and that is affordable
+    # only because variants.select refuses the same action at the core's API
+    # -- the binary a replay runs on is chosen there, not here. A hook that
+    # blocked every Bash call whenever the core hiccuped would take the
+    # campaign down over its own bug.
+    _log "no verdict (core unavailable); allowing: $CMD"
+    exit 0
+    ;;
+esac

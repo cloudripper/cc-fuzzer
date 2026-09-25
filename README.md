@@ -105,9 +105,44 @@ Prefer to approve each step over full autonomy? Skip YOLO and run the loop by ha
 
 `/cc-fuzzer:campaign` runs COLD setup once (analyze → harness → 3 binaries → seed corpus → launch). To pick a stopped campaign back up without re-analyzing: `/cc-fuzzer:resume-campaign`. The full self-driving model is in [YOLO](#yolo-self-looping).
 
+## The core
+
+The deterministic half of cc-fuzzer is a plain Python package,
+`cc_fuzzer_core`. It owns the campaign state machine, the crash pipeline, the
+build spec, the findings ledger, the spend ledger and the tick loop. It has no
+idea what Claude Code is: it never reads a `CLAUDE_*` variable, never emits
+hook JSON, and never refers to `agents/`, `skills/` or `hooks/` — a test
+enforces all three.
+
+That leaves exactly two things a host supplies: **a way to call a model** and
+**a loop**. This plugin is one such host. A CRS or container entry point is
+another:
+
+```python
+from cc_fuzzer_core import loop
+while True:
+    r = loop.step(campaign, my_runner)   # one tick; never sleeps or schedules
+    ...                                  # you decide what a `wait` means
+```
+
+Everything host-specific is data rather than a second implementation:
+
+| Difference | Where it lives |
+|---|---|
+| nix vs bare host vs OSS-Fuzz image | a prompt **profile** (`prompts/profiles/`) |
+| which toolchain builds a variant | a **builder** (`builders/`) |
+| what counts as a confirmed finding | `verification.final_step` in fuzz-config |
+| which subsystems run at all | **feature flags** (§9) |
+| which model serves an agent | `data/models.json` |
+
+The agents in `agents/` are *rendered output*, not sources: they come from
+`prompts/` and `cc-fuzzer prompts check` fails if they drift.
+
+Embedding it in something else: **[docs/EMBEDDING.md](docs/EMBEDDING.md)**.
+
 ## How it works
 
-The campaign splits into a one-time **COLD** setup and a steady-state **WARM** tick. The fuzzer runs continuously in the background; each WARM tick the orchestrator reads one file (`fuzz/state/current.json`) and either decides to wait or emits a directive selecting **one** specialist — the main thread owns the loop and performs the dispatch (see the decision-agent note below). On a manual tick (and YOLO `guided` mode) the branch is computed **deterministically** by `update-current.sh` and the orchestrator just emits its directive; YOLO's `hybrid`/`self_loop` modes let the orchestrator reason over cost/redundancy/progress signals to decide instead.
+The campaign splits into a one-time **COLD** setup and a steady-state **WARM** tick. The fuzzer runs continuously in the background; each WARM tick the orchestrator reads one file (`fuzz/state/current.json`) and either decides to wait or emits a directive selecting **one** specialist — the main thread owns the loop and performs the dispatch (see the decision-agent note below). On a manual tick (and YOLO `guided` mode) the branch is computed **deterministically** by `cc-fuzzer state update-current` and the orchestrator just emits its directive; YOLO's `hybrid`/`self_loop` modes let the orchestrator reason over cost/redundancy/progress signals to decide instead.
 
 ```
 COLD (once)
@@ -120,12 +155,12 @@ COLD (once)
    │  Silent, no LLM.                                          │
    └───────────────────────────────────────────────────────────┘
                                   │
-   snapshot-coverage.sh ──────────┤
-   extract-cmplog-dict.sh ────────┘  (refreshed on gap analysis)
+   cc-fuzzer coverage snapshot ───┤
+   cc-fuzzer cmplog extract ──────┘  (refreshed on gap analysis)
                                   │
                                   ▼
 WARM tick (one per /cc-fuzzer:tick)
-  update-current.sh → current.json.recommendation.branch
+  cc-fuzzer state update-current → current.json.recommendation.branch
                                   │
    ┌──────────────────────────────┴───────────────────────────┐
    │ DISPATCH (one specialist, or sleep)                      │
@@ -134,6 +169,8 @@ WARM tick (one per /cc-fuzzer:tick)
    │   generate_seeds   → seed-generator                       │
    │   concolic         → concolic-executor (SymCC, hard gaps) │
    │   mutator          → mutator (structure-aware input)      │
+   │   query            → query-analyst (ask the code, not the  │
+   │                      coverage: a fresh semgrep/CodeQL rule)│
    │   triage           → crash-triager (verification pipeline)│
    │   restart_fuzzer   → kill + relaunch                      │
    │   fix_instrumentation → refuse to advance, surface errors │
@@ -144,7 +181,7 @@ The orchestrator's most important job is **knowing when not to do work**: token 
 
 ### Three-mode state machine
 
-Every orchestrator invocation begins with `check-campaign-state.sh`:
+Every orchestrator invocation begins with `cc-fuzzer tick state`:
 
 | State | Mode | Behavior |
 |---|---|---|

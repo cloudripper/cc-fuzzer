@@ -224,6 +224,109 @@ class HookTest(unittest.TestCase):
         self.assertIn("gate-verify-build.sh", entry["hooks"][0]["command"])
 
 
+class ExitContractTest(unittest.TestCase):
+    """0 means allowed; every non-zero means NOT allowed.
+
+    The contract is total on purpose. A gate whose failure is distinguishable
+    from a refusal invites `gate ... || allow`, and that is the one bug a gate
+    must not have."""
+
+    def test_allow_is_zero_and_deny_is_not(self):
+        self.assertEqual(run_cli("gate", "classify-command", "--command", "ls").returncode, 0)
+        self.assertNotEqual(
+            run_cli("gate", "classify-command", "--command", "./x_cmplog i.bin").returncode, 0)
+
+    def test_an_internal_failure_refuses_rather_than_passing(self):
+        self.assertNotEqual(run_cli("gate", "check-finding", "/nonexistent/f001").returncode, 0)
+
+    def test_non_zero_means_exactly_not_allowed(self):
+        """Nothing the CLI can do may produce a status a caller could read as
+        'the tool broke, proceed'."""
+        for args in (("gate", "classify-command", "--command", "./x_symcc a"),
+                     ("gate", "classify-write", "--tool", "Write",
+                      "--path", "fuzz/findings/f1/x.c"),
+                     ("gate", "check-finding", "/nope")):
+            with self.subTest(args=args[1:3]):
+                self.assertEqual(run_cli(*args).returncode, 1)
+
+
+class HookFailureModeTest(unittest.TestCase):
+    """Every way the core can fail to answer, against both hooks.
+
+    The first version of gate-verify-build.sh read the core's exit status and
+    chained it into `|| _allow`, so a DENY became a silent allow. These force
+    each path so it cannot come back."""
+
+    HOOKS = {
+        "gate-verify-build.sh": {"tool_name": "Bash", "cwd": str(REPO),
+                                 "tool_input": {"command": "./parser_fuzzer_cmplog c.bin"}},
+        "gate-findings.sh": {"tool_name": "Write",
+                             "tool_input": {"file_path": "fuzz/findings/f1/poc.c"}},
+    }
+
+    def _env(self, extra=None):
+        env = dict(os.environ)
+        env.update({"PYTHONPATH": str(REPO / "src"), "CC_FUZZER_ROOT": str(REPO)})
+        env.update(extra or {})
+        return env
+
+    def _run(self, hook, payload, env_extra=None):
+        return subprocess.run(["bash", str(REPO / "hooks" / hook)],
+                              input=json.dumps(payload), capture_output=True,
+                              text=True, env=self._env(env_extra))
+
+    def test_deny_is_never_swallowed(self):
+        for hook, payload in self.HOOKS.items():
+            with self.subTest(hook=hook):
+                r = self._run(hook, payload)
+                self.assertTrue(r.stdout.strip(), hook + " produced no verdict for a denial")
+                self.assertEqual(json.loads(r.stdout)["hookSpecificOutput"]
+                                 ["permissionDecision"], "deny")
+
+    def test_a_missing_core_fails_open_quietly(self):
+        """No verdict is not the same as allow, but the POSTURE for it is the
+        hook's own choice and is fail-open: the core refuses the same action
+        at its API, so the rule survives the hook being unavailable."""
+        for hook, payload in self.HOOKS.items():
+            with self.subTest(hook=hook):
+                # Neither PYTHONPATH nor a bogus CC_FUZZER_ROOT makes the
+                # core unreachable -- scripts/_lib/root.sh validates the root
+                # and falls back to the checkout, which is worth knowing. A
+                # python3 that cannot run is the honest way to have no verdict.
+                with tempfile.TemporaryDirectory() as binn:
+                    stub = Path(binn) / "python3"
+                    stub.write_text("#!/bin/sh\nexit 1\n")
+                    stub.chmod(0o755)
+                    r = self._run(hook, payload,
+                                  {"PATH": f"{binn}{os.pathsep}{os.environ['PATH']}"})
+                self.assertEqual(r.returncode, 0)
+                self.assertEqual(r.stdout.strip(), "",
+                                 "an unavailable core must not emit a bogus verdict")
+
+    def test_hooks_never_call_the_core_directly(self):
+        """The regression guard: the decision comes from JSON via
+        _lib/gate.sh. A hook that pipes the core into `||` is the bug."""
+        for hook in self.HOOKS:
+            src = (REPO / "hooks" / hook).read_text()
+            with self.subTest(hook=hook):
+                self.assertIn("gate_ask", src)
+                self.assertNotIn("cc_fuzzer_core gate", src)
+
+    def test_the_helper_never_returns_non_zero(self):
+        """gate_ask must be impossible to chain into a `||` at all."""
+        # the third call asks for a verb the core does not have: a real "no
+        # verdict" that does not require breaking the interpreter
+        script = (". " + str(REPO) + "/hooks/_lib/gate.sh\n"
+                  'gate_ask classify-command --command "./x_cmplog i.bin"; echo "rc=$? d=$GATE_DECISION"\n'
+                  'gate_ask classify-command --command "ls"; echo "rc=$? d=$GATE_DECISION"\n'
+                  'gate_ask no-such-verb; echo "rc=$? d=$GATE_DECISION"\n')
+        r = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                           env=self._env())
+        self.assertEqual(
+            [l.strip() for l in r.stdout.strip().splitlines()],
+            ["rc=0 d=deny", "rc=0 d=allow", "rc=0 d=unavailable"], r.stdout + r.stderr)
+
+
 class ConsumerTest(unittest.TestCase):
     """The callers that pick a binary must go through select()."""
 
