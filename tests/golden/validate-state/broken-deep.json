@@ -74,7 +74,7 @@
     "  nix-environment (E1): store path gone — rebuild",
     "",
     "FAIL: state validation failed. See errors above.",
-    "  - Run '/fuzz-reset' to wipe state and start over (v0.30 requires schema v12; older state cannot be migrated)",
+    "  - Run '/fuzz-reset' to wipe state and start over (v0.30 requires schema v13; older state cannot be migrated)",
     "  - Or fix individual issues manually"
   ]
 }

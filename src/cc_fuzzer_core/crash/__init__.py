@@ -101,3 +101,6 @@ def register_cli(subparsers):
                    help='print {"alive", "new_dir", "queued", "files"} (default: a summary line when queued)')
     v.add_argument("--missing-ok", action="store_true", help="no project found => exit 0 silently")
     v.set_defaults(func=_cmd_detect)
+
+    from cc_fuzzer_core.crash import replay as _replay
+    _replay.register_verb(verbs)

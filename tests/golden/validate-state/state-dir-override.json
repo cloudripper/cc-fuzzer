@@ -11,10 +11,10 @@
   "stdout": [
     "",
     "ERRORS (1):",
-    "  schema version mismatch: state has 'v11', plugin requires 'v12'. v0.30 requires schema v12; older campaigns cannot be migrated. Start a fresh campaign with /cc-fuzzer:campaign.",
+    "  schema version mismatch: state has 'v11', plugin requires 'v13'. v0.30 requires schema v13; older campaigns cannot be migrated. Start a fresh campaign with /cc-fuzzer:campaign.",
     "",
     "FAIL: state validation failed. See errors above.",
-    "  - Run '/fuzz-reset' to wipe state and start over (v0.30 requires schema v12; older state cannot be migrated)",
+    "  - Run '/fuzz-reset' to wipe state and start over (v0.30 requires schema v13; older state cannot be migrated)",
     "  - Or fix individual issues manually"
   ]
 }

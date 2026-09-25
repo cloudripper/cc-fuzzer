@@ -18,7 +18,7 @@
     "  findings.jsonl line 5: duplicate id 'f001'",
     "  findings.jsonl line 5: invalid category 'rainbow'",
     "  findings.jsonl line 5: invalid exploitability 'sure'",
-    "  findings.jsonl line 5: status 'finding' requires field 'realism_attestation'",
+    "  findings.jsonl line 5: status 'finding' requires field 'realism_attestation' (or a verification block naming a non-default final_step)",
     "  findings.jsonl line 5: reproducer 'fuzz/crashes/known/f009/repro.bin' should be 'fuzz/crashes/known/f001/repro.bin'",
     "  findings.jsonl line 5: reproducer file does not exist: fuzz/crashes/known/f009/repro.bin",
     "  findings.jsonl line 5: harnesses[] contains undeclared harness 'ghost'",
@@ -39,7 +39,7 @@
     "  missing <PROJECT>/fuzz/crashes/known/f12/harnesses.txt (one harness name per line, must mirror finding.harnesses[])",
     "",
     "FAIL: state validation failed. See errors above.",
-    "  - Run '/fuzz-reset' to wipe state and start over (v0.30 requires schema v12; older state cannot be migrated)",
+    "  - Run '/fuzz-reset' to wipe state and start over (v0.30 requires schema v13; older state cannot be migrated)",
     "  - Or fix individual issues manually"
   ]
 }

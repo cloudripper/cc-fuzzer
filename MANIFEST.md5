@@ -9,7 +9,7 @@
 # plugin releases (the submodule tracks upstream; the bundled pack may be
 # refreshed out of band), so drift there is expected and must not trip the
 # integrity check. The SAST driver (src/cc_fuzzer_core/prescan/sast_scan.py) IS tracked.
-27efaf3b889cdbb5e32ed85591bbd618  STATE_SCHEMA.md
+beb5b3a20a17bf5884caaa409eddea88  STATE_SCHEMA.md
 8fae3fd33e21efd25b36a89856d5e076  bin/cc-fuzzer
 6b4787d332f9fc179dfa1823ec79050d  dictionaries/INDEX.md
 070c1e76492ecaf0bf37c051628df96c  dictionaries/bidi-controls.dict
@@ -118,16 +118,21 @@ e9f82154f2827218549d284fe6a331dc  src/cc_fuzzer_core/builders/toolchain.py
 b749542267f72f8d13d502718b1e6a7c  src/cc_fuzzer_core/cmplog.py
 546441c1cfd7f30452d96f205b7b8fca  src/cc_fuzzer_core/config.py
 82b020ef6ef7e983722bb0485f8d4d89  src/cc_fuzzer_core/coverage.py
-6f02bd68429cf3b878ca461b07752beb  src/cc_fuzzer_core/crash/__init__.py
+d6a572ee24ebae69f3429d849fef7c14  src/cc_fuzzer_core/crash/__init__.py
 edd2ef13c1a14be5d257860ed72a34e8  src/cc_fuzzer_core/crash/classify.py
 16996fd420eeee27bbf1fd8ea9906bd2  src/cc_fuzzer_core/crash/detect.py
+46232d400a9b647c187ded120c3513dc  src/cc_fuzzer_core/crash/pipeline.py
+9e7f617c731ce0d2904dcd8d40741a6a  src/cc_fuzzer_core/crash/replay.py
+b4a327b96ea7e0f3f3786d50b1a3fc53  src/cc_fuzzer_core/crash/verifiers/__init__.py
+801c359f838b2557782307b3b64c8cad  src/cc_fuzzer_core/crash/verifiers/command.py
+f1774217b1b8c3afd3e5b8f7ced2b6eb  src/cc_fuzzer_core/crash/verifiers/realism.py
 126ddcd5c81cf200d43f5b54d3c7bebf  src/cc_fuzzer_core/data/models.json
 96647041941d2e3a73c59f26581a607b  src/cc_fuzzer_core/delta.py
 488745cb58490161b0b7802d6d66ce12  src/cc_fuzzer_core/enums.py
 5fcdb1075b43c3a193d755781fdd3939  src/cc_fuzzer_core/events.py
 ff05da461b38bef049093e0f855d4b2f  src/cc_fuzzer_core/features.py
 8f2ff2acc2c0f513237aeaf2452ed073  src/cc_fuzzer_core/findings.py
-501e16126d9413d0a4d40569e2a647dd  src/cc_fuzzer_core/gate.py
+2494348832f18c182e0c50d716cfa266  src/cc_fuzzer_core/gate.py
 24e0b9f93714c4b5fa5fe11393b08d06  src/cc_fuzzer_core/ledger.py
 bb55e017ba8a659b9c8eccc1b73bec33  src/cc_fuzzer_core/manifest.py
 2c385e54cedae3970219c9de7d2d16b3  src/cc_fuzzer_core/models.py
@@ -139,9 +144,9 @@ fdbe9c652691f3fc1132df68d060d907  src/cc_fuzzer_core/prescan/sast_scan.py
 c1888e45a51159c8e090d74186ad92f7  src/cc_fuzzer_core/prompts.py
 268b2e2e7bc6a92f432fe588a3bb6131  src/cc_fuzzer_core/quarantine.py
 4d6d423c89ad954f275dd88a937b64fb  src/cc_fuzzer_core/schema/__init__.py
-e824df09e2a3178e28605bfad407daeb  src/cc_fuzzer_core/schema/checks.py
-435e4147c8b31a775f88ac454223c2be  src/cc_fuzzer_core/schema/fields.py
-c4509ad369caf77f58b9238086ae3c8f  src/cc_fuzzer_core/schema/validate.py
+daa8526e9b2e5fbbd2ad4df92b0a9059  src/cc_fuzzer_core/schema/checks.py
+493a3af932dc69de2ea0b39001a54e6b  src/cc_fuzzer_core/schema/fields.py
+89ac03b7100c81fc89ccdfb950ee8bc5  src/cc_fuzzer_core/schema/validate.py
 15c6c3edc54dd1bb267e9d3da12e0fd5  src/cc_fuzzer_core/slots/__init__.py
 0eb272559fb277faaa098ed2d3afc6e2  src/cc_fuzzer_core/slots/launcher.py
 e9acab8ebd3a088f2b7b75d79c5cf1eb  src/cc_fuzzer_core/slots/liveness.py

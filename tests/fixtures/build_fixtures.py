@@ -3,7 +3,7 @@
 
     PYTHONPATH=src python3 tests/fixtures/build_fixtures.py [name ...]
 
-Each fixture is a project dir whose fuzz/ tree is a hand-authored, schema-v12
+Each fixture is a project dir whose fuzz/ tree is a hand-authored, current-schema
 campaign (STATE_SCHEMA.md) — no real fuzzing, stub shell "binaries". The
 derived views (current.json, tick-coverage roundups) are NOT hand-written:
 they are produced by running the real scripts/update-current.sh on the
@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from cc_fuzzer_core.schema.fields import SCHEMA_VERSION
 import shutil
 import subprocess
 import sys
@@ -175,7 +176,7 @@ class Builder:
     # -- campaign skeleton -------------------------------------------------
 
     def skeleton(self):
-        self.write("fuzz/state/schema-version", "v12\n")
+        self.write("fuzz/state/schema-version", f"{SCHEMA_VERSION}\n")
         self.keep("fuzz/state/snapshots")
         for d in ("new", "known", "flaky"):
             self.keep(f"fuzz/crashes/{d}")
