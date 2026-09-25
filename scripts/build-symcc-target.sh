@@ -92,7 +92,13 @@ cat > "$SHIM" <<'EOF'
 #include <stdint.h>
 #include <string.h>
 
-extern int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size);
+/* The harness defines this with C linkage, and clang++ compiles a .c
+   input as C++ -- without the guard the declaration mangles as C++ and
+   the link fails with an undefined reference. */
+#ifdef __cplusplus
+extern "C"
+#endif
+int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size);
 
 #ifdef __cplusplus
 extern "C" {

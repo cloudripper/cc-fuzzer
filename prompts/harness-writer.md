@@ -516,7 +516,13 @@ This path applies when:
    #include <stdio.h>
    #include <stdint.h>
    #include <stdlib.h>
-   extern int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size);
+   /* The harness defines this with C linkage, and clang++ compiles a .c
+      input as C++ -- without the guard the declaration mangles as C++ and
+      the link fails with an undefined reference. */
+   #ifdef __cplusplus
+   extern "C"
+   #endif
+   int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size);
    int main(int argc, char **argv) {
      static uint8_t buf[1024 * 1024];
      size_t n = 0;

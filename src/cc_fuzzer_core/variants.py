@@ -13,7 +13,9 @@ A Variant states the need instead:
     sanitizers       which sanitizers must be active
     instrumentation  libfuzzer | afl | source-coverage | cmplog | symcc | none
     link_mode        who supplies main(): fuzzer-main, standalone-main, afl
-    debug_info       symbols required (frame pointers, line tables)
+    debug_info       line tables required
+    frame_pointer    frames must be walkable (a readable stack, not a fast one)
+    optimization     the -O level this purpose needs
     required         a build that cannot produce it has FAILED, not degraded
 
 A builder maps those needs to whatever its toolchain wants: the nix builder to
@@ -56,6 +58,8 @@ INSTRUMENTATION = (LIBFUZZER, AFL, SOURCE_COVERAGE, INSTR_CMPLOG, INSTR_SYMCC, N
 FUZZER_MAIN, STANDALONE_MAIN, AFL_MAIN = "fuzzer-main", "standalone-main", "afl"
 LINK_MODES = (FUZZER_MAIN, STANDALONE_MAIN, AFL_MAIN)
 
+OPT_LEVELS = ("0", "1", "2", "3", "s", "g")
+
 # The state field each variant's binary path is recorded in, and the suffix the
 # bundle symlink carries (nix-build.sh out_suffix; "" for the fuzzing binary).
 BINARY_FIELD = {
@@ -81,6 +85,8 @@ class Variant:
     instrumentation: str = NONE
     link_mode: str = STANDALONE_MAIN
     debug_info: bool = True
+    frame_pointer: bool = True
+    optimization: str = "1"
     required: bool = False
     enabled: bool = True
 
@@ -98,6 +104,8 @@ class Variant:
             "instrumentation": self.instrumentation,
             "link_mode": self.link_mode,
             "debug_info": self.debug_info,
+            "frame_pointer": self.frame_pointer,
+            "optimization": self.optimization,
             "required": self.required,
             "enabled": self.enabled,
             "binary_field": self.binary_field(),
@@ -114,9 +122,11 @@ DEFAULTS = (
             sanitizers=("address", "undefined", "fuzzer"),
             instrumentation=LIBFUZZER, link_mode=FUZZER_MAIN,
             required=True, enabled=True),
+    # -O0 and no frame-pointer flag: line-accurate counts matter here, speed
+    # and stack readability do not.
     Variant("coverage", COVERAGE,
             instrumentation=SOURCE_COVERAGE, link_mode=STANDALONE_MAIN,
-            enabled=True),
+            frame_pointer=False, optimization="0", enabled=True),
     # No `fuzzer` sanitizer and no coverage instrumentation: a crash has to
     # reproduce on a binary that carries neither, or the evidence is about the
     # instrumentation rather than the bug (§12 selects this one for replay).
@@ -129,7 +139,7 @@ DEFAULTS = (
             enabled=False),
     Variant("symcc", SYMCC,
             instrumentation=INSTR_SYMCC, link_mode=STANDALONE_MAIN,
-            enabled=False),
+            frame_pointer=False, enabled=False),
 )
 BY_NAME = {v.name: v for v in DEFAULTS}
 NAMES = tuple(v.name for v in DEFAULTS)
@@ -145,9 +155,9 @@ def default(name: str) -> Variant:
 # overrides
 # ---------------------------------------------------------------------------
 
-_BOOL_FIELDS = ("debug_info", "required", "enabled")
+_BOOL_FIELDS = ("debug_info", "frame_pointer", "required", "enabled")
 _STR_FIELDS = {"purpose": PURPOSES, "instrumentation": INSTRUMENTATION,
-               "link_mode": LINK_MODES}
+               "link_mode": LINK_MODES, "optimization": OPT_LEVELS}
 
 
 def apply_override(base: Variant, over: Mapping) -> Variant:

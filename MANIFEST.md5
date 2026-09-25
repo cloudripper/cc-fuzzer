@@ -24,7 +24,7 @@ ef7543a9265d22a9a525009ad626f045  prompts/concolic-executor.md
 12beca31b7e97a2fb486f5906edb927a  prompts/coverage-analyst.md
 8516088cfcd245b74080097d84a4e90f  prompts/crash-triager.md
 9e09958a2665fdf08f6fdbf33d527aa3  prompts/fuzz-orchestrator.md
-a97aea251865b7d2d9036163b233ea1e  prompts/harness-writer.md
+52a02fd3c5dde3013e0ff3c47912f3f4  prompts/harness-writer.md
 1cddf7fcc63fbd174dac378b71afbe07  prompts/mutator.md
 90a2cd8aaa5f156041f97b73efe18738  prompts/planner-consult.md
 c0cf59e4ec94f75cc22a36ed416c3af5  prompts/poc-builder.md
@@ -57,7 +57,7 @@ fd143692dde7ec039a8eaecb7c02673f  scripts/_lib/fuzz-config.sh
 f0ba4408d6f973b954fb309473027b4b  scripts/_lib/yolo_evaluate.py
 79697202839f450736becf6873ba5e0f  scripts/blame-finding.sh
 4f3a8b5052cc8cb4b7e80cc06fd95144  scripts/build-poc-repro.sh
-864224389db58d2099e5a0e506dff87f  scripts/build-symcc-target.sh
+8ebbf958515496c2bf5bed60deadde98  scripts/build-symcc-target.sh
 9f2fc3b7620b270b70b4143cc0173c74  scripts/campaign-header.sh
 8a5f2e941f52b34d5117fa86a9dc46e5  scripts/campaign-init.sh
 6c4bc141f432d09e3f39118ab7c73cb5  scripts/capture-nix-env.sh
@@ -87,7 +87,7 @@ a7ab9088aedd216954d468722f471a4e  scripts/gen-manifest.sh
 6778736e7094b602a0400e22af53d941  scripts/kill-harness-processes.sh
 4380e71a0192823cdd8ab2de1f353219  scripts/launch-fuzzer-slot.sh
 dfbbde7c7c1a99e2f24fe56718427767  scripts/netem-harness.sh
-b7fd81ad0706ffb56b8152b1144b20d1  scripts/nix-build.sh
+18bf2968455477f2b2b06fb469d12089  scripts/nix-build.sh
 8603a1ee4a2c4bf212ab99c616ae2fed  scripts/nix-cleanup.sh
 2903e3e4069f5cfb89bca54d2c1cc8af  scripts/nix-env-reconcile.sh
 30679bfe138eb12dd43ffdf0eabce646  scripts/oracle-smoke-test.sh
@@ -108,7 +108,13 @@ c4d1dff681a96d34f0ac8fccecbc707e  scripts/write-harness-built.sh
 767ab4f0522d6d8e429608cc5cb11717  scripts/yolo-state.sh
 7a0c7c6f7ff94edcf52f367204c63f55  src/cc_fuzzer_core/__init__.py
 81df487b0971d3b41a1613371d67df65  src/cc_fuzzer_core/__main__.py
-fd9f5c2fbde5a378cafaf85a60945106  src/cc_fuzzer_core/cli.py
+3d2391e0857b532e63305ce2a7b90bd1  src/cc_fuzzer_core/builders/__init__.py
+9cdf97f5b1fa3e48755cabf5868ef95e  src/cc_fuzzer_core/builders/clang.py
+9a695b380ea3f7b6d498995c7147a260  src/cc_fuzzer_core/builders/nix.py
+48b5c0243876cf7c1af7724bf4559cb5  src/cc_fuzzer_core/builders/ossfuzz.py
+20ac54ed256dd5041ecfa708b7a51a90  src/cc_fuzzer_core/builders/script.py
+29755102ea8656a225c92eee3d776baa  src/cc_fuzzer_core/builders/toolchain.py
+9b0a824fe16cb91d3ddbf2686090c122  src/cc_fuzzer_core/cli.py
 b749542267f72f8d13d502718b1e6a7c  src/cc_fuzzer_core/cmplog.py
 546441c1cfd7f30452d96f205b7b8fca  src/cc_fuzzer_core/config.py
 82b020ef6ef7e983722bb0485f8d4d89  src/cc_fuzzer_core/coverage.py
@@ -148,7 +154,7 @@ b7a39e9253538f8e96faf5ef2d973b1b  src/cc_fuzzer_core/state/toolbox.py
 8acb8673ee9a410485991685fb295990  src/cc_fuzzer_core/state/yolo_evaluate.py
 705eb14b7954b6469f0f25e05b3d9365  src/cc_fuzzer_core/state/yolo_state.py
 ebe65bef6bb78b6bc6140e533d78c51f  src/cc_fuzzer_core/tools.py
-15b79ae55592b6e299ac531633a33135  src/cc_fuzzer_core/variants.py
+25800174ae035b61788f6b05de4836b2  src/cc_fuzzer_core/variants.py
 a012158cbac7a2b368f75bde83f60060  templates/authorization.json
 82f6e177eb81db38c06752dec5100322  templates/authorization.json.example
 bf357df6f228d472aeb6c36cef77e3fc  templates/fuzz.gitignore
