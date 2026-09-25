@@ -154,7 +154,7 @@ daa8526e9b2e5fbbd2ad4df92b0a9059  src/cc_fuzzer_core/schema/checks.py
 e9acab8ebd3a088f2b7b75d79c5cf1eb  src/cc_fuzzer_core/slots/liveness.py
 761b0d1cf9326ad83f68dbae84257807  src/cc_fuzzer_core/state/__init__.py
 acce6c2b090cf8507636eab3e8e282b2  src/cc_fuzzer_core/state/_common.py
-5aa3c188a71b6f388d15e6070ddeca99  src/cc_fuzzer_core/state/build_current.py
+9d066056c2d0501f4ec0e486edf20579  src/cc_fuzzer_core/state/build_current.py
 50c0450600863a567df65474806ee0a2  src/cc_fuzzer_core/state/ceiling.py
 ad3c4b5882edecf12ee28c92f8124bef  src/cc_fuzzer_core/state/derive_tick.py
 5597175efa4cf65e80a2ec4b7152228d  src/cc_fuzzer_core/state/roundup.py
