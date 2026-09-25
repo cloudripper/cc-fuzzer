@@ -28,6 +28,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 
@@ -41,6 +42,12 @@ STACK_HASH_LEN = 16
 # Frames that go into the stack hash. Enough to tell two bugs apart, few
 # enough that an unrelated caller does not change the hash.
 HASH_FRAMES = 3
+# Frames REPORTED (not hashed): enough for a patch author to see the path in.
+REPORT_FRAMES = 12
+# The sanitizer report handed downstream is bounded: it goes into JSON records
+# and prompts, and the useful part is the head of the report.
+EXCERPT_MAX_LINES = 60
+EXCERPT_MAX_CHARS = 6000
 
 # Every attempt runs with these, so two attempts cannot differ because of the
 # environment they inherited.
@@ -85,6 +92,8 @@ class Replay:
     summary_line: str = ""
     reason: str = ""
     runs: tuple = field(default=())
+    frames: tuple = field(default=())   # up to REPORT_FRAMES, top first
+    excerpt: str = ""                   # the sanitizer report, bounded
 
     @property
     def deterministic(self) -> bool:
@@ -106,6 +115,8 @@ class Replay:
             "summary_line": self.summary_line,
             "reason": self.reason,
             "runs": [r.as_dict() for r in self.runs],
+            "frames": list(self.frames),
+            "excerpt": self.excerpt,
         }
 
 
@@ -123,6 +134,30 @@ def frames(text: str, limit: int = HASH_FRAMES) -> list:
             if len(out) >= limit:
                 break
     return out
+
+
+_REPORT_START = re.compile(
+    r"==\d+==\s*ERROR:|runtime error:|^\s*(?:WARNING|ERROR): \w+Sanitizer|"
+    r"==\d+== ?ERROR: libFuzzer|^SUMMARY:", re.M)
+
+
+def excerpt(text: str, *, max_lines: int = EXCERPT_MAX_LINES,
+            max_chars: int = EXCERPT_MAX_CHARS) -> str:
+    """The sanitizer report out of a run's output: from the first report line
+    through SUMMARY, bounded. Falls back to the tail when there is no report
+    header (a bare abort, a timeout)."""
+    lines = (text or "").splitlines()
+    start = next((i for i, ln in enumerate(lines) if _REPORT_START.search(ln)), None)
+    if start is None:
+        body = lines[-min(len(lines), 20):]
+    else:
+        body = []
+        for ln in lines[start:]:
+            body.append(ln)
+            if ln.startswith("SUMMARY:") and len(body) > 1:
+                break
+    out = "\n".join(body[:max_lines])
+    return out[:max_chars]
 
 
 def stack_hash(text: str, *, category: str = "") -> str:
@@ -191,6 +226,8 @@ def replay(record, reproducer: str, *, harness: str = "", attempts: int = ATTEMP
         category=cl.category if cl else "none",
         top_frame=cl.top_frame if cl else "",
         summary_line=cl.summary_line if cl else "",
+        frames=tuple(frames(out, limit=REPORT_FRAMES)) if cl else (),
+        excerpt=excerpt(out) if cl else "",
         reason=reason if sel.evidence_grade == _v.STRONG else f"{reason}; {sel.reason}",
         runs=tuple(runs),
     )

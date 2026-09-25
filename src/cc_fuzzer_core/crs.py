@@ -62,9 +62,13 @@ class TriageResult:
     reason: str = ""
     pov: str = ""                 # the MINIMIZED reproducer, when there is one
     original_pov: str = ""
+    pov_sha256: str = ""          # what a downstream record keys on
+    original_sha256: str = ""
     stack_hash: str = ""
     category: str = ""
     top_frame: str = ""
+    frames: tuple = ()            # top first, up to replay.REPORT_FRAMES
+    sanitizer_excerpt: str = ""   # the report, bounded (replay.excerpt)
     binary: str = ""
     variant: str = ""
     evidence_grade: str = ""      # after the oracle: see evidence_source
@@ -94,8 +98,12 @@ class TriageResult:
         return {"schema": TRIAGE_SCHEMA, "status": self.status,
                 "submittable": self.submittable, "reason": self.reason,
                 "pov": self.pov, "original_pov": self.original_pov,
+                "pov_sha256": self.pov_sha256,
+                "original_sha256": self.original_sha256,
                 "stack_hash": self.stack_hash, "category": self.category,
-                "top_frame": self.top_frame, "binary": self.binary,
+                "top_frame": self.top_frame, "frames": list(self.frames),
+                "sanitizer_excerpt": self.sanitizer_excerpt,
+                "binary": self.binary,
                 "variant": self.variant, "evidence_grade": self.evidence_grade,
                 "evidence_source": self.evidence_source,
                 "replay_grade": self.replay_grade,
@@ -137,16 +145,21 @@ def triage(record: Mapping, crash: str, *, harness: str = "",
                        timeout=timeout)
     base = {"replay": r.as_dict(), "original_pov": crash,
             "stack_hash": r.stack_hash, "category": r.category,
-            "top_frame": r.top_frame, "binary": r.binary, "variant": r.variant,
+            "top_frame": r.top_frame, "frames": tuple(r.frames),
+            "sanitizer_excerpt": r.excerpt,
+            "original_sha256": _pipeline.sha256_file(crash),
+            "binary": r.binary, "variant": r.variant,
             "evidence_grade": r.evidence_grade, "replay_grade": r.evidence_grade,
             "evidence_source": _verifiers.SOURCE_REPLAY,
             "original_size": Path(crash).stat().st_size if Path(crash).is_file() else 0}
 
     if r.verdict == _replay.NO_CRASH:
-        return TriageResult(NOT_A_CRASH, r.reason, pov=crash, size=base["original_size"], **base)
+        return TriageResult(NOT_A_CRASH, r.reason, pov=crash, size=base["original_size"],
+                            pov_sha256=base["original_sha256"], **base)
     if r.verdict == _replay.FLAKY:
         return TriageResult(FLAKY, r.reason + "; an unreliable trigger is not yet a finding",
-                            pov=crash, size=base["original_size"], **base)
+                            pov=crash, size=base["original_size"],
+                            pov_sha256=base["original_sha256"], **base)
 
     pov, mini = crash, {}
     if do_minimize:
@@ -170,7 +183,7 @@ def triage(record: Mapping, crash: str, *, harness: str = "",
 
     size = Path(pov).stat().st_size if Path(pov).is_file() else base["original_size"]
     common = {**base, "pov": pov, "size": size, "minimized": mini,
-              "verdict_step": v.step}
+              "verdict_step": v.step, "pov_sha256": _pipeline.sha256_file(pov)}
     if v.status != _verifiers.CONFIRMED:
         status = REJECTED if v.status == _verifiers.REJECTED else INCONCLUSIVE
         return TriageResult(status, v.reason, **common)

@@ -81,6 +81,12 @@ nothing, and a `strong` replay is never downgraded. `poc-realism` cannot be
 declared authoritative: it checks an agent's work, it is not an oracle. The
 finding marker records `evidence_source` too, so the upgrade is auditable.
 
+For a downstream consumer (a patcher in another container) the result also
+carries `pov_sha256` and `original_sha256` to key records on, `frames` (top
+first, up to 12) and `sanitizer_excerpt` (the report from its header through
+`SUMMARY:`, bounded to 60 lines / 6000 chars), so nothing has to be re-run to
+describe the bug.
+
 Three distinctions the adapter refuses to collapse, because each leads
 somewhere different:
 

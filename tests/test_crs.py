@@ -198,6 +198,27 @@ class TriageTest(unittest.TestCase):
         from cc_fuzzer_core.crash import pipeline
         self.assertTrue(pipeline.verified(r.directory))
 
+    def test_the_result_carries_what_a_downstream_record_needs(self):
+        """A patcher in another container keys the evidence record on the PoV's
+        sha256 and reads the report, without re-running anything."""
+        import hashlib
+        r = crs.triage(self.record, str(self.crash), harness="parser",
+                       config=self._oracle())
+        self.assertEqual(r.pov_sha256, hashlib.sha256(b"BOOM").hexdigest())
+        self.assertEqual(r.original_sha256,
+                         hashlib.sha256(self.crash.read_bytes()).hexdigest())
+        self.assertEqual(r.frames[0], r.top_frame)
+        self.assertTrue(r.sanitizer_excerpt.startswith("==1==ERROR: AddressSanitizer"))
+        self.assertIn("SUMMARY:", r.sanitizer_excerpt)
+        d = r.as_dict()
+        for k in ("pov_sha256", "original_sha256", "frames", "sanitizer_excerpt"):
+            self.assertIn(k, d)
+
+    def test_an_unminimized_pov_has_its_own_sha(self):
+        r = crs.triage(self.record, str(self.crash), harness="parser",
+                       config=self._oracle(), do_minimize=False)
+        self.assertEqual(r.pov_sha256, r.original_sha256)
+
     def test_the_result_serialises(self):
         d = crs.triage(self.record, str(self.crash), harness="parser",
                        config=self._oracle()).as_dict()
@@ -255,6 +276,30 @@ class PatchSeamTest(unittest.TestCase):
                                 stack_hash=t.stack_hash)
             self.assertEqual(v.status, patch.FIXES, v.reason)
             self.assertTrue(v.validated)
+
+
+class ExcerptTest(unittest.TestCase):
+    def test_the_report_is_cut_from_its_header_through_summary(self):
+        from cc_fuzzer_core.crash import replay
+        text = ("INFO: Running with entropic power schedule\nnoise\n"
+                "==7==ERROR: AddressSanitizer: heap-buffer-overflow\n"
+                "    #0 0x1 in f /a.c:1\n"
+                "SUMMARY: AddressSanitizer: heap-buffer-overflow /a.c:1 in f\n"
+                "MS: 1 ChangeByte-; base unit: 0\n")
+        e = replay.excerpt(text)
+        self.assertTrue(e.startswith("==7==ERROR"))
+        self.assertTrue(e.endswith("in f"))
+
+    def test_it_is_bounded(self):
+        from cc_fuzzer_core.crash import replay
+        text = "==1==ERROR: x\n" + "    #9 0x1 in g /b.c:2\n" * 5000
+        e = replay.excerpt(text)
+        self.assertLessEqual(len(e.splitlines()), replay.EXCERPT_MAX_LINES)
+        self.assertLessEqual(len(e), replay.EXCERPT_MAX_CHARS)
+
+    def test_no_header_falls_back_to_the_tail(self):
+        from cc_fuzzer_core.crash import replay
+        self.assertEqual(replay.excerpt("a\nb\nTIMEOUT after 5s"), "a\nb\nTIMEOUT after 5s")
 
 
 class AuthoritativeTest(unittest.TestCase):
