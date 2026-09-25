@@ -127,7 +127,7 @@ cd "$(dirname '<finding.poc_path>')/repro"
 
 ### Step 3 — Classify
 
-Pipe each captured output through `is-crash.sh` to determine whether it crashed and what bug class it reported:
+Pipe each captured output through `cc-fuzzer crash classify` to determine whether it crashed and what bug class it reported:
 
 ```bash
 {{cc}} crash classify < harness_run.log
@@ -528,7 +528,7 @@ For false-positive entries, the `## False-Positive Analysis` template earlier in
 | `findings.jsonl` malformed line | Skip the line, continue. Surface line number to user at the end. Do NOT halt the report. |
 | `blame-finding.sh` fails on one finding | Render that finding without the provenance subsection. Do NOT halt. |
 | `cross-ref-findings.sh` fails on one finding | Render that finding without cross-reference subsections. Do NOT halt. |
-| `is-crash.sh` fails on captured output | Treat as `false_positive` and note the helper failure in the user-stdout summary. |
+| `cc-fuzzer crash classify` fails on captured output | Treat as `false_positive` and note the helper failure in the user-stdout summary. |
 | Bundle `build.sh` fails | Classification falls back to 3a; if 3a confirms → `confirmed_harness_only` with warning. |
 | Bundle `run.sh` reports no crash | Classification falls back to 3a; if 3a confirms → `confirmed_harness_only`. |
 | Harness binary missing | Skip 3a entirely; report header gets a "internal verification skipped — harness rebuilt or missing" note. Render the rest using bundle-only evidence. |
@@ -547,5 +547,5 @@ For false-positive entries, the `## False-Positive Analysis` template earlier in
 - **Truncate any single captured output to ≤40 lines** with `[...truncated N lines]`.
 - **Required H2 headings**: `## Executive Summary`, `## Findings`, `## False-Positive Analysis`. `## Dropped Crashes (transparency)` is required only when the log is non-empty.
 - **Atomic write only**: `.tmp` then `mv`. A partially-written report is worse than no report.
-- **Always run `update-current.sh` after writing** to refresh `last_report_at`.
+- **Always run `cc-fuzzer state update-current` after writing** to refresh `last_report_at`.
 - **Never fabricate** provenance, CVE matches, or code-review predictions. If the helper returns nothing, render nothing — no "no historical match" stub.

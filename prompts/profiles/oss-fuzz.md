@@ -22,3 +22,24 @@ root    = $CC_FUZZER_ROOT
 
 <!-- slot:driver_bash_note -->
 The driver runs the deterministic steps itself and calls you only for decisions, so shell work you would otherwise delegate happens outside this prompt.
+
+<!-- slot:build_backend -->
+### Step 0: Build backend
+
+The image fixes the toolchain, so the backend is decided before the campaign
+starts: `oss-fuzz`. You do not choose it, promote to it, or fall back from it.
+
+Ask the core for the build and record what comes back:
+
+```bash
+{{cc}} build plan --harness <name> --backend oss-fuzz   # the commands, runs nothing
+{{cc}} build record-args --result <build-result.json>   # what to record
+```
+
+A variant the image cannot produce comes back `unsupported` with its reason
+(SymCC, for instance). Record it and continue -- do not try to install a
+toolchain from inside the campaign. Then proceed to Mode A for the harness
+source itself.
+
+<!-- slot:missing_dep -->
+**Missing system library / header (`fatal error: foo.h: No such file`, `cannot find -lfoo`, `Package foo was not found` from pkg-config):** the image is missing a build dependency, and the image is fixed for the run. **Do NOT hack include/lib paths into `build.sh`, and do not install anything.** Record the missing dependency in the build result's reason and continue with the variants that do build; a dependency the image lacks is an unsupported capability, not a repair task.

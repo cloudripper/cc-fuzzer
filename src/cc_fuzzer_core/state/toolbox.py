@@ -45,7 +45,28 @@ COST_TIER = {
     "slot_engine":          models.TIER_NONE,
     "cve_refresh":          models.STANDARD,
     "code_review":          models.STANDARD,
+    "query":                models.STANDARD,
 }
+
+
+def _query_state(state_dir, config):
+    """(budget spent?, evidence) for the §5 query lever."""
+    try:
+        from cc_fuzzer_core import query as _query
+        from cc_fuzzer_core.paths import Campaign
+        import os as _os
+        c = Campaign(_os.path.dirname(_os.path.abspath(str(state_dir))),
+                     _os.path.dirname(_os.path.abspath(str(state_dir))), str(state_dir))
+        spent = _query.spent(c, config)
+        if not spent["enabled"]:
+            return True, "query disabled in fuzz-config.json"
+        if spent["remaining"] <= 0:
+            return True, (f"query budget spent ({spent['dispatches']}/"
+                          f"{spent['max_dispatches_per_campaign']} dispatches)")
+        return False, (f"{spent['remaining']} query dispatch(es) left, "
+                       f"{spent['queries']} run so far")
+    except Exception:
+        return True, "query budget unavailable"
 
 
 def lever_tier(lever, mm):
@@ -74,6 +95,7 @@ LEVER_AGENT = {
     "poc_build":            "poc-builder",
     "poc_upgrade":          "poc-builder",
     "plan_revise":          "campaign-planner",
+    "query":                "query-analyst",
 }
 
 # recommendation.branch / recorded tick branch -> lever family (for tunnel
@@ -109,7 +131,8 @@ SUGGEST_PRIORITY = [
     "harness_rewrite", "harness_new", "mock_env", "engine_swap",
     "impact_review",
     "harness_extend", "coverage_reanalysis", "concolic", "seedgen", "mutator",
-    "cve_refresh", "code_review", "plan_revise", "dictionary", "slot_engine",
+    "cve_refresh", "code_review", "query", "plan_revise", "dictionary",
+    "slot_engine",
 ]
 _PRIORITY_INDEX = {lever: i for i, lever in enumerate(SUGGEST_PRIORITY)}
 
@@ -355,6 +378,12 @@ def compute(state_dir, snaps_dir, cfg, doc, events, findings,
     else:
         _ev = None
     add("impact_review", impact_eligible, _ev or "")
+
+    # §5: a fresh question about the code, when the coverage has stopped
+    # answering. Goes quiet once its own budget is spent -- the lever should
+    # stop being offered rather than be offered and then refused.
+    _q_spent, _q_note = _query_state(state_dir, full_cfg)
+    add("query", not _q_spent, _q_note)
 
     add("cve_refresh", cve_enabled and (not cve_latest or (now - cve_ts) > cve_ttl_days * 86400),
         "no CVE intel" if not cve_latest else f"CVE intel {int((now - cve_ts) / 86400)}d old (ttl {cve_ttl_days}d)")

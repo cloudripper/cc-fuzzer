@@ -334,7 +334,7 @@ The single file the orchestrator reads on warm ticks. Schema is **`cc-fuzzer-cur
 }
 ```
 
-**`recommendation.branch` allowed values** (mirror of `enums.py` `REC_BRANCHES`): `sleep | restart_fuzzer | fix_instrumentation | triage | analyze_gaps | reanalyze_gaps | generate_seeds | concolic | mutator | stop`.
+**`recommendation.branch` allowed values** (mirror of `enums.py` `REC_BRANCHES`): `sleep | restart_fuzzer | fix_instrumentation | triage | analyze_gaps | reanalyze_gaps | generate_seeds | concolic | mutator | query | stop`.
 
 **Optional fields**: `last_report_at` (integer unix timestamp, set by reporting-agent after writing `FINDINGS-REPORT-<target>.md`).
 
@@ -910,7 +910,7 @@ Produced by `coverage-analyst`. Shape:
 
 **Required gap fields**: id, file, function, line_range, reason, hint, recommended_agent.
 **Optional gap fields**: `harness_action`, `proposed_entry`, `mock_target` (additive; see below).
-**Allowed `reason` values**: `harness_gap | format_barrier | state_precondition | value_constraint | direct_compare | checksum_barrier | deep_path_condition | delta_target | cve_hotspot | code_review_target | dead`.
+**Allowed `reason` values** (mirror of `enums.py` `GAP_REASONS`): `harness_gap | format_barrier | state_precondition | value_constraint | direct_compare | checksum_barrier | deep_path_condition | delta_target | cve_hotspot | code_review_target | dead`.
 **Allowed `recommended_agent` values**: `harness-writer | seed-generator | mutator | concolic-executor | none`.
 
 **`harness_action`** (optional, on `harness_gap` / `state_precondition` gaps) names *which* harness reshape reaches the gap, so the orchestrator's plateau-breaking levers dispatch the right structural move instead of a blind "extend": `extend` (grow the current body-walk) | `entry_swap` (rebuild against a different entry — set `proposed_entry`) | `new_harness` (a brand-new harness — set `proposed_entry`) | `mock` / `driver` (mock an external dependency — set `mock_target`) | `engine_swap` (the gap mix favours AFL++/Redqueen over libFuzzer). These flow into the ceiling-probe's `structural_candidates`. **Discipline**: a function unreachable by the *current* harness but reachable via a reshape is `harness_gap` + `harness_action`, **never** `dead` — `dead` means unreachable by ANY harness design (a true cleanup stub). Mis-tagging reshape-reachable surface as `dead` is what makes a `self_loop` campaign park prematurely.

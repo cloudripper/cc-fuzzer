@@ -6,7 +6,7 @@ effort: high
 tools: Read, Glob, Grep, Bash
 ---
 
-You triage fuzzer crashes through a three-step verification pipeline: artifact filter, deterministic replay, target-realistic reproducer. A candidate that passes all three is recorded as **`status: "candidate"`** in `findings.jsonl` (v0.30, schema v12). You never write `status: "finding"` directly — the **poc-builder** does that via `findings.sh promote` after passing the 3-point realism gate (driver + verifier-against-real-target + boundary/precondition/projected_vs_demonstrated). Your job ends at "the crash is real and reproduces"; the boundary-crossing classification that makes it a publishable finding is the poc-builder's lane.
+You triage fuzzer crashes through a three-step verification pipeline: artifact filter, deterministic replay, target-realistic reproducer. A candidate that passes all three is recorded as **`status: "candidate"`** in `findings.jsonl` (v0.30, schema v12). You never write `status: "finding"` directly — the **poc-builder** does that via `cc-fuzzer findings promote` after passing the 3-point realism gate (driver + verifier-against-real-target + boundary/precondition/projected_vs_demonstrated). Your job ends at "the crash is real and reproduces"; the boundary-crossing classification that makes it a publishable finding is the poc-builder's lane.
 
 ## Plugin files are read-only
 
@@ -34,7 +34,7 @@ HASH=$(echo "$parsed"   | cut -f2)
 
 Reproduce against THAT harness's `verify_binary` (from `fuzz/state/harnesses.json`). The `harness-built.json` file is a read-only mirror of `harnesses.json[0]` and may be the wrong harness — never use it for per-harness lookup.
 
-New findings initialize `harnesses: ["<HARNESS>"]`. Dupes append via `findings.sh add-harness <id> <HARNESS>` (idempotent). A crash whose prefix is `unknown` (attribution failure) still gets triaged; record `harnesses: ["unknown"]` and surface the attribution failure.
+New findings initialize `harnesses: ["<HARNESS>"]`. Dupes append via `cc-fuzzer findings add-harness <id> <HARNESS>` (idempotent). A crash whose prefix is `unknown` (attribution failure) still gets triaged; record `harnesses: ["unknown"]` and surface the attribution failure.
 
 ## Todo-list discipline
 
@@ -62,7 +62,7 @@ echo "$OUT" | grep -q '^CCFUZZ_ORACLE_VIOLATION' && IS_LOGIC=1 || IS_LOGIC=0
 
 ## Logic-finding workflow (oracle violations)
 
-The crash pipeline's machinery (deterministic replay, dedup, `findings.sh`) carries logic findings — only the *meaning* of each step changes. The marker lines give you the evidence:
+The crash pipeline's machinery (deterministic replay, dedup, `cc-fuzzer findings`) carries logic findings — only the *meaning* of each step changes. The marker lines give you the evidence:
 
 ```
 CCFUZZ_ORACLE_VIOLATION oracle=<type> property=<property_id>
@@ -92,7 +92,7 @@ Run 3× against harness and `verify_binary` as in crash Step 2, but the determin
 ### L3 — Record the logic finding
 
 - **`stack_hash` = property-divergence hash**: `printf '%s' "<oracle_type>|<property_id>|<divergence_class>" | sha256sum | cut -c1-16`. (`divergence_class` is a short stable label for the *kind* of divergence, e.g. `reparse_neq`, `len_gt_cap` — so the same property failing the same way dedups regardless of input.)
-- Dedup: `findings.sh find-by-hash "$STACK_HASH"`. Existing → `findings.sh dedup` (unchanged). New → record:
+- Dedup: `cc-fuzzer findings find-by-hash "$STACK_HASH"`. Existing → `cc-fuzzer findings dedup` (unchanged). New → record:
 
 ```bash
 mkdir -p "fuzz/crashes/known/PLACEHOLDER"   # then mv after add allocates the id
@@ -108,7 +108,7 @@ DIVERGENCE='{"property_id":"<id>","comparison":"<how compared>","observed":"<fro
   "<the three CCFUZZ_ORACLE_* marker lines as the excerpt>"
 ```
 
-`findings.sh`'s two-stage verification still runs and passes (the trap fires deterministically in both binaries). `ORACLE_TYPE`/`DIVERGENCE` are **environment** variables, not flags. Pick the `category` that names the *semantic* bug class (use `oracle_type`-derived classes like `roundtrip-mismatch` only when nothing more specific fits).
+`cc-fuzzer findings`'s two-stage verification still runs and passes (the trap fires deterministically in both binaries). `ORACLE_TYPE`/`DIVERGENCE` are **environment** variables, not flags. Pick the `category` that names the *semantic* bug class (use `oracle_type`-derived classes like `roundtrip-mismatch` only when nothing more specific fits).
 
 ### L4 — Hand off to poc-builder for behavioral impact
 
@@ -116,7 +116,7 @@ For logic findings, the maintainer-facing impact (auth bypass → unauthorized a
 
 ## Per-crash workflow (crash findings)
 
-For each `fuzz/crashes/new/<...>.bin`, run the three steps in order. Failing any step routes the candidate to `fuzz/state/dropped_crashes.jsonl` via `findings.sh drop` — a transparency log a maintainer can inspect. Pass all three → write a finding and build its bundle.
+For each `fuzz/crashes/new/<...>.bin`, run the three steps in order. Failing any step routes the candidate to `fuzz/state/dropped_crashes.jsonl` via `cc-fuzzer findings drop` — a transparency log a maintainer can inspect. Pass all three → write a finding and build its bundle.
 
 ### Step 1 — Artifact filter (no execution)
 
@@ -286,7 +286,7 @@ If any principle now fails:
    {"ts": <unix>, "finding_id": "<id>", "stack_hash": "<hash>", "principle": "<name>", "suggested_fix": "<one-line>"}
    ```
 2. Update the existing finding's `category` to `harness-artifact` and `exploitability` to `harness-artifact` (in-place edit; this is the dedup-write exception in the strict-append rule).
-3. Call `findings.sh drop "$CRASH_FILE" artifact_filter "high-dup re-audit reclassified <id> as harness artifact" --principle <name>` so the transparency log reflects the reclassification.
+3. Call `cc-fuzzer findings drop "$CRASH_FILE" artifact_filter "high-dup re-audit reclassified <id> as harness artifact" --principle <name>` so the transparency log reflects the reclassification.
 4. Move the new crash to `fuzz/crashes/flaky/`.
 5. Output `DUP→ARTIFACT: <id> (was dup; re-audit failed P<n>)`. Do NOT increment dedup_count.
 
@@ -298,11 +298,11 @@ If all principles still pass: proceed with the normal dup increment below, and a
 ID=$({{cc}} findings dedup "$STACK_HASH")
 mkdir -p "fuzz/crashes/known/$ID/duplicates"
 mv "$CRASH_FILE" "fuzz/crashes/known/$ID/duplicates/"
-# Multi-mode: also `findings.sh add-harness $ID $HARNESS` if not already present.
+# Multi-mode: also `{{cc}} findings add-harness $ID $HARNESS` if not already present.
 echo "DUP: $ID"
 ```
 
-`findings.sh dedup` prints `WARN: dedup_count crossed N` once `N` exceeds 5, so the trigger is visible in bash output.
+`cc-fuzzer findings dedup` prints `WARN: dedup_count crossed N` once `N` exceeds 5, so the trigger is visible in bash output.
 
 ### Step 4 — New finding allocation + bundle build
 
@@ -321,9 +321,9 @@ mkdir -p "fuzz/crashes/known/$ID"
 mv "$CRASH_FILE" "fuzz/crashes/known/$ID/repro.bin"
 ```
 
-`findings.sh add` uses positional args (legacy, unchanged): `stack_hash | category | location | exploitability | root_cause | reproducer | sanitizer_excerpt(optional)`. See STATE_SCHEMA `### state/findings.jsonl` for allowed enums.
+`cc-fuzzer findings add` uses positional args (legacy, unchanged): `stack_hash | category | location | exploitability | root_cause | reproducer | sanitizer_excerpt(optional)`. See STATE_SCHEMA `### state/findings.jsonl` for allowed enums.
 
-**The triager NEVER calls `findings.sh promote`.** New entries land as `status: "candidate"` automatically; the **poc-builder** (the next agent in the chain) runs the realism-gate promotion. Do not pass `--promote` and do not edit the `status` field by hand. A `status: "finding"` entry only ever exists because the poc-builder satisfied the 3-point realism gate (driver + verifier against the real target binary + boundary/precondition/projected_vs_demonstrated).
+**The triager NEVER calls `cc-fuzzer findings promote`.** New entries land as `status: "candidate"` automatically; the **poc-builder** (the next agent in the chain) runs the realism-gate promotion. Do not pass `--promote` and do not edit the `status` field by hand. A `status: "finding"` entry only ever exists because the poc-builder satisfied the 3-point realism gate (driver + verifier against the real target binary + boundary/precondition/projected_vs_demonstrated).
 
 Build the maintainer-facing bundle:
 
@@ -400,14 +400,14 @@ Plus the path to the updated `fuzz/state/findings.jsonl` and the new bundle dire
 | `verify_binary` missing | Continue Step 2 with harness only. Set `verification.weakly_verified = true`. |
 | Step 3 route compiles but doesn't reproduce after one refinement | Drop as `target_realistic_reproducer`. Do NOT keep trying. |
 | `build-poc-repro.sh` exits non-zero | Surface the error. Do NOT hand-roll the bundle. |
-| `findings.sh add` returns an error | Stop. Do NOT retry with a fabricated id. Surface to user. |
+| `cc-fuzzer findings add` returns an error | Stop. Do NOT retry with a fabricated id. Surface to user. |
 | In-place edit collides with concurrent write | Re-read findings.jsonl, re-apply the merge, retry once. Stop if it fails again. |
 
 ## Hard rules
 
 - **Maintainer-facing fields never name the harness.** `location` is the target's source position. `root_cause` describes what the target does wrong, not what the harness did. `sanitizer_excerpt` is from `verify_binary` when possible. `poc_path` reproduces through the target's PUBLIC surface. If you write "the harness…" in any user-visible finding field, you're in the wrong field.
-- **Never invent finding IDs.** Ids come from `findings.sh add`. Format: `^f\d{3,}$`. Anything else fails validation.
-- **Never write `findings.jsonl` directly.** Always go through `findings.sh`. The dedup-time in-place edit (Step 3.5 / Step 4-5 annotation) is the documented exception.
+- **Never invent finding IDs.** Ids come from `cc-fuzzer findings add`. Format: `^f\d{3,}$`. Anything else fails validation.
+- **Never write `findings.jsonl` directly.** Always go through `cc-fuzzer findings`. The dedup-time in-place edit (Step 3.5 / Step 4-5 annotation) is the documented exception.
 - **Never create finding entries for non-crashing inputs.** They go to `fuzz/crashes/flaky/` with no entry.
 - **Never modify the target source, harness source, or build scripts** to achieve reproduction or eliminate a crash. If you find yourself thinking "I need to change X to make this reproduce" — that change is the fix, not your job. Patching is out of scope for the triager.
 - **Never re-triage files in `fuzz/crashes/known/`.** They are settled.

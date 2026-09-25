@@ -9,7 +9,7 @@
 # plugin releases (the submodule tracks upstream; the bundled pack may be
 # refreshed out of band), so drift there is expected and must not trip the
 # integrity check. The SAST driver (src/cc_fuzzer_core/prescan/sast_scan.py) IS tracked.
-beb5b3a20a17bf5884caaa409eddea88  STATE_SCHEMA.md
+a1682a9f7c157c0eaa36e5e7f44cb246  STATE_SCHEMA.md
 8fae3fd33e21efd25b36a89856d5e076  bin/cc-fuzzer
 6b4787d332f9fc179dfa1823ec79050d  dictionaries/INDEX.md
 070c1e76492ecaf0bf37c051628df96c  dictionaries/bidi-controls.dict
@@ -17,23 +17,24 @@ beb5b3a20a17bf5884caaa409eddea88  STATE_SCHEMA.md
 00a6abc922d9230cf580176ced46fca1  dictionaries/path-traversal.dict
 f005f9208f4c14d47c2553566dd979f3  dictionaries/unicode-variation-selectors.dict
 d6e48134299bc68341ef7fbe64f7afd4  dictionaries/utf-edge-cases.dict
-2c20975e381845e2b0cd174384223841  prompts/campaign-planner.md
-fe8a281c6be4d0ee4947dbea37dde1ad  prompts/code-reviewer-deep.md
+2406209694c0ae472ee4c29c51fd56fd  prompts/campaign-planner.md
+7778481807946c3c40c5fb6b76e1179f  prompts/code-reviewer-deep.md
 5168e13af558ffa7c7be666f1e9adc65  prompts/code-reviewer.md
-ef7543a9265d22a9a525009ad626f045  prompts/concolic-executor.md
-12beca31b7e97a2fb486f5906edb927a  prompts/coverage-analyst.md
-8516088cfcd245b74080097d84a4e90f  prompts/crash-triager.md
-9e09958a2665fdf08f6fdbf33d527aa3  prompts/fuzz-orchestrator.md
-4df5c7271585908515afed60f97eb803  prompts/harness-writer.md
-1cddf7fcc63fbd174dac378b71afbe07  prompts/mutator.md
+2131afacd893799b08c7b09a41161551  prompts/concolic-executor.md
+db5ba57f70da80b061df7a79d8ed1890  prompts/coverage-analyst.md
+5b5c08cb9631e1e489615069f953e40e  prompts/crash-triager.md
+ca31450cd8ba61227847f707d009e22a  prompts/fuzz-orchestrator.md
+18286dda29198877049e714846a7446a  prompts/harness-writer.md
+b7641aafb23fb9c721c58df293c22161  prompts/mutator.md
 90a2cd8aaa5f156041f97b73efe18738  prompts/planner-consult.md
-c0cf59e4ec94f75cc22a36ed416c3af5  prompts/poc-builder.md
-e16960e16238671e6813f60dc60dc48d  prompts/profiles/host.md
-792617b0a6cb746e2293b43b8951911a  prompts/profiles/nix.md
-0eb355a19b368690fa28e6093a68c38d  prompts/profiles/oss-fuzz.md
+22874d2ee186965aadde52b8f52d44fe  prompts/poc-builder.md
+7632a968115f9148ee94fa44f1a2429d  prompts/profiles/host.md
+e981eccd7c38abf685b22adab42b6a99  prompts/profiles/nix.md
+1b200f4d0ce8426151d1a69f16a2785b  prompts/profiles/oss-fuzz.md
+1df23406f1e8e69a37ea9a60385d2656  prompts/query-analyst.md
 cd53b2ea1de4ffc5de235597321de597  prompts/render.json
-d71b8ed507b5ce77261907808db25d54  prompts/reporting-agent.md
-fc52cdc9b4466f9a0b20df91ac8035db  prompts/seed-generator.md
+543df4d079252a4c22a3da6cec523e96  prompts/reporting-agent.md
+b71f30bad72506315ae1ade16eae68c9  prompts/seed-generator.md
 8386755db622b6af472d340df7b9694c  references/logic-oracle-patterns.md
 b99712ee3981a324df6427e2054be27f  references/nix-monolithic.md
 f7398068a97e6a4ee7edb221e3555f52  references/threat-model.md
@@ -62,7 +63,7 @@ f0ba4408d6f973b954fb309473027b4b  scripts/_lib/yolo_evaluate.py
 8a5f2e941f52b34d5117fa86a9dc46e5  scripts/campaign-init.sh
 6c4bc141f432d09e3f39118ab7c73cb5  scripts/capture-nix-env.sh
 97fd627fa9a9a6842c390e8ab5bdf8ec  scripts/ceiling-probe.sh
-66ed7f387b20dc65953b04d7732b0dea  scripts/check-campaign-state.sh
+c3b3a0a535596471fb200b87e299872f  scripts/check-campaign-state.sh
 ba386e699599dafea99922fd85dcc963  scripts/check-seed-safety.sh
 16f0165c3c8151cf77f66f410757b64d  scripts/check-slot-liveness.sh
 42050901a7445fc4e1f95851934935f8  scripts/code-review-run.sh
@@ -114,7 +115,7 @@ fe3b8d694186b83378094e38a6b18f61  src/cc_fuzzer_core/builders/__init__.py
 48b5c0243876cf7c1af7724bf4559cb5  src/cc_fuzzer_core/builders/ossfuzz.py
 20ac54ed256dd5041ecfa708b7a51a90  src/cc_fuzzer_core/builders/script.py
 e9f82154f2827218549d284fe6a331dc  src/cc_fuzzer_core/builders/toolchain.py
-6f1a3a58e007f93c361ab75a4c8950bf  src/cc_fuzzer_core/cli.py
+147f77697a5cfccd415d66e356775434  src/cc_fuzzer_core/cli.py
 b749542267f72f8d13d502718b1e6a7c  src/cc_fuzzer_core/cmplog.py
 546441c1cfd7f30452d96f205b7b8fca  src/cc_fuzzer_core/config.py
 82b020ef6ef7e983722bb0485f8d4d89  src/cc_fuzzer_core/coverage.py
@@ -126,14 +127,15 @@ edd2ef13c1a14be5d257860ed72a34e8  src/cc_fuzzer_core/crash/classify.py
 b4a327b96ea7e0f3f3786d50b1a3fc53  src/cc_fuzzer_core/crash/verifiers/__init__.py
 801c359f838b2557782307b3b64c8cad  src/cc_fuzzer_core/crash/verifiers/command.py
 f1774217b1b8c3afd3e5b8f7ced2b6eb  src/cc_fuzzer_core/crash/verifiers/realism.py
-126ddcd5c81cf200d43f5b54d3c7bebf  src/cc_fuzzer_core/data/models.json
+5a7be1f37b34d774d4ea9f5664051169  src/cc_fuzzer_core/data/models.json
 96647041941d2e3a73c59f26581a607b  src/cc_fuzzer_core/delta.py
-488745cb58490161b0b7802d6d66ce12  src/cc_fuzzer_core/enums.py
+8fabcb44c591fee602b0f0c33c9d618a  src/cc_fuzzer_core/enums.py
 5fcdb1075b43c3a193d755781fdd3939  src/cc_fuzzer_core/events.py
 ff05da461b38bef049093e0f855d4b2f  src/cc_fuzzer_core/features.py
 8f2ff2acc2c0f513237aeaf2452ed073  src/cc_fuzzer_core/findings.py
 2494348832f18c182e0c50d716cfa266  src/cc_fuzzer_core/gate.py
 24e0b9f93714c4b5fa5fe11393b08d06  src/cc_fuzzer_core/ledger.py
+445f232e9b42748712bbb56a30a747f6  src/cc_fuzzer_core/loop.py
 bb55e017ba8a659b9c8eccc1b73bec33  src/cc_fuzzer_core/manifest.py
 2c385e54cedae3970219c9de7d2d16b3  src/cc_fuzzer_core/models.py
 e886a95f3444ff5e6fcce0985a0ef253  src/cc_fuzzer_core/paths.py
@@ -143,6 +145,7 @@ a1359881b6f12e7f34457f4ecaf39d4a  src/cc_fuzzer_core/prescan/merge.py
 fdbe9c652691f3fc1132df68d060d907  src/cc_fuzzer_core/prescan/sast_scan.py
 c1888e45a51159c8e090d74186ad92f7  src/cc_fuzzer_core/prompts.py
 268b2e2e7bc6a92f432fe588a3bb6131  src/cc_fuzzer_core/quarantine.py
+43d287e54de0190bf273c264ac8e1a27  src/cc_fuzzer_core/query.py
 4d6d423c89ad954f275dd88a937b64fb  src/cc_fuzzer_core/schema/__init__.py
 daa8526e9b2e5fbbd2ad4df92b0a9059  src/cc_fuzzer_core/schema/checks.py
 493a3af932dc69de2ea0b39001a54e6b  src/cc_fuzzer_core/schema/fields.py
@@ -152,11 +155,11 @@ daa8526e9b2e5fbbd2ad4df92b0a9059  src/cc_fuzzer_core/schema/checks.py
 e9acab8ebd3a088f2b7b75d79c5cf1eb  src/cc_fuzzer_core/slots/liveness.py
 761b0d1cf9326ad83f68dbae84257807  src/cc_fuzzer_core/state/__init__.py
 acce6c2b090cf8507636eab3e8e282b2  src/cc_fuzzer_core/state/_common.py
-5aa3c188a71b6f388d15e6070ddeca99  src/cc_fuzzer_core/state/build_current.py
+9d066056c2d0501f4ec0e486edf20579  src/cc_fuzzer_core/state/build_current.py
 50c0450600863a567df65474806ee0a2  src/cc_fuzzer_core/state/ceiling.py
 ad3c4b5882edecf12ee28c92f8124bef  src/cc_fuzzer_core/state/derive_tick.py
 5597175efa4cf65e80a2ec4b7152228d  src/cc_fuzzer_core/state/roundup.py
-b7a39e9253538f8e96faf5ef2d973b1b  src/cc_fuzzer_core/state/toolbox.py
+2d73811f7cb097926e06c719f29e9262  src/cc_fuzzer_core/state/toolbox.py
 8acb8673ee9a410485991685fb295990  src/cc_fuzzer_core/state/yolo_evaluate.py
 705eb14b7954b6469f0f25e05b3d9365  src/cc_fuzzer_core/state/yolo_state.py
 ebe65bef6bb78b6bc6140e533d78c51f  src/cc_fuzzer_core/tools.py

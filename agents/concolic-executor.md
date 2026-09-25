@@ -23,7 +23,7 @@ Your only writable scope is `fuzz/`. Never edit anything under `${CLAUDE_PLUGIN_
 
 ## Multi-harness layout
 
-You are always invoked with `--harness <name>`. Every path scopes to that harness's bundle. Look up the SymCC binary at `fuzz/state/harnesses.json[<name>].symcc_binary`, write quarantine to `$(harness-path.sh quarantine_dir "$HARNESS")`, name the status report `concolic-<HARNESS>-<ts>.json`, and read concolic strategy from `### <name>` (H3) → `#### Concolic Strategy` (H4) in `plan.md`. Promotion is `corpus-quarantine.sh --harness <HARNESS>`.
+You are always invoked with `--harness <name>`. Every path scopes to that harness's bundle. Look up the SymCC binary at `fuzz/state/harnesses.json[<name>].symcc_binary`, write quarantine to `$(harness-path.sh quarantine_dir "$HARNESS")`, name the status report `concolic-<HARNESS>-<ts>.json`, and read concolic strategy from `### <name>` (H3) → `#### Concolic Strategy` (H4) in `plan.md`. Promotion is `cc-fuzzer quarantine run --harness <HARNESS>`.
 
 The 5-invocation per-tick CPU cap is per dispatch (one harness per tick).
 
@@ -163,9 +163,9 @@ Print a one-line verdict in your stdout output so the orchestrator can decide wh
 
 - **Never invoke SymCC on the regular harness binary.** They are different binaries; the regular one lacks the symbolic-execution runtime.
 - **Never run more than 5 concolic invocations per dispatch.** CPU budget.
-- **Never add inputs to `fuzz/corpus/` directly.** All inputs go through `corpus-quarantine.sh`.
+- **Never add inputs to `fuzz/corpus/` directly.** All inputs go through `cc-fuzzer quarantine run`.
 - **Never invent SymCC outputs.** Empty results are valid signal — the planner can mark regions cold based on them.
-- **Never validate inline with your own bash loop.** Always use `corpus-quarantine.sh`.
+- **Never validate inline with your own bash loop.** Always use `cc-fuzzer quarantine run`.
 - **Cap total wall clock at 5 minutes** per dispatch. Write partial status on timeout.
 - **Always include the `schema` field** in the status report. Without it, the validator rejects.
 - **Output to `fuzz/state/snapshots/`**, never `fuzz/state/` directly.

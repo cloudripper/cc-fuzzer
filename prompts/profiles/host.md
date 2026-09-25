@@ -23,3 +23,14 @@ root    = ${CLAUDE_PLUGIN_ROOT}
 
 <!-- slot:driver_bash_note -->
 Under the recommended ctxctl configuration (see README), the main thread cannot run Bash directly; only you and your sibling specialists can.
+
+<!-- slot:build_backend -->
+### Step 0: Build backend
+
+This campaign builds against the machine's own toolchain: there is no nix
+derivation to promote to and nothing to decide here. Record the backend the
+build actually used when you write the harness record (`--build-backend`
+comes from the build result). Proceed to Mode A.
+
+<!-- slot:missing_dep -->
+**Missing system library / header (`fatal error: foo.h: No such file`, `cannot find -lfoo`, `Package foo was not found` from pkg-config):** the machine is missing a build dependency. **Do NOT hack include/lib paths into `build.sh`.** Report the missing package to the user and stop; installing system packages is theirs to decide, not yours.

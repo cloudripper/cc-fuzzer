@@ -114,7 +114,7 @@ The default oracle is `crash` (sanitizer/abort) — and for many targets that is
 
 **Inputs to the decision:**
 - The code review's `oracle_opportunities` (in `code-review.md` / the `code-review-*.json` snapshot) and the prescan's `oracle_candidates` — confirmed inverse pairs, validation/auth gates, and lifecycle pairs (`stateful_candidates`).
-- `--oracle <type>` if the user forced one (overrides auto-selection). `--reference <cmd|path|nix-attr>` if the user supplied a differential reference. `fuzz/guidance.md`'s `## Oracle` section (the declarative equivalent — may also request a stateful harness or the integer suite, which have no CLI flag).
+- `--oracle <type>` if the user forced one (overrides auto-selection). `--reference <cmd|path|build-attr>` if the user supplied a differential reference. `fuzz/guidance.md`'s `## Oracle` section (the declarative equivalent — may also request a stateful harness or the integer suite, which have no CLI flag).
 
 **Selection rule** (`type` ∈ `crash | invariant | roundtrip | differential | metamorphic`):
 1. `--oracle <type>` OR a `## Oracle` directive in `guidance.md` given → use it.

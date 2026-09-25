@@ -56,8 +56,12 @@ def build(c: Campaign, now: int, declared=None) -> dict:
     # active_harness when multiple have actionable recommendations. This is an
     # ORDERING of the SSOT REC_BRANCHES; the assert keeps the two in lockstep so
     # a new branch can't be added to enums.py without being given a priority.
+    # `query` sits ahead of reanalyze_gaps (§5): once a gap has been analyzed
+    # and the coverage has not moved, re-reading the same coverage is the move
+    # least likely to say anything new -- asking the code a fresh question is.
     PRIORITY = ['triage', 'restart_fuzzer', 'fix_instrumentation', 'analyze_gaps',
-                'reanalyze_gaps', 'concolic', 'generate_seeds', 'mutator', 'stop', 'sleep']
+                'query', 'reanalyze_gaps', 'concolic', 'generate_seeds', 'mutator',
+                'stop', 'sleep']
     assert set(PRIORITY) == enums.REC_BRANCHES, \
         f"PRIORITY {set(PRIORITY) ^ enums.REC_BRANCHES} out of sync with enums.REC_BRANCHES"
     PRI = {b: i for i, b in enumerate(PRIORITY)}

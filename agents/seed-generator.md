@@ -103,7 +103,7 @@ The `.note` sibling file records the source signal (pattern class + strategy lin
 ${CLAUDE_PLUGIN_ROOT}/bin/cc-fuzzer quarantine run [--harness <name>]
 ```
 
-The script runs each new input through the harness with a short timeout. Non-crashing inputs promote to corpus; crashing inputs go to `fuzz/crashes/new/` for triage; hanging inputs go to `fuzz/crashes/flaky/`. Safety scan (`check-seed-safety.sh`) runs first and rejects destructive payloads (see "Safety").
+The script runs each new input through the harness with a short timeout. Non-crashing inputs promote to corpus; crashing inputs go to `fuzz/crashes/new/` for triage; hanging inputs go to `fuzz/crashes/flaky/`. Safety scan (`cc-fuzzer quarantine safety`) runs first and rejects destructive payloads (see "Safety").
 
 Without quarantine, a single crashing seed kills libFuzzer at startup on the next launch (it replays the corpus before fuzzing). That bug has burned entire campaigns.
 
@@ -159,7 +159,7 @@ Then `${CLAUDE_PLUGIN_ROOT}/bin/cc-fuzzer quarantine run` to promote.
 | `plan.md` absent | Fall back to source-only reasoning. Tell orchestrator the plan was missing. |
 | Gap report path missing or empty | In targeted mode, exit cleanly with "no gap report available; coverage-analyst should refresh." Don't generate junk seeds. |
 | No seedgen-eligible gaps in the report | Exit cleanly: "no eligible gaps; cmplog/concolic handles remaining." |
-| `corpus-quarantine.sh` rejects every seed | The seeds are likely malformed or trip the safety scanner. Stop, print the rejection reasons, do NOT retry with the same shape. |
+| `cc-fuzzer quarantine run` rejects every seed | The seeds are likely malformed or trip the safety scanner. Stop, print the rejection reasons, do NOT retry with the same shape. |
 | Gap's `location` references a function not in source | Skip that gap. Note in output. Don't fabricate a seed. |
 | `cve-patterns.md` malformed | Skip pattern-driven synthesis entirely. Continue with other sources. |
 | Generated seed exceeds 1 KB without format requirement | Trim to minimal. Larger seeds slow the fuzzer's per-iteration time. |

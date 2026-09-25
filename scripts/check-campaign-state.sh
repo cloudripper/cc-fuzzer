@@ -11,75 +11,14 @@
 #
 # Always exits 0; the classification is on stdout. Diagnostic detail on stderr.
 
+#
+# Shim onto `cc-fuzzer tick state` (cc_fuzzer_core.loop.campaign_state): same
+# five words on stdout, same order of checks, same exit 0. The order IS the
+# meaning -- a campaign that fails validation is `corrupted` even with a live
+# fuzzer, and one whose target source moved is `stale` even when everything
+# else is ready, because both route to an assessment instead of an action.
+
 set -u
 
-# Path anchor - refuses cwd inside fuzz/, refuses recursive fuzz/fuzz/
 . "$(dirname "${BASH_SOURCE[0]}")/_lib/root.sh"
-SCRIPT_DIR="$CC_FUZZER_ROOT/scripts"
-. "$SCRIPT_DIR/_lib/path-anchor.sh"
-FUZZ_ROOT="${FUZZ_ROOT:-fuzz}"
-STATE_DIR="${FUZZ_STATE_DIR:-$FUZZ_ROOT/state}"
-
-# 1. No state at all. A campaign exists once a harness has been built — the
-# harness-built.json mirror (of harnesses.json[0]) is present. fuzz-config.json
-# alone (declared but not yet built) is still a cold start.
-if [ ! -d "$STATE_DIR" ] || [ ! -f "$STATE_DIR/harness-built.json" ]; then
-  echo "none"
-  exit 0
-fi
-
-# 2. Validate state - if it's broken, classify as corrupted
-VALIDATE_OUT=$(FUZZ_ROOT="$FUZZ_ROOT" bash "$SCRIPT_DIR/validate-state.sh" 2>&1)
-if [ "$?" -ne 0 ]; then
-  echo "corrupted"
-  echo "$VALIDATE_OUT" >&2
-  exit 0
-fi
-
-# 3. Check if target source has changed
-TARGET_SOURCE=""
-RECORDED_HASH=""
-if [ -f "$STATE_DIR/harness-built.json" ]; then
-  TARGET_SOURCE=$(python3 -c "
-import json
-try: print(json.load(open('$STATE_DIR/harness-built.json')).get('target_source', ''))
-except: pass" 2>/dev/null)
-  RECORDED_HASH=$(python3 -c "
-import json
-try: print(json.load(open('$STATE_DIR/harness-built.json')).get('target_source_hash', ''))
-except: pass" 2>/dev/null)
-fi
-
-if [ -n "$TARGET_SOURCE" ] && [ -f "$TARGET_SOURCE" ] && [ -n "$RECORDED_HASH" ]; then
-  CURRENT_HASH=$(sha256sum "$TARGET_SOURCE" | cut -c1-16)
-  if [ "$CURRENT_HASH" != "$RECORDED_HASH" ]; then
-    echo "stale"
-    echo "target source changed: $TARGET_SOURCE" >&2
-    echo "  recorded hash: $RECORDED_HASH" >&2
-    echo "  current hash:  $CURRENT_HASH" >&2
-    exit 0
-  fi
-fi
-
-# 4. Check if any fuzzer slot is running.
-# Walk fuzzer-*.pid; campaign is "running" if at least one declared slot is
-# alive. Dead-but-declared slots get relaunched by check-slot-liveness.sh, so a
-# partial-alive state is just "running".
-ANY_ALIVE=0
-for pidf in "$STATE_DIR"/fuzzer-*.pid; do
-  [ -f "$pidf" ] || continue
-  PID=$(cat "$pidf" 2>/dev/null | tr -d ' \n')
-  if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
-    ANY_ALIVE=1
-    break
-  fi
-done
-
-if [ "$ANY_ALIVE" -eq 1 ]; then
-  echo "running"
-  exit 0
-fi
-
-# 5. Otherwise it's stopped, ready to resume
-echo "stopped"
-exit 0
+exec python3 -m cc_fuzzer_core tick state "$@"
