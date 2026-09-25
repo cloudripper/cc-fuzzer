@@ -1,5 +1,35 @@
 # cc-fuzzer: carve out a host-independent core
 
+> **Status: delivered.** All twelve sections are implemented, tested and
+> merged; the suite is green (489 passed / 0 failed). This document is kept as
+> the design record — it describes what was decided and why, not work
+> outstanding. For using the result, see
+> [docs/EMBEDDING.md](docs/EMBEDDING.md); for how the plugin sits on top of it,
+> see the README's "The core".
+>
+> | § | Delivered as |
+> |---|---|
+> | §1 root | `paths`, `CC_FUZZER_ROOT`, `scripts/_lib/root.sh` |
+> | §2 ports | `enums`/`config`/`schema`/`state`/`crash`/`slots`/`cmplog`/`coverage`/`quarantine`/`delta`/`prescan`/`findings` |
+> | §3 prompts | `prompts` + `prompts/` sources and profiles; `prompts check` |
+> | §4 verification | `crash.verifiers` (`poc-realism`, `command:`, `python:`), `crash.replay` |
+> | §5 query | `query`, the `query` branch and lever, `query-analyst` |
+> | §6 variants | `variants`, `builders/` (nix, script, clang, oss-fuzz) |
+> | §7 driver | `loop.step()`, `AgentRunner`, `cc-fuzzer tick` |
+> | §8 models | `models` + `data/models.json` |
+> | §9 flags | `features` + prompt feature blocks |
+> | §10 ledger | `ledger`, `hooks/ledger-append.sh` |
+> | §11 promotion gate | `crash.pipeline.finalize`, `.verified` marker, `hooks/gate-findings.sh` |
+> | §12 selection | `variants.select`, `gate`, `hooks/gate-verify-build.sh` |
+>
+> **Still bash-only**, and therefore not reachable from a container: the
+> campaign lifecycle scripts `stop-fuzzer.sh`, `status.sh`, `reset-campaign.sh`,
+> `reverify-after-rebuild.sh`, `dictionaries.sh`, `run-concolic.sh`,
+> `build-poc-repro.sh`. A CRS supplies its own equivalents; porting them was
+> never in this roadmap's scope. `yolo-route.sh` is superseded by
+> `loop.route()` and kept only until the plugin skills stop calling it.
+
+
 ## Context
 
 cc-fuzzer is a Claude Code plugin today. The main thread drives everything, the loop is re-fired by `ScheduleWakeup`, prompts hard-code `${CLAUDE_PLUGIN_ROOT}/scripts/...` (144 lines) plus nix and host-toolchain instructions, and the deterministic logic is spread over ~12k lines of bash, ~7.4k of `_lib` Python and ~1.9k of heredoc Python.
