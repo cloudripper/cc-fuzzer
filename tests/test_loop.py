@@ -139,6 +139,57 @@ class RouteTest(unittest.TestCase):
                 self.assertEqual(loop.route(self._c(), state).kind, loop.ORCHESTRATOR)
 
 
+class CampaignStateTest(unittest.TestCase):
+    """The port of check-campaign-state.sh. §7's first version of this
+    returned only none/running/stopped, so a campaign that failed validation
+    or whose target source had moved was reported `stopped` -- and route()
+    sends `stopped` straight to "(re)launch fuzzing". Both of those states
+    exist precisely to stop the loop acting."""
+
+    def _fixture(self, name="campaign-warm"):
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        project = Path(td.name) / "campaign"
+        shutil.copytree(FIXTURES / name, project)
+        return project
+
+    def _state(self, project):
+        cwd = os.getcwd()
+        os.chdir(project)
+        try:
+            return loop.campaign_state(_campaign())
+        finally:
+            os.chdir(cwd)
+
+    def test_ready_campaign_is_stopped(self):
+        self.assertEqual(self._state(self._fixture()), loop.S_STOPPED)
+
+    def test_no_harness_is_none(self):
+        p = self._fixture()
+        (p / "fuzz/state/harness-built.json").unlink()
+        self.assertEqual(self._state(p), loop.S_NONE)
+
+    def test_failing_validation_is_corrupted_not_stopped(self):
+        p = self._fixture()
+        (p / "fuzz/state/findings.jsonl").write_text("NOT JSON\n")
+        self.assertEqual(self._state(p), loop.S_CORRUPTED)
+
+    def test_a_moved_target_source_is_stale_not_stopped(self):
+        p = self._fixture()
+        rec = json.loads((p / "fuzz/state/harness-built.json").read_text())
+        src = p / rec["target_source"]
+        src.parent.mkdir(parents=True, exist_ok=True)
+        src.write_text("/* the target moved on */\n")
+        self.assertEqual(self._state(p), loop.S_STALE)
+
+    def test_unsafe_states_never_route_to_an_action(self):
+        for state in (loop.S_STALE, loop.S_CORRUPTED):
+            with self.subTest(state=state):
+                d = loop.route(object(), state)
+                self.assertEqual(d.kind, loop.ORCHESTRATOR)
+                self.assertNotEqual(d.kind, loop.RUN)
+
+
 class StepTest(unittest.TestCase):
     """A tick against a real fixture campaign."""
 

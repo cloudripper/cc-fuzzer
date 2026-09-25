@@ -63,7 +63,7 @@ f0ba4408d6f973b954fb309473027b4b  scripts/_lib/yolo_evaluate.py
 8a5f2e941f52b34d5117fa86a9dc46e5  scripts/campaign-init.sh
 6c4bc141f432d09e3f39118ab7c73cb5  scripts/capture-nix-env.sh
 97fd627fa9a9a6842c390e8ab5bdf8ec  scripts/ceiling-probe.sh
-66ed7f387b20dc65953b04d7732b0dea  scripts/check-campaign-state.sh
+c3b3a0a535596471fb200b87e299872f  scripts/check-campaign-state.sh
 ba386e699599dafea99922fd85dcc963  scripts/check-seed-safety.sh
 16f0165c3c8151cf77f66f410757b64d  scripts/check-slot-liveness.sh
 42050901a7445fc4e1f95851934935f8  scripts/code-review-run.sh
@@ -135,7 +135,7 @@ ff05da461b38bef049093e0f855d4b2f  src/cc_fuzzer_core/features.py
 8f2ff2acc2c0f513237aeaf2452ed073  src/cc_fuzzer_core/findings.py
 2494348832f18c182e0c50d716cfa266  src/cc_fuzzer_core/gate.py
 24e0b9f93714c4b5fa5fe11393b08d06  src/cc_fuzzer_core/ledger.py
-be7549d573d58c0aca8725bb3985f482  src/cc_fuzzer_core/loop.py
+445f232e9b42748712bbb56a30a747f6  src/cc_fuzzer_core/loop.py
 bb55e017ba8a659b9c8eccc1b73bec33  src/cc_fuzzer_core/manifest.py
 2c385e54cedae3970219c9de7d2d16b3  src/cc_fuzzer_core/models.py
 e886a95f3444ff5e6fcce0985a0ef253  src/cc_fuzzer_core/paths.py

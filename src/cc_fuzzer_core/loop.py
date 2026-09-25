@@ -38,6 +38,7 @@ directive, or `orchestrator` when a decision is needed).
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 import time
@@ -197,19 +198,58 @@ def has_corpus(c) -> bool:
     return False
 
 
+def target_source_changed(c) -> tuple:
+    """(changed?, detail) -- the recorded target_source_hash vs the file now."""
+    import hashlib
+    try:
+        rec = json.loads((Path(c.state_dir) / "harness-built.json").read_text())
+    except (OSError, ValueError):
+        return False, ""
+    src, recorded = rec.get("target_source") or "", rec.get("target_source_hash") or ""
+    if not src or not recorded:
+        return False, ""
+    path = src if os.path.isabs(src) else os.path.join(str(c.project_root), src)
+    if not os.path.isfile(path):
+        return False, ""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 16), b""):
+            h.update(chunk)
+    current = h.hexdigest()[:len(recorded)]
+    if current != recorded:
+        return True, f"target source changed: {src} ({recorded} -> {current})"
+    return False, ""
+
+
 def campaign_state(c) -> str:
-    """none | running | stopped | stale | corrupted."""
+    """none | running | stopped | stale | corrupted.
+
+    The port of check-campaign-state.sh, in the SAME order, because the order
+    is the meaning: a campaign that fails validation is `corrupted` even if a
+    fuzzer is alive on it, and one whose target source moved is `stale` even
+    though everything is otherwise ready. route() sends both to a human or the
+    orchestrator rather than acting, so collapsing either into `stopped` --
+    which an earlier version of this function did -- routes an unsafe campaign
+    straight into "(re)launch fuzzing".
+    """
     state = Path(c.state_dir)
-    if not state.is_dir():
+    if not state.is_dir() or not has_harness(c):
         return S_NONE
+    try:
+        from cc_fuzzer_core import schema as _schema
+        if any(p.severity == _schema.ERROR for p in _schema.validate(c)):
+            return S_CORRUPTED
+    except Exception:
+        pass
+    changed, _detail = target_source_changed(c)
+    if changed:
+        return S_STALE
     try:
         from cc_fuzzer_core.crash.detect import any_slot_alive
         if any_slot_alive(c):
             return S_RUNNING
     except Exception:
         pass
-    if not (state / "current.json").is_file():
-        return S_NONE if not has_harness(c) else S_STOPPED
     return S_STOPPED
 
 
@@ -420,6 +460,11 @@ def _cmd_tick(a):
     return 0
 
 
+def _cmd_state(a):
+    print(campaign_state(_campaign()))
+    return 0
+
+
 def _cmd_route(a):
     print(route(_campaign()).as_line())
     return 0
@@ -446,6 +491,10 @@ def register_cli(subparsers):
                    help="only the deterministic phases, for a host that dispatches itself")
     v.add_argument("--json", action="store_true")
     v.set_defaults(func=_cmd_tick)
+
+    v = verbs.add_parser("state",
+                         help="none|running|stopped|stale|corrupted (check-campaign-state.sh)")
+    v.set_defaults(func=_cmd_state)
 
     v = verbs.add_parser("route", help="the deterministic directive for the current state")
     v.set_defaults(func=_cmd_route)
