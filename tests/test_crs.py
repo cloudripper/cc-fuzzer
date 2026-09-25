@@ -70,6 +70,22 @@ class TriageTest(unittest.TestCase):
         self.assertNotEqual(r.pov, r.original_pov)
         self.assertLess(r.size, r.original_size)
 
+    def test_a_confirmed_bug_carries_its_byte_map(self):
+        """The patch author's question: which of these bytes decide the bug."""
+        r = crs.triage(self.record, str(self.crash), harness="parser",
+                       config=self._oracle())
+        self.assertEqual(r.sensitivity["mask"], "####")
+        self.assertEqual(r.sensitivity["stack_hash"], r.stack_hash)
+        self.assertEqual(r.as_dict()["sensitivity"]["schema"], "input-sensitivity/v1")
+
+    def test_the_byte_map_can_be_skipped_and_is_not_spent_on_rejects(self):
+        r = crs.triage(self.record, str(self.crash), harness="parser",
+                       config=self._oracle(), do_sensitivity=False)
+        self.assertEqual(r.sensitivity, {})
+        r = crs.triage(self.record, str(self.crash), harness="parser",
+                       config=self._oracle(ORACLE_NO, "no.sh"))
+        self.assertEqual(r.sensitivity, {})
+
     def test_minimization_can_be_skipped(self):
         r = crs.triage(self.record, str(self.crash), harness="parser",
                        config=self._oracle(), do_minimize=False)

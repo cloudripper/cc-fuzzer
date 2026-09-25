@@ -28,7 +28,8 @@ The binary comes from variants.select(..., "replay") (§12), because a crash
 minimized against an instrumented build is minimized against the
 instrumentation.
 
-CLI: `cc-fuzzer minimize <file> [--harness NAME] [-o OUT] [--json]`.
+CLI: `cc-fuzzer minimize run <file> [--harness NAME] [-o OUT] [--json]`, and
+`cc-fuzzer minimize sensitivity <file>` for the byte map (see sensitivity()).
 """
 from __future__ import annotations
 
@@ -56,6 +57,10 @@ PROBE_ATTEMPTS = 1
 
 class MinimizeError(RuntimeError):
     pass
+
+
+# probe outcomes
+SAME, NONE, OTHER = "same", "none", "other"
 
 
 @dataclass(frozen=True)
@@ -107,9 +112,16 @@ class _Probe:
     def exhausted(self) -> bool:
         return self.count >= self.max_probes
 
-    def __call__(self, data: bytes) -> bool:
-        if not data or self.exhausted:
-            return False
+    def outcome(self, data: bytes) -> tuple:
+        """Run a candidate: (SAME|NONE|OTHER, stack_hash, category).
+
+        Returns (None, "", "") without running anything when the budget is
+        spent, so callers can tell "not probed" from "probed, no crash".
+        """
+        if self.exhausted:
+            return None, "", ""
+        if not data:
+            return NONE, "", ""
         self.count += 1
         p = self.workdir / "candidate.bin"
         p.write_bytes(data)
@@ -117,10 +129,14 @@ class _Probe:
         from cc_fuzzer_core.crash import classify as _classify
         cl = _classify.classify(out, rc)
         if not cl.is_crash:
-            return False
+            return NONE, "", ""
+        h = _replay.stack_hash(out, category=cl.category)
+        return (SAME if h == self.want else OTHER), h, cl.category
+
+    def __call__(self, data: bytes) -> bool:
         # The invariant: a crash somewhere else is a different finding, and
         # accepting it would swap the bug out from under the report.
-        return _replay.stack_hash(out, category=cl.category) == self.want
+        return self.outcome(data)[0] == SAME
 
 
 # ---------------------------------------------------------------------------
@@ -225,6 +241,189 @@ def write(result: Minimized, path) -> Path:
 
 
 # ---------------------------------------------------------------------------
+# sensitivity: which of the remaining bytes actually decide the bug?
+# ---------------------------------------------------------------------------
+#
+# ddmin answers "what is the shortest input that still shows this bug". It
+# does not answer "which of those bytes matter". A 12-byte PoV is typically a
+# few bytes of framing the parser needs to get anywhere, and a few bytes that
+# decide the faulting operand. Whoever writes the patch needs the second set:
+# it is the value the missing check should have rejected.
+#
+# So, after minimizing, mutate each byte in place and ask the same question
+# the minimizer asks -- same bug, yes or no -- and classify the byte by how
+# many mutations it survives. Length is left alone: ddmin already settled it.
+#
+# Two mutations per byte, chosen so they always differ from the original:
+#   b ^ 0xFF  a large change: any exact-value check (magic, tag, opcode) fails
+#   b ^ 0x01  a one-bit change: survives a range check (a length that only has
+#             to exceed a bound), which is what separates `#` from `~`
+#
+# A mutation that crashes ELSEWHERE is not noise: it is a neighbouring bug on
+# the same path, reported with the offsets that reach it.
+
+SENSITIVITY_SCHEMA = "input-sensitivity/v1"
+MUTATIONS = (0xFF, 0x01)
+# Two probes per byte, so this covers a 512-byte input. Anything longer should
+# be minimized first; the bytes past the budget are reported as unknown rather
+# than guessed.
+SENSITIVITY_MAX_PROBES = 1024
+
+LOAD_BEARING, CONSTRAINED, FREE, UNKNOWN = "load_bearing", "constrained", "free", "unknown"
+MARK = {LOAD_BEARING: "#", CONSTRAINED: "~", FREE: ".", UNKNOWN: "?"}
+
+
+@dataclass(frozen=True)
+class Span:
+    start: int
+    end: int            # exclusive
+    cls: str
+    hex: str
+
+    def as_dict(self) -> dict:
+        return {"start": self.start, "end": self.end, "class": self.cls,
+                "mark": MARK[self.cls], "hex": self.hex}
+
+
+@dataclass(frozen=True)
+class Sensitivity:
+    size: int = 0
+    stack_hash: str = ""
+    category: str = ""
+    binary: str = ""
+    variant: str = ""
+    evidence_grade: str = ""
+    mask: str = ""      # one mark per byte, see MARK
+    spans: tuple = ()
+    neighbours: tuple = ()
+    probes: int = 0
+    seconds: float = 0.0
+    reason: str = ""
+
+    @property
+    def complete(self) -> bool:
+        return MARK[UNKNOWN] not in self.mask
+
+    def offsets(self, cls: str) -> list:
+        return [i for i, m in enumerate(self.mask) if m == MARK[cls]]
+
+    def counts(self) -> dict:
+        return {c: self.mask.count(MARK[c]) for c in MARK}
+
+    def as_dict(self) -> dict:
+        return {"schema": SENSITIVITY_SCHEMA, "size": self.size,
+                "stack_hash": self.stack_hash, "category": self.category,
+                "binary": self.binary, "variant": self.variant,
+                "evidence_grade": self.evidence_grade,
+                "mutations": [f"xor 0x{m:02x}" for m in MUTATIONS],
+                "mask": self.mask, "legend": {v: k for k, v in MARK.items()},
+                "counts": self.counts(), "complete": self.complete,
+                "spans": [sp.as_dict() for sp in self.spans],
+                "neighbours": list(self.neighbours),
+                "probes": self.probes, "seconds": round(self.seconds, 3),
+                "reason": self.reason}
+
+
+def classify_byte(outcomes) -> str:
+    """Outcomes of every mutation of one byte -> its class.
+
+    A crash elsewhere counts as losing the bug: the byte still decided which
+    bug this input shows.
+    """
+    if not outcomes or any(o is None for o in outcomes):
+        return UNKNOWN
+    kept = sum(1 for o in outcomes if o == SAME)
+    if kept == len(outcomes):
+        return FREE
+    return LOAD_BEARING if kept == 0 else CONSTRAINED
+
+
+def _spans(data: bytes, classes) -> tuple:
+    out, start = [], 0
+    for i in range(1, len(classes) + 1):
+        if i == len(classes) or classes[i] != classes[start]:
+            out.append(Span(start, i, classes[start], data[start:i].hex()))
+            start = i
+    return tuple(out)
+
+
+def sensitivity(record, reproducer: str, *, harness: str = "", stack_hash: str = "",
+                timeout: int = DEFAULT_TIMEOUT_S,
+                max_probes: int = SENSITIVITY_MAX_PROBES, workdir=None) -> Sensitivity:
+    """Map which bytes of a (minimized) reproducer decide THE SAME bug.
+
+    Deterministic, like minimize(): same input and binary, same map.
+    """
+    src = Path(reproducer)
+    if not src.is_file():
+        raise MinimizeError(f"no such reproducer: {reproducer}")
+    data = src.read_bytes()
+    if not data:
+        raise MinimizeError("reproducer is empty")
+
+    t0 = time.monotonic()
+    base = _replay.replay(record, reproducer, harness=harness, attempts=1,
+                          timeout=timeout)
+    if base.verdict == _replay.NO_CRASH:
+        raise MinimizeError(
+            f"the input does not reproduce on {base.variant} -- nothing to map")
+    want = stack_hash or base.stack_hash
+    if not want:
+        raise MinimizeError("no stack hash to preserve; refusing to map blind")
+    if base.stack_hash and base.stack_hash != want:
+        raise MinimizeError(
+            f"the input shows bug {base.stack_hash}, not the pinned {want}")
+
+    import tempfile
+    tmp = tempfile.TemporaryDirectory() if workdir is None else None
+    wd = Path(workdir or tmp.name)
+    classes, others = [], {}
+    try:
+        probe = _Probe(base.binary, want, timeout=timeout, workdir=wd,
+                       max_probes=max_probes)
+        buf = bytearray(data)
+        for i, b in enumerate(data):
+            outcomes = []
+            for m in MUTATIONS:
+                buf[i] = b ^ m
+                kind, h, cat = probe.outcome(bytes(buf))
+                outcomes.append(kind)
+                if kind == OTHER:
+                    n = others.setdefault(h, {"stack_hash": h, "category": cat,
+                                              "offsets": []})
+                    if i not in n["offsets"]:
+                        n["offsets"].append(i)
+            buf[i] = b
+            classes.append(classify_byte(outcomes))
+    finally:
+        if tmp is not None:
+            tmp.cleanup()
+
+    reason = ""
+    if UNKNOWN in classes:
+        first = classes.index(UNKNOWN)
+        reason = (f"probe budget ({max_probes}) reached at offset {first} of "
+                  f"{len(data)}; minimize first, or raise the budget")
+    return Sensitivity(
+        size=len(data), stack_hash=want, category=base.category,
+        binary=base.binary, variant=base.variant,
+        evidence_grade=base.evidence_grade,
+        mask="".join(MARK[c] for c in classes), spans=_spans(data, classes),
+        neighbours=tuple(sorted(others.values(), key=lambda n: n["offsets"][0])),
+        probes=probe.count, seconds=time.monotonic() - t0, reason=reason)
+
+
+def render(s: Sensitivity, data: bytes, width: int = 16) -> str:
+    """Hex dump with the mask underneath, for a human reading a PoV."""
+    lines = []
+    for off in range(0, len(data), width):
+        row = data[off:off + width]
+        lines.append(f"{off:08x}  {' '.join(f'{c:02x}' for c in row)}")
+        lines.append(f"{'':8}  {' '.join(f' {m}' for m in s.mask[off:off + width])}")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -253,6 +452,30 @@ def _cmd_minimize(a):
     return 0
 
 
+def _cmd_sensitivity(a):
+    from cc_fuzzer_core.variants import harness_record
+    try:
+        record = harness_record(harness=a.harness)
+        r = sensitivity(record, a.file, harness=a.harness, stack_hash=a.stack_hash,
+                        timeout=a.timeout, max_probes=a.max_probes)
+    except (MinimizeError, _v.SelectionError, _replay.ReplayError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    if a.json:
+        print(json.dumps(r.as_dict(), indent=2))
+    else:
+        c = r.counts()
+        print(f"bug {r.stack_hash}: {c[LOAD_BEARING]} load-bearing, "
+              f"{c[CONSTRAINED]} constrained, {c[FREE]} free, {c[UNKNOWN]} unknown "
+              f"of {r.size} bytes ({r.probes} probes)")
+        print(render(r, Path(a.file).read_bytes()))
+        for n in r.neighbours:
+            print(f"neighbour {n['stack_hash']} ({n['category']}) via offsets {n['offsets']}")
+        if r.reason:
+            print(r.reason)
+    return 0
+
+
 def register_cli(subparsers):
     from cc_fuzzer_core.cli import add_subsystem
     _p, verbs = add_subsystem(subparsers, "minimize",
@@ -267,3 +490,13 @@ def register_cli(subparsers):
     v.add_argument("--max-probes", type=int, default=MAX_PROBES)
     v.add_argument("--json", action="store_true")
     v.set_defaults(func=_cmd_minimize)
+
+    s = verbs.add_parser("sensitivity",
+                         help="map which bytes of a PoV decide the bug")
+    s.add_argument("file")
+    s.add_argument("--harness", default="")
+    s.add_argument("--stack-hash", default="", help="the bug to map (default: the input's own)")
+    s.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT_S)
+    s.add_argument("--max-probes", type=int, default=SENSITIVITY_MAX_PROBES)
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=_cmd_sensitivity)

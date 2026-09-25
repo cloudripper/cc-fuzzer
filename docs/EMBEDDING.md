@@ -47,7 +47,7 @@ if r.submittable:
     submit(r.pov, r.stack_hash)        # r.pov is the MINIMIZED input
 ```
 
-`triage` does four things, in this order, and stops as soon as the answer is
+`triage` does five things, in this order, and stops as soon as the answer is
 known:
 
 | | |
@@ -55,6 +55,7 @@ known:
 | **replay** | deterministically, 3×, on the binary §12 selects — never an instrumented build |
 | **minimize** | smallest input reproducing **the same bug** (see §3) |
 | **verify** | your oracle, via `verification.final_step` |
+| **byte map** | only if confirmed: which bytes of the PoV decide the bug (see §3.1) |
 | **marker** | only if confirmed, and only if you pass a campaign |
 
 `status` is one of `confirmed`, `rejected`, `inconclusive`, `not_a_crash`,
@@ -93,6 +94,34 @@ crash  ≠  crash-with-the-same-cause
 
 Budgets are enforced (`max_probes`, `max_rounds`), and a search that runs out
 mid-step returns the **original**, never a smaller input nobody verified.
+
+### 3.1 Which of the remaining bytes matter
+
+The shortest input is still a mix of framing the parser needs to get anywhere
+and the few bytes that decide the faulting operand. The patch author needs the
+second set. `sensitivity` mutates each byte in place (`b ^ 0xFF`, `b ^ 0x01`)
+and asks the minimizer's question, same bug or not:
+
+```bash
+cc-fuzzer minimize sensitivity crash.bin.min --harness parser
+# bug c481acca…: 3 load-bearing, 1 constrained, 4 free, 0 unknown of 8 bytes (16 probes)
+# 00000000  50 58 09 57 7a 7a 7a 7a
+#            #  #  ~  #  .  .  .  .
+# neighbour 558fd550… (heap-buffer-overflow) via offsets [3]
+```
+
+| Mark | Meaning |
+|---|---|
+| `#` load-bearing | every mutation loses the bug (a magic, a tag, an opcode) |
+| `~` constrained | a big change keeps it, a one-bit change loses it: a bound. This is usually where the missing check goes |
+| `.` free | filler |
+| `?` unknown | probe budget ran out; nothing is guessed |
+
+A mutation that crashes **elsewhere** is reported as a neighbouring bug with
+the offsets that reach it, never counted as the same bug. Cost is two probes
+per byte (default budget 1024), which is why it runs on the minimized PoV and
+only once triage has confirmed it. `triage` puts it in `r.sensitivity`
+(`input-sensitivity/v1`); pass `do_sensitivity=False` to skip it.
 
 ## 4. Seam two: a patch was written
 
@@ -371,6 +400,7 @@ source that moved under the harness.
 |---|---|---|
 | **triage a crash** | `crs.triage` | `crs triage` |
 | **minimize a PoV** | `minimize` | `minimize run` |
+| **which PoV bytes matter** | `minimize.sensitivity` | `minimize sensitivity` |
 | **validate a patch** | `crs.check_patch`, `patch` | `patch validate`, `patch scope` |
 | seed safety | `crs.safe_seeds`, `quarantine` | `quarantine run` |
 | cmplog dictionary | `crs.dictionary`, `cmplog` | `cmplog extract` |

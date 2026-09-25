@@ -26,6 +26,7 @@ needs one dict describing where the binaries are.
                    harness="parser", config=cfg)
     if r.submittable:
         submit(r.pov, r.stack_hash)      # r.pov is the MINIMIZED input
+        hand_to_patcher(r.sensitivity)   # which of its bytes decide the bug
 
 The corpus helpers are the other half: quarantine before promoting a seed,
 harvest a dictionary, find the delta targets a diff implies. They are
@@ -74,6 +75,7 @@ class TriageResult:
     directory: str = ""
     replay: dict = field(default_factory=dict)
     minimized: dict = field(default_factory=dict)
+    sensitivity: dict = field(default_factory=dict)
 
     @property
     def submittable(self) -> bool:
@@ -94,7 +96,8 @@ class TriageResult:
                 "verdict_step": self.verdict_step,
                 "original_size": self.original_size, "size": self.size,
                 "marker": self.marker, "directory": self.directory,
-                "replay": self.replay, "minimized": self.minimized}
+                "replay": self.replay, "minimized": self.minimized,
+                "sensitivity": self.sensitivity}
 
 
 # ---------------------------------------------------------------------------
@@ -105,13 +108,20 @@ def triage(record: Mapping, crash: str, *, harness: str = "",
            config: Mapping | None = None, campaign=None, finding_id: str = "",
            finding: Mapping | None = None, do_minimize: bool = True,
            attempts: int = _replay.ATTEMPTS, timeout: int = _replay.TIMEOUT_S,
-           minimize_probes: int = _minimize.MAX_PROBES) -> TriageResult:
+           minimize_probes: int = _minimize.MAX_PROBES,
+           do_sensitivity: bool = True,
+           sensitivity_probes: int = _minimize.SENSITIVITY_MAX_PROBES) -> TriageResult:
     """A crash arrived. Decide what it is, in one call.
 
       1. replay it deterministically on the binary §12 selects
       2. reduce it to the smallest input showing THE SAME bug
       3. hand it to the configured final verifier (your oracle)
-      4. if confirmed and a campaign was given, write the finding marker
+      4. if confirmed, map which of its bytes decide the bug (sensitivity)
+      5. if confirmed and a campaign was given, write the finding marker
+
+    Step 4 runs only on confirmed bugs: it costs two probes per byte and its
+    reader is whoever writes the patch, so there is nobody to spend it on for
+    a rejected crash.
 
     A flaky reproducer stops at step 1: it is a real bug with an unreliable
     trigger, which is a different thing from a finding, and minimizing it
@@ -157,6 +167,17 @@ def triage(record: Mapping, crash: str, *, harness: str = "",
     if v.status != _verifiers.CONFIRMED:
         status = REJECTED if v.status == _verifiers.REJECTED else INCONCLUSIVE
         return TriageResult(status, v.reason, **common)
+
+    sens = {}
+    if do_sensitivity:
+        try:
+            sens = _minimize.sensitivity(record, pov, harness=harness,
+                                         stack_hash=r.stack_hash, timeout=timeout,
+                                         max_probes=sensitivity_probes).as_dict()
+        except _minimize.MinimizeError:
+            # Like minimization: an improvement to the evidence, never a gate.
+            sens = {}
+    common["sensitivity"] = sens
 
     marker = directory = ""
     if campaign is not None and finding_id:
@@ -231,14 +252,17 @@ def _cmd_triage(a):
         record = harness_record(campaign=c, harness=a.harness) if not a.verify_binary \
             else {"verify_binary": a.verify_binary}
         r = triage(record, a.crash, harness=a.harness, config=cfg, campaign=c,
-                   finding_id=a.finding_id, do_minimize=not a.no_minimize)
+                   finding_id=a.finding_id, do_minimize=not a.no_minimize,
+                   do_sensitivity=not a.no_sensitivity)
     except Exception as e:  # noqa: BLE001 - the CLI reports, it does not raise
         print(f"error: {type(e).__name__}: {e}", file=sys.stderr)
         return 2
     print(json.dumps(r.as_dict(), indent=2) if a.json else
           f"{r.status}: {r.reason}\n  pov {r.pov} ({r.original_size} -> {r.size} bytes)\n"
           f"  bug {r.stack_hash} {r.category} [{r.evidence_grade}]\n"
-          f"  submittable: {r.submittable}")
+          f"  submittable: {r.submittable}"
+          + (f"\n  bytes {r.sensitivity['mask']}  (# load-bearing, ~ constrained, . free)"
+             if r.sensitivity else ""))
     return 0 if r.submittable else 1
 
 
@@ -252,6 +276,7 @@ def register_cli(subparsers):
     v.add_argument("--verify-binary", default="", help="skip the harness record")
     v.add_argument("--finding-id", default="", help="also write the finding marker")
     v.add_argument("--no-minimize", action="store_true")
+    v.add_argument("--no-sensitivity", action="store_true")
     v.add_argument("--config")
     v.add_argument("--json", action="store_true")
     v.set_defaults(func=_cmd_triage)
