@@ -16,21 +16,25 @@ The renderer puts the three pieces together:
         3. rewrite the frontmatter `model:` from cc_fuzzer_core.models (§8)
 
 Consumers:
-  - the Claude Code plugin renders profile=PLUGIN_PROFILE with every feature
-    on and COMMITS the result to `agents/*.md`; `cc-fuzzer prompts check`
-    (doctor.sh and a test) fails when those files drift from the sources.
-  - a container renders at runtime, e.g. render("crash-triager",
-    profile="oss-fuzz", features=f, frontmatter=False).
+  - a host that keeps RENDERED copies in its own tree (the Claude Code plugin
+    does) renders every feature on, commits the result, and runs
+    `cc-fuzzer prompts check` to fail when those copies drift.
+  - a host that renders at runtime just calls render(), e.g.
+    render("crash-triager", profile="oss-fuzz", features=f, frontmatter=False).
 
-`nix-builder` is deliberately NOT a core prompt (PLUGIN_ONLY): it is the
-plugin's nix adapter and has no host-neutral form. It stays hand-written in
-`agents/` and the drift check ignores it.
+WHERE the rendered copies go is the host's business, not the core's: it comes
+from `prompts/render.json` ({"output_dir": ..., "profile": ...}) or the
+`--dir` / `--profile` flags. The core never assumes a host's layout.
+
+A host adapter with no host-neutral form is listed in that file's
+`plugin_only`: it stays hand-written and the drift check ignores it.
 
 CLI: `cc-fuzzer prompts list|render|write|check`.
 """
 from __future__ import annotations
 
 import difflib
+import json
 import re
 import sys
 from dataclasses import dataclass
@@ -43,16 +47,17 @@ from cc_fuzzer_core import paths as _paths
 # Environment profiles. `nix` and `host` are the plugin's; `oss-fuzz` is the
 # container's (its toolchain comes from the OSS-Fuzz base image).
 PROFILES = ("nix", "host", "oss-fuzz")
-# What `agents/*.md` in this repo is rendered with.
-PLUGIN_PROFILE = "nix"
-# Agents that are host adapters, not core prompts (no source, never checked).
-PLUGIN_ONLY = ("nix-builder",)
+# Fallback when prompts/render.json names no profile.
+DEFAULT_PROFILE = "nix"
 
 SOURCE_DIRNAME = "prompts"
 PROFILE_DIRNAME = "profiles"
+# Host render settings, a data file beside the sources (never baked into the
+# core): {"output_dir": <relative to the root>, "profile": <name>,
+# "plugin_only": [<agent>, ...]}.
+RENDER_FILE = "render.json"
 # The profile slot holding inline `name = value` variables.
 VARS_SLOT = "vars"
-AGENT_DIRNAME = "agents"
 
 # <!-- profile:environment --> in a source; <!-- slot:environment --> in a profile.
 _PROFILE_MARKER_RE = re.compile(r"^[ \t]*<!--\s*profile:([A-Za-z0-9_-]+)\s*-->[ \t]*$", re.M)
@@ -71,6 +76,45 @@ class PromptError(RuntimeError):
 # ---------------------------------------------------------------------------
 # locating sources
 # ---------------------------------------------------------------------------
+
+def render_settings(root=None) -> dict:
+    """The host's render settings from `prompts/render.json` ({} when absent).
+    Keys: output_dir (relative to the root), profile, plugin_only."""
+    path = source_dir(root) / RENDER_FILE
+    if not path.is_file():
+        return {}
+    try:
+        doc = json.loads(path.read_text())
+    except ValueError as e:
+        raise PromptError(f"{path}: {e}") from None
+    if not isinstance(doc, dict):
+        raise PromptError(f"{path}: expected an object")
+    return doc
+
+
+def plugin_only(root=None) -> tuple:
+    """Agents the host keeps hand-written (no source, never rendered)."""
+    return tuple(render_settings(root).get("plugin_only", ()))
+
+
+def default_profile(root=None) -> str:
+    return check_profile(render_settings(root).get("profile", DEFAULT_PROFILE))
+
+
+def output_dir(root=None, out_dir=None) -> Path:
+    """Where rendered copies go. `--dir` wins; otherwise render.json's
+    output_dir, resolved against the root. Without either there is no default:
+    the core does not know the host's layout."""
+    if out_dir is not None:
+        return Path(out_dir)
+    rel = render_settings(root).get("output_dir")
+    if not rel:
+        raise PromptError(
+            f"no output directory: pass --dir, or set output_dir in "
+            f"{source_dir(root) / RENDER_FILE}")
+    base = Path(root) if root is not None else _paths.plugin_root()
+    return base / rel
+
 
 def source_dir(root=None) -> Path:
     """Where `prompts/<agent>.md` lives. `root` is the repo/data root (the
@@ -97,7 +141,7 @@ def source_path(agent: str, root=None) -> Path:
     p = source_dir(root) / f"{agent}.md"
     if not p.is_file():
         known = ", ".join(agents(root))
-        extra = f" ({agent} is plugin-only)" if agent in PLUGIN_ONLY else ""
+        extra = f" ({agent} is host-only)" if agent in plugin_only(root) else ""
         raise PromptError(f"no prompt source for '{agent}'{extra}; known: {known}")
     return p
 
@@ -219,7 +263,7 @@ def _drop_frontmatter(text: str) -> str:
 # rendering
 # ---------------------------------------------------------------------------
 
-def render(agent: str, profile: str = PLUGIN_PROFILE, features=None, *,
+def render(agent: str, profile: str = "", features=None, *,
            root=None, config=None, env=None, frontmatter: bool = True) -> str:
     """The final prompt text for `agent` on `profile`.
 
@@ -228,7 +272,7 @@ def render(agent: str, profile: str = PLUGIN_PROFILE, features=None, *,
     frontmatter: False drops the Claude Code frontmatter block entirely (what
     a non-Claude host wants).
     """
-    check_profile(profile)
+    profile = check_profile(profile or default_profile(root))
     path = source_path(agent, root)
     text = path.read_text()
     text = splice_profile(text, profile, root, where=str(path))
@@ -241,7 +285,7 @@ def render(agent: str, profile: str = PLUGIN_PROFILE, features=None, *,
     return text
 
 
-def render_all(profile: str = PLUGIN_PROFILE, features=None, *, root=None,
+def render_all(profile: str = "", features=None, *, root=None,
                config=None, env=None, frontmatter: bool = True) -> dict:
     return {a: render(a, profile, features, root=root, config=config, env=env,
                       frontmatter=frontmatter)
@@ -249,7 +293,7 @@ def render_all(profile: str = PLUGIN_PROFILE, features=None, *, root=None,
 
 
 # ---------------------------------------------------------------------------
-# drift between the sources and the committed agents/
+# drift between the sources and a host's committed copies
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
@@ -263,14 +307,11 @@ class Drift:
         return f"{self.agent}: {self.reason} ({self.path})"
 
 
-def agent_dir(root=None) -> Path:
-    return (Path(root) if root is not None else _paths.plugin_root()) / AGENT_DIRNAME
-
-
-def check(root=None, out_dir=None, profile: str = PLUGIN_PROFILE) -> list:
-    """Every rendered prompt that the committed agents/ file no longer matches.
-    [] means the plugin is in sync with the sources."""
-    d = agent_dir(root) if out_dir is None else Path(out_dir)
+def check(root=None, out_dir=None, profile: str = "") -> list:
+    """Every rendered prompt whose committed copy no longer matches.
+    [] means the host's tree is in sync with the sources."""
+    d = output_dir(root, out_dir)
+    profile = profile or default_profile(root)
     drifts = []
     for agent in agents(root):
         want = render(agent, profile, root=root)
@@ -287,9 +328,10 @@ def check(root=None, out_dir=None, profile: str = PLUGIN_PROFILE) -> list:
     return drifts
 
 
-def write(root=None, out_dir=None, profile: str = PLUGIN_PROFILE) -> list:
-    """Render every source into agents/. Returns the paths that changed."""
-    d = agent_dir(root) if out_dir is None else Path(out_dir)
+def write(root=None, out_dir=None, profile: str = "") -> list:
+    """Render every source into the output dir. Returns the paths changed."""
+    d = output_dir(root, out_dir)
+    profile = profile or default_profile(root)
     d.mkdir(parents=True, exist_ok=True)
     changed = []
     for agent in agents(root):
@@ -324,7 +366,7 @@ def _features_arg(spec):
 def _cmd_list(a):
     if getattr(a, "json", False):
         import json
-        print(json.dumps({"agents": agents(a.root), "plugin_only": list(PLUGIN_ONLY),
+        print(json.dumps({"agents": agents(a.root), "plugin_only": list(plugin_only(a.root)),
                           "profiles": list(PROFILES)}, indent=2))
     else:
         for name in agents(a.root):
@@ -347,20 +389,21 @@ def _cmd_write(a):
     for p in changed:
         print(f"wrote {p}")
     if not changed:
-        print("agents/ already up to date")
+        print("rendered prompts already up to date")
     return 0
 
 
 def _cmd_check(a):
-    drifts = check(a.root, a.dir, a.profile)
+    profile = a.profile or default_profile(a.root)
+    drifts = check(a.root, a.dir, profile)
     if not drifts:
-        print(f"prompts ok ({len(agents(a.root))} agents, profile {a.profile})")
+        print(f"prompts ok ({len(agents(a.root))} agents, profile {profile})")
         return 0
     for d in drifts:
         print(f"drift: {d}", file=sys.stderr)
         if d.diff and not a.quiet:
             sys.stderr.write(d.diff)
-    print(f"{len(drifts)} agent file(s) differ from prompts/; "
+    print(f"{len(drifts)} rendered file(s) differ from prompts/; "
           f"run `cc-fuzzer prompts write`", file=sys.stderr)
     return 1
 
@@ -391,7 +434,8 @@ def register_cli(subparsers):
 
     v = verb("render", "render one agent to stdout")
     v.add_argument("agent")
-    v.add_argument("--profile", default=PLUGIN_PROFILE, choices=PROFILES)
+    v.add_argument("--profile", default="", choices=PROFILES,
+                   help="default: prompts/render.json")
     v.add_argument("--features", default=None,
                    help="e.g. --features=-advisory_lookup,-logic_oracles "
                         "(default: $CC_FUZZER_FEATURES)")
@@ -400,13 +444,15 @@ def register_cli(subparsers):
     v.add_argument("-o", "--output")
     v.set_defaults(func=_run(_cmd_render))
 
-    v = verb("write", "render every source into agents/")
-    v.add_argument("--dir", help="output dir (default: <root>/agents)")
-    v.add_argument("--profile", default=PLUGIN_PROFILE, choices=PROFILES)
+    v = verb("write", "render every source into the output dir")
+    v.add_argument("--dir", help="output dir (default: render.json output_dir)")
+    v.add_argument("--profile", default="", choices=PROFILES,
+                   help="default: prompts/render.json")
     v.set_defaults(func=_run(_cmd_write))
 
-    v = verb("check", "fail if agents/ drifted from prompts/")
-    v.add_argument("--dir", help="agents dir (default: <root>/agents)")
-    v.add_argument("--profile", default=PLUGIN_PROFILE, choices=PROFILES)
+    v = verb("check", "fail if the rendered copies drifted from prompts/")
+    v.add_argument("--dir", help="output dir (default: render.json output_dir)")
+    v.add_argument("--profile", default="", choices=PROFILES,
+                   help="default: prompts/render.json")
     v.add_argument("-q", "--quiet", action="store_true", help="names only, no diff")
     v.set_defaults(func=_run(_cmd_check))

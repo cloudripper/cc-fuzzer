@@ -32,6 +32,7 @@ a97aea251865b7d2d9036163b233ea1e  prompts/harness-writer.md
 894152418c85952475b816d6f57f71a4  prompts/profiles/host.md
 90a23c4f13e74752b07c22b2ce78e9de  prompts/profiles/nix.md
 f5b2665c2b5d3d879494620d62086ded  prompts/profiles/oss-fuzz.md
+f218a16fc2989a580d120dd9a8087415  prompts/render.json
 1371bc6493905f20ff48cb7bf54deee0  prompts/reporting-agent.md
 fc52cdc9b4466f9a0b20df91ac8035db  prompts/seed-generator.md
 8386755db622b6af472d340df7b9694c  references/logic-oracle-patterns.md
@@ -129,7 +130,7 @@ a8e96344bbead5cc831262a078e5a489  src/cc_fuzzer_core/prescan/__init__.py
 a2af8e85cc92935a8fd973747a0cb6b2  src/cc_fuzzer_core/prescan/code_review_prescan.py
 a1359881b6f12e7f34457f4ecaf39d4a  src/cc_fuzzer_core/prescan/merge.py
 fdbe9c652691f3fc1132df68d060d907  src/cc_fuzzer_core/prescan/sast_scan.py
-bd5c4e12e9959d00c213c089ece09737  src/cc_fuzzer_core/prompts.py
+c1888e45a51159c8e090d74186ad92f7  src/cc_fuzzer_core/prompts.py
 512501ecc74b66966d8484caafb7318d  src/cc_fuzzer_core/quarantine.py
 4d6d423c89ad954f275dd88a937b64fb  src/cc_fuzzer_core/schema/__init__.py
 e824df09e2a3178e28605bfad407daeb  src/cc_fuzzer_core/schema/checks.py

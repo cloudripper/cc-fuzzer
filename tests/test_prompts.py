@@ -38,14 +38,19 @@ class SourcesTest(unittest.TestCase):
         for agent in prompts.agents(REPO):
             self.assertTrue((AGENTS / f"{agent}.md").is_file(), agent)
 
+    def test_render_json_declares_the_host_layout(self):
+        doc = prompts.render_settings(REPO)
+        self.assertEqual(doc["output_dir"], "agents")
+        self.assertIn(doc["profile"], prompts.PROFILES)
+
     def test_plugin_only_agents_have_no_source(self):
-        for agent in prompts.PLUGIN_ONLY:
+        for agent in prompts.plugin_only(REPO):
             self.assertTrue((AGENTS / f"{agent}.md").is_file(), agent)
             self.assertFalse((SOURCES / f"{agent}.md").exists(), agent)
 
     def test_agents_dir_is_sources_plus_plugin_only(self):
         have = {p.stem for p in AGENTS.glob("*.md")}
-        self.assertEqual(have, set(prompts.agents(REPO)) | set(prompts.PLUGIN_ONLY))
+        self.assertEqual(have, set(prompts.agents(REPO)) | set(prompts.plugin_only(REPO)))
 
     def test_unknown_agent_is_an_error(self):
         with self.assertRaises(prompts.PromptError):
@@ -217,7 +222,7 @@ class CliSurfaceTest(unittest.TestCase):
     def test_bad_agent_exits_2(self):
         r = run_cli("prompts", "render", "nix-builder")
         self.assertEqual(r.returncode, 2)
-        self.assertIn("plugin-only", r.stderr)
+        self.assertIn("host-only", r.stderr)
 
 
 if __name__ == "__main__":

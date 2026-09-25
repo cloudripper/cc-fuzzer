@@ -1,0 +1,6 @@
+{
+  "_comment": "Where this repo's host (the Claude Code plugin) keeps its rendered prompts, and what it renders them with. The core reads this instead of assuming a layout; see UPDATE_ROADMAP.md §3 and the isolation contract in tests/test_isolation.py.",
+  "output_dir": "agents",
+  "profile": "nix",
+  "plugin_only": ["nix-builder"]
+}
