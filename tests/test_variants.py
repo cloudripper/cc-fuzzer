@@ -134,7 +134,7 @@ class SpecTest(unittest.TestCase):
 class BackendEnumTest(unittest.TestCase):
     def test_backends_include_the_new_builders(self):
         self.assertEqual(sorted(enums.BUILD_BACKEND),
-                         ["legacy", "nix", "oss-fuzz", "script"])
+                         ["clang", "legacy", "nix", "oss-fuzz", "script"])
 
     def test_backend_enum_is_registered(self):
         r = run_cli("enums", "print", "build_backend")

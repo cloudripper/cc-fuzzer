@@ -9,7 +9,7 @@
 # plugin releases (the submodule tracks upstream; the bundled pack may be
 # refreshed out of band), so drift there is expected and must not trip the
 # integrity check. The SAST driver (src/cc_fuzzer_core/prescan/sast_scan.py) IS tracked.
-fa596a90705ef6700cc43dcbe97d899c  STATE_SCHEMA.md
+27efaf3b889cdbb5e32ed85591bbd618  STATE_SCHEMA.md
 8fae3fd33e21efd25b36a89856d5e076  bin/cc-fuzzer
 6b4787d332f9fc179dfa1823ec79050d  dictionaries/INDEX.md
 070c1e76492ecaf0bf37c051628df96c  dictionaries/bidi-controls.dict
@@ -103,12 +103,12 @@ cc472daddbbcaf2ccd1727e0fbbce637  scripts/stop-fuzzer.sh
 fb4b69a64e237630bc843fc4f3da335f  scripts/tick-coverage-roundup.sh
 66eea33324630e35cbef70f4cb85c615  scripts/update-current.sh
 b31fd19c17b10ca9c3604e67289155a0  scripts/validate-state.sh
-c4d1dff681a96d34f0ac8fccecbc707e  scripts/write-harness-built.sh
+a7dc0b04ea7777c8acdae764cd238ec0  scripts/write-harness-built.sh
 16c2e934e2a033b535601df6cde657ff  scripts/yolo-route.sh
 767ab4f0522d6d8e429608cc5cb11717  scripts/yolo-state.sh
 7a0c7c6f7ff94edcf52f367204c63f55  src/cc_fuzzer_core/__init__.py
 81df487b0971d3b41a1613371d67df65  src/cc_fuzzer_core/__main__.py
-3d2391e0857b532e63305ce2a7b90bd1  src/cc_fuzzer_core/builders/__init__.py
+fe3b8d694186b83378094e38a6b18f61  src/cc_fuzzer_core/builders/__init__.py
 9cdf97f5b1fa3e48755cabf5868ef95e  src/cc_fuzzer_core/builders/clang.py
 9a695b380ea3f7b6d498995c7147a260  src/cc_fuzzer_core/builders/nix.py
 48b5c0243876cf7c1af7724bf4559cb5  src/cc_fuzzer_core/builders/ossfuzz.py
@@ -123,7 +123,7 @@ edd2ef13c1a14be5d257860ed72a34e8  src/cc_fuzzer_core/crash/classify.py
 16996fd420eeee27bbf1fd8ea9906bd2  src/cc_fuzzer_core/crash/detect.py
 126ddcd5c81cf200d43f5b54d3c7bebf  src/cc_fuzzer_core/data/models.json
 96647041941d2e3a73c59f26581a607b  src/cc_fuzzer_core/delta.py
-560d8a6a33776311890ec54b42467455  src/cc_fuzzer_core/enums.py
+488745cb58490161b0b7802d6d66ce12  src/cc_fuzzer_core/enums.py
 5fcdb1075b43c3a193d755781fdd3939  src/cc_fuzzer_core/events.py
 ff05da461b38bef049093e0f855d4b2f  src/cc_fuzzer_core/features.py
 9aca91f5f197697b3cedb844a9c8f336  src/cc_fuzzer_core/findings.py

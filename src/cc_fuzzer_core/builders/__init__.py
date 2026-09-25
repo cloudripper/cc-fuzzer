@@ -115,6 +115,76 @@ def failed_required(spec: Mapping, res: Mapping) -> list:
 
 
 # ---------------------------------------------------------------------------
+# recording: build-result/v1 -> the harness record
+# ---------------------------------------------------------------------------
+
+# variant -> (the flag carrying its path, the flag turning it off, the flag
+# carrying the reason). None where the record has no such field.
+RECORD_FLAGS = {
+    "fuzzer":   ("--harness-binary", None, None),
+    "coverage": ("--coverage-binary", "--no-coverage", "--coverage-disabled-reason"),
+    "verify":   ("--verify-binary", "--no-verify", None),
+    "cmplog":   ("--cmplog-binary", "--no-cmplog", "--cmplog-disabled-reason"),
+    "symcc":    ("--symcc-binary", None, None),
+}
+
+# Why a variant has no binary, in the words the harness record wants. A
+# skipped variant was turned off by the campaign; an unsupported one was asked
+# for and could not be built here. Recording both as "disabled" without the
+# reason is how a campaign ends up unable to say why it has no verify binary.
+_NO_BINARY_REASON = {
+    SKIPPED: "not requested for this harness",
+    UNSUPPORTED: "not supported by this build backend",
+    FAILED: "build failed",
+    DELEGATED: "build was delegated and never reported back",
+}
+
+
+def record_args(res: Mapping, *, spec: Mapping | None = None) -> list:
+    """The write-harness-built arguments that record this build-result/v1.
+
+    Raises BuildError when a REQUIRED variant is missing, because a harness
+    record without its fuzzing binary is not a degraded build to write down,
+    it is a failed one.
+    """
+    if res.get("schema") != RESULT_SCHEMA:
+        raise BuildError(f"expected {RESULT_SCHEMA}, got {res.get('schema')!r}")
+    rows = res.get("variants") or {}
+    if spec is not None:
+        missing = failed_required(spec, res)
+        if missing:
+            raise BuildError("required variant(s) not built: " + ", ".join(missing))
+    # A variant the declaration marks required must be PRESENT and ok. An
+    # absent row is not "nothing to record": it is a build that never produced
+    # the binary, and recording around it makes the campaign look ready.
+    for v in _variants.DEFAULTS:
+        if v.required and rows.get(v.name, {}).get("status") != OK:
+            row = rows.get(v.name) or {}
+            raise BuildError(
+                f"{v.name}: {row.get('status', 'not built')}"
+                f" ({row.get('reason', 'no entry in the build result')})")
+    out = ["--build-backend", res.get("backend", "")]
+    for name, (path_flag, off_flag, reason_flag) in RECORD_FLAGS.items():
+        row = rows.get(name)
+        if row is None:
+            if off_flag:
+                out += [off_flag]
+                if reason_flag:
+                    out += [reason_flag, _NO_BINARY_REASON[SKIPPED]]
+            continue
+        if row.get("status") == OK and row.get("binary"):
+            out += [path_flag, row["binary"]]
+            continue
+        if off_flag:
+            out += [off_flag]
+            if reason_flag:
+                reason = row.get("reason") or _NO_BINARY_REASON.get(
+                    row.get("status"), "not built")
+                out += [reason_flag, reason]
+    return out
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -136,6 +206,20 @@ def _cmd_plan(a):
     if getattr(a, "out_dir", None):
         kw["out_dir"] = a.out_dir
     print(json.dumps(plan_for(_config(a), a.harness, a.backend, **kw), indent=2))
+    return 0
+
+
+def _cmd_record_args(a):
+    with open(a.result) as f:
+        res = json.load(f)
+    spec = None
+    if a.harness or a.config:
+        spec = _variants.spec(_config(a), a.harness or res.get("harness", ""))
+    args = record_args(res, spec=spec)
+    if a.null:
+        sys.stdout.write("\0".join(args))
+    else:
+        print("\n".join(args))
     return 0
 
 
@@ -162,6 +246,14 @@ def register_cli(subparsers):
 
     v = verbs.add_parser("backends", help="the build backends the core knows")
     v.set_defaults(func=_run(_cmd_backends))
+
+    v = verbs.add_parser("record-args",
+                         help="write-harness-built arguments for a build-result/v1")
+    v.add_argument("--result", required=True, help="a build-result/v1 JSON file")
+    v.add_argument("--harness", default="", help="check the result against this harness's spec")
+    v.add_argument("--config", help="read this fuzz-config.json instead of the campaign's")
+    v.add_argument("-0", "--null", action="store_true", help="NUL-separate (for xargs -0)")
+    v.set_defaults(func=_run(_cmd_record_args))
 
     v = verbs.add_parser("plan", help="the build-plan/v1 for a harness (runs nothing)")
     v.add_argument("--harness", default="")

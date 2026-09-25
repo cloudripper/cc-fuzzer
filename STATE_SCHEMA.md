@@ -302,7 +302,7 @@ The canonical per-harness record is **`harness-built/v7`** (defined in full, inc
 - `verify_binary`: path to the ASan-only standalone binary (`-fsanitize=address,undefined`, no `-fsanitize=fuzzer`, uses `cov_main.c` shim). Built by harness-writer in COLD mode. Used by crash-triager for Stage 2 cross-verification to filter harness artifacts. `null` means the build was not attempted or failed (see `fuzz/state/verify-build-failed.log`).
 - `dict_files`: array of paths to libFuzzer-format dictionary files. Both project-local (`fuzz/dictionaries/`) and plugin-bundled (absolute paths under `${CLAUDE_PLUGIN_ROOT}/dictionaries/`) are accepted.
 - `name`: per-harness identifier, unique within the campaign, matching `^[a-z0-9][a-z0-9_-]{0,31}$`. Referenced from `fuzz-config.json:fuzzer_slots[].harness`, snapshot filename prefixes, finding records, and per-harness paths.
-- `build_backend`: one of `nix | legacy` (see "Nix Build Backend"). Set on first build only; thereafter immutable except via `harness-set.sh fallback-backend` / `promote-to-nix`.
+- `build_backend`: one of `nix | legacy | script | clang | oss-fuzz` (see "Nix Build Backend" for `nix`, and UPDATE_ROADMAP.md §6 for the spec-driven builders). Set on first build only; thereafter immutable except via `harness-set.sh fallback-backend` / `promote-to-nix`.
 
 ### `state/current.json` — REWRITABLE
 
@@ -1991,7 +1991,7 @@ Phases 1–4 are shipped (v0.23.0): the schema + finding fields + prescan `oracl
 
 ### Build Backend Commitment
 
-Each harness record in `harnesses.json` carries `build_backend: "nix" | "legacy"`. Once written it can only change via `scripts/harness-set.sh fallback-backend` or `scripts/harness-set.sh promote-to-nix`. Agents and orchestrators must **never** modify this field as a side-effect of a normal rebuild.
+Each harness record in `harnesses.json` carries `build_backend: "nix" | "legacy" | "script" | "clang" | "oss-fuzz"`. Once written it can only change via `scripts/harness-set.sh fallback-backend` or `scripts/harness-set.sh promote-to-nix`. Agents and orchestrators must **never** modify this field as a side-effect of a normal rebuild.
 
 **Discriminator rule:** `harness-writer` sets `build_backend` on first build only. Decision: if `$CC_FUZZER_FHS=1` AND `fuzz/nix-deps.nix` exists AND all nix variants build successfully → `"nix"`. Otherwise → `"legacy"`. After first build, the committed value is honored on every rebuild.
 

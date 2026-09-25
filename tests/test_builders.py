@@ -258,6 +258,78 @@ class ClangBuildTest(unittest.TestCase):
             self.assertIn("afl-clang-fast++", row["reason"])
 
 
+class RecordArgsTest(unittest.TestCase):
+    """build-result/v1 -> the flags write-harness-built already understands."""
+
+    def _res(self, **rows):
+        return builders.result("parser", "clang", rows)
+
+    def test_paths_become_binary_flags(self):
+        args = builders.record_args(self._res(
+            fuzzer={"status": "ok", "binary": "b/f"},
+            coverage={"status": "ok", "binary": "b/c"},
+            verify={"status": "ok", "binary": "b/v"}))
+        self.assertEqual(args[:2], ["--build-backend", "clang"])
+        for flag, path in (("--harness-binary", "b/f"), ("--coverage-binary", "b/c"),
+                           ("--verify-binary", "b/v")):
+            self.assertEqual(args[args.index(flag) + 1], path)
+
+    def test_a_missing_variant_is_disabled_with_a_reason(self):
+        args = builders.record_args(self._res(fuzzer={"status": "ok", "binary": "b/f"}))
+        self.assertIn("--no-coverage", args)
+        self.assertEqual(args[args.index("--coverage-disabled-reason") + 1],
+                         "not requested for this harness")
+
+    def test_unsupported_keeps_the_builder_s_own_reason(self):
+        args = builders.record_args(self._res(
+            fuzzer={"status": "ok", "binary": "b/f"},
+            cmplog={"status": "unsupported", "reason": "no AFL in this image"}))
+        self.assertEqual(args[args.index("--cmplog-disabled-reason") + 1],
+                         "no AFL in this image")
+
+    def test_a_failed_build_keeps_its_error(self):
+        args = builders.record_args(self._res(
+            fuzzer={"status": "ok", "binary": "b/f"},
+            coverage={"status": "failed", "reason": "no profile runtime"}))
+        self.assertEqual(args[args.index("--coverage-disabled-reason") + 1],
+                         "no profile runtime")
+
+    def test_a_missing_fuzzing_binary_is_an_error_not_a_record(self):
+        """A harness record without its fuzzing binary is a failed build, not
+        a degraded one -- writing it down would make the campaign look ready."""
+        with self.assertRaises(builders.BuildError) as cm:
+            builders.record_args(self._res(fuzzer={"status": "failed", "reason": "boom"}))
+        self.assertIn("boom", str(cm.exception))
+
+    def test_required_is_checked_against_the_spec(self):
+        spec = variants.spec({}, "parser")
+        with self.assertRaises(builders.BuildError):
+            builders.record_args(self._res(coverage={"status": "ok", "binary": "b/c"}),
+                                 spec=spec)
+
+    def test_a_foreign_document_is_refused(self):
+        with self.assertRaises(builders.BuildError):
+            builders.record_args({"schema": "build-plan/v1"})
+
+    def test_cli_emits_the_flags(self):
+        with tempfile.TemporaryDirectory() as td:
+            f = Path(td) / "r.json"
+            f.write_text(json.dumps(self._res(
+                fuzzer={"status": "ok", "binary": "b/f"},
+                verify={"status": "ok", "binary": "b/v"})))
+            r = run_cli("build", "record-args", "--result", str(f))
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("--verify-binary", r.stdout.split("\n"))
+
+    def test_cli_refuses_a_result_missing_the_required_variant(self):
+        with tempfile.TemporaryDirectory() as td:
+            f = Path(td) / "r.json"
+            f.write_text(json.dumps(self._res(
+                coverage={"status": "ok", "binary": "b/c"})))
+            r = run_cli("build", "record-args", "--result", str(f))
+            self.assertEqual(r.returncode, 2)
+
+
 class CliTest(unittest.TestCase):
     def test_backends(self):
         r = run_cli("build", "backends")
