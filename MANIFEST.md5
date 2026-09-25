@@ -115,7 +115,7 @@ fe3b8d694186b83378094e38a6b18f61  src/cc_fuzzer_core/builders/__init__.py
 48b5c0243876cf7c1af7724bf4559cb5  src/cc_fuzzer_core/builders/ossfuzz.py
 20ac54ed256dd5041ecfa708b7a51a90  src/cc_fuzzer_core/builders/script.py
 e9f82154f2827218549d284fe6a331dc  src/cc_fuzzer_core/builders/toolchain.py
-147f77697a5cfccd415d66e356775434  src/cc_fuzzer_core/cli.py
+e7e2cfca9677cdf3bc567dc74a6584f2  src/cc_fuzzer_core/cli.py
 b749542267f72f8d13d502718b1e6a7c  src/cc_fuzzer_core/cmplog.py
 546441c1cfd7f30452d96f205b7b8fca  src/cc_fuzzer_core/config.py
 82b020ef6ef7e983722bb0485f8d4d89  src/cc_fuzzer_core/coverage.py
@@ -127,6 +127,7 @@ edd2ef13c1a14be5d257860ed72a34e8  src/cc_fuzzer_core/crash/classify.py
 b4a327b96ea7e0f3f3786d50b1a3fc53  src/cc_fuzzer_core/crash/verifiers/__init__.py
 801c359f838b2557782307b3b64c8cad  src/cc_fuzzer_core/crash/verifiers/command.py
 f1774217b1b8c3afd3e5b8f7ced2b6eb  src/cc_fuzzer_core/crash/verifiers/realism.py
+1ababbfb70e3c4256a7cba6584820745  src/cc_fuzzer_core/crs.py
 5a7be1f37b34d774d4ea9f5664051169  src/cc_fuzzer_core/data/models.json
 96647041941d2e3a73c59f26581a607b  src/cc_fuzzer_core/delta.py
 8fabcb44c591fee602b0f0c33c9d618a  src/cc_fuzzer_core/enums.py
@@ -137,7 +138,9 @@ ff05da461b38bef049093e0f855d4b2f  src/cc_fuzzer_core/features.py
 24e0b9f93714c4b5fa5fe11393b08d06  src/cc_fuzzer_core/ledger.py
 445f232e9b42748712bbb56a30a747f6  src/cc_fuzzer_core/loop.py
 bb55e017ba8a659b9c8eccc1b73bec33  src/cc_fuzzer_core/manifest.py
+34a76dd2fdfc52e98d61da138af8e951  src/cc_fuzzer_core/minimize.py
 2c385e54cedae3970219c9de7d2d16b3  src/cc_fuzzer_core/models.py
+c1439f4a34147f025b03c39ed270cfd7  src/cc_fuzzer_core/patch.py
 e886a95f3444ff5e6fcce0985a0ef253  src/cc_fuzzer_core/paths.py
 a8e96344bbead5cc831262a078e5a489  src/cc_fuzzer_core/prescan/__init__.py
 a2af8e85cc92935a8fd973747a0cb6b2  src/cc_fuzzer_core/prescan/code_review_prescan.py

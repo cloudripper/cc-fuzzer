@@ -1,26 +1,26 @@
 # Embedding cc-fuzzer in a CRS
 
-`cc_fuzzer_core` is the deterministic driver for the whole analysis. The Claude
-Code plugin is one consumer of it; a CRS entry point is another. Neither owns
-the logic — both call the same code, and where they differ, the difference is
-data (a profile, a config block, a runner), not a second implementation.
+`cc_fuzzer_core` is the deterministic driver for the analysis. The Claude Code
+plugin is one consumer; a CRS is another. Both call the same code, and where
+they differ the difference is data — a profile, a config block, a runner — not
+a second implementation.
 
-What you supply: an agent runner, a loop, and a build backend.
-What the core supplies: everything else.
+**You almost certainly do not want the tick loop.** It exists because the
+plugin has no scheduler of its own. A CRS already owns scheduling, fuzzer
+lifecycle, corpus sync and a listener that hears about crashes. What is worth
+importing is the judgement either side of the fuzzer, in two request/response
+seams:
 
 ```
-                     your CRS entry point
-                            │
-              ┌─────────────┴─────────────┐
-              │                           │
-      loop.step(campaign, runner)   prompts.render(agent, "oss-fuzz")
-              │                           │
-              ▼                           ▼
-   deterministic phases            the text you send to the model
-   (state, liveness, crash
-    detect, coverage, derive,
-    evaluate, halts)  ──────────►  a Directive you act on
+   your listener ──► crs.triage(record, crash)      ──► a minimized, verified PoV
+   your patcher  ──► crs.check_patch(record, patch) ──► fixes / does_not_fix /
+                                                        breaks_tests / stale
 ```
+
+Both exist because the expensive mistake in a scored run is submitting
+something that is not true. `triage` protects the finding; `check_patch`
+protects the fix. Neither needs a tick, a `current.json`, or a scheduler —
+`triage` needs one dict saying where the binaries are.
 
 ---
 
@@ -28,91 +28,138 @@ What the core supplies: everything else.
 
 ```bash
 pip install /path/to/cc-fuzzer          # or: pip install cc-fuzzer-core
-cc-fuzzer --version                     # console script lands on PATH
+cc-fuzzer --version
 ```
 
 The wheel carries its own data (prompts, rules, dictionaries, templates,
-`STATE_SCHEMA.md`, `models.json`), so nothing outside the package is needed.
-`CC_FUZZER_ROOT` is **not** required for an installed core — set it only when
-you want to override where that data is read from.
+`STATE_SCHEMA.md`, `models.json`). `CC_FUZZER_ROOT` is **not** required.
 
-Verify the isolation contract holds in your image:
+## 2. Seam one: a crash arrives
+
+```python
+from cc_fuzzer_core import crs
+
+record = {"verify_binary": "/out/parser_verify"}     # all the state it needs
+cfg    = {"verification": {"final_step": "command:/opt/crs/oracle.sh"}}
+
+r = crs.triage(record, "/crashes/x.bin", harness="parser", config=cfg)
+if r.submittable:
+    submit(r.pov, r.stack_hash)        # r.pov is the MINIMIZED input
+```
+
+`triage` does four things, in this order, and stops as soon as the answer is
+known:
+
+| | |
+|---|---|
+| **replay** | deterministically, 3×, on the binary §12 selects — never an instrumented build |
+| **minimize** | smallest input reproducing **the same bug** (see §3) |
+| **verify** | your oracle, via `verification.final_step` |
+| **marker** | only if confirmed, and only if you pass a campaign |
+
+`status` is one of `confirmed`, `rejected`, `inconclusive`, `not_a_crash`,
+`flaky`. Read **`r.submittable`** rather than `status == "confirmed"`: it also
+requires `evidence_grade == "strong"`. A crash shown only on the fuzzing
+binary — because no verify binary was built — is good enough to triage and not
+good enough to submit.
+
+Three distinctions the adapter refuses to collapse, because each leads
+somewhere different:
+
+- `flaky` ≠ `not_a_crash` — a real bug with an unreliable trigger
+- `inconclusive` ≠ `rejected` — the oracle had a bad day vs the oracle said no
+- `weak` ≠ `strong` evidence — triage-grade vs submission-grade
+
+## 3. Minimization, and the trap in it
+
+A fuzzer's reproducer is whatever buffer happened to trip the bug; 4KB where
+eight bytes matter is normal. The short form is worth more than tidiness: it
+makes the essential cause legible, and two long inputs that look like separate
+findings often reduce to the same few bytes.
 
 ```bash
-cd /tmp && env -u CLAUDE_PLUGIN_ROOT -u CC_FUZZER_ROOT \
-  python -c "import cc_fuzzer_core.loop, cc_fuzzer_core.variants; print('ok')"
+cc-fuzzer minimize run crash.bin --harness parser --json
+# 4096 -> 4 bytes (99.9% smaller), same bug 530ba862… -> crash.bin.min
 ```
 
-## 2. The campaign directory
+**The invariant is that it is the same bug.** Delta debugging will happily
+shrink an input until it crashes *somewhere else* — smaller, still a crash, and
+a different finding. Every candidate must reproduce with the same stack hash,
+not merely crash:
 
-Everything the core reads and writes lives under one `fuzz/` tree next to the
-target. `paths.campaign()` resolves it from the cwd; `FUZZ_ROOT` and
-`FUZZ_STATE_DIR` override it.
+```
+crash  ≠  crash-with-the-same-cause
+```
+
+Budgets are enforced (`max_probes`, `max_rounds`), and a search that runs out
+mid-step returns the **original**, never a smaller input nobody verified.
+
+## 4. Seam two: a patch was written
 
 ```python
-from cc_fuzzer_core.paths import campaign
-c = campaign()          # Campaign(project_root, fuzz_root, state_dir)
+v = crs.check_patch(record, "fix.diff", r.pov, project_root="/src",
+                    config=cfg, harness="parser", stack_hash=r.stack_hash)
+if v.validated:
+    submit_patch("fix.diff")
 ```
 
-## 3. Drive the loop
+Five gates, in this order:
 
-`loop.step()` advances **exactly one tick** and returns. It never sleeps,
-never schedules, and never expects to be woken — your loop owns pacing.
+| gate | why |
+|---|---|
+| **before** | the PoV must crash **without** the patch |
+| **apply** | it applies cleanly |
+| **build** | a build failure is not a fix |
+| **after** | the PoV must stop reproducing |
+| **tests** | the project's own tests must still pass |
+
+`before` is the one everyone skips, and it is why `stale_finding` is a
+distinct outcome: applying a patch to a PoV that never reproduced looks
+*exactly* like success. `breaks_tests` is the other one that matters — a patch
+that stops the PoV by breaking the program passes every check except the test
+run.
+
+You supply apply/build/test, because a CRS already knows how to do all three
+for its target:
+
+```json
+{"patch": {"apply":  "command:git apply {patch}",
+           "build":  "command:./build.sh",
+           "test":   "command:ctest --output-on-failure",
+           "revert": "command:git checkout -- .",
+           "timeout_s": 900}}
+```
+
+`cc-fuzzer patch scope fix.diff` reports what the diff touches and flags a
+patch that only deletes code — the shape of "fixed" by removing the path that
+reaches the bug.
+
+## 5. The corpus seam, and what it is not
 
 ```python
-from cc_fuzzer_core import loop
-
-class Runner:
-    """The one thing the core cannot do: call a model."""
-    def run(self, agent, inputs, *, model="", budget=None):
-        text, usage = my_llm(prompt_for(agent, inputs), model=model)
-        return loop.AgentResult(
-            text,
-            tokens_in=usage.input_tokens,
-            tokens_out=usage.output_tokens,
-            model=model,                    # what you were actually served
-        )
-
-while True:
-    r = loop.step(c, Runner())
-    d = r.directive
-    if d.kind == loop.DISPATCH:   run_agent(d.agent, d.args)
-    elif d.kind == loop.RUN:      run_script(d.script)
-    elif d.kind == loop.WAIT:     sleep(d.delay_hint_s)
-    elif r.halted:                break            # halt | done | inactive
+crs.safe_seeds(campaign, harness)   # quarantine: reject inputs that would
+                                    # damage the machine (fork bombs, dd to
+                                    # a block device), not merely useless ones
+crs.dictionary(campaign, harness=…) # harvest cmplog comparison operands
+crs.delta_targets(campaign, range_) # what a diff touches
 ```
 
-**Report real token counts.** The cost cap is a measurement, not a
-declaration: `loop.step` writes your `AgentResult` usage to the ledger, and
-`yolo_evaluate` halts on it. Returning zeros disables the cap silently.
+**There is no turnkey "give me better seeds" API, and it would be dishonest to
+imply one.** Generating seeds, harnesses and mutators is a model's job.
+cc-fuzzer supplies the *prompts* for that (§6) plus the deterministic safety
+and harvesting above; you supply the model call.
 
-Prefer `prepare()` when your CRS does its own dispatching and only wants the
-deterministic half:
-
-```python
-pre = loop.prepare(c)        # {"state", "events", "phases", "digest"}
-```
-
-CLI equivalents: `cc-fuzzer tick run [--json]`, `cc-fuzzer tick run --prepare`,
-`cc-fuzzer tick route`, `cc-fuzzer tick state`.
-
-### Campaign states
-
-`cc-fuzzer tick state` → one of `none | running | stopped | stale | corrupted`.
-**`stale` and `corrupted` exist to stop the loop acting.** `route()` sends both
-to an assessment rather than to a build or a launch; treat them the same way.
-
-## 4. Render the prompts
+## 6. Prompts
 
 ```python
 from cc_fuzzer_core import prompts
-text = prompts.render("crash-triager", profile="oss-fuzz", frontmatter=False)
+text = prompts.render("seed-generator", profile="oss-fuzz", frontmatter=False)
 ```
 
-`profile="oss-fuzz"` yields text with no nix, no `CLAUDE_*`, no `apt-get`, and
-no Claude Code tool vocabulary. `frontmatter=False` drops the Claude Code
-frontmatter block. `prompts.agents()` lists what is available (14 agents;
-`nix-builder` and `ops-runner` are host adapters with no portable form).
+`profile="oss-fuzz"` yields text with no nix, no `CLAUDE_*`, no `apt-get` and
+no Claude Code tool vocabulary — verified across all 14 agents. The ones a CRS
+is most likely to want: `seed-generator`, `mutator`, `harness-writer`,
+`crash-triager`, `query-analyst`.
 
 Feature flags strip prompt sections and gate subsystems together:
 
@@ -120,7 +167,7 @@ Feature flags strip prompt sections and gate subsystems together:
 export CC_FUZZER_FEATURES="-advisory_lookup,-disclosure_reporting,-logic_oracles,-impact_tiering"
 ```
 
-## 5. Build
+## 7. Build
 
 Variants are declared as **needs** (purpose, sanitizers, instrumentation, link
 mode), and a backend translates them:
@@ -152,7 +199,7 @@ cc-fuzzer build record-args --result build-result.json
 unsupported means it was asked for and this image cannot. §12 needs the
 difference.
 
-## 6. Plug in your oracle
+## 8. Plug in your oracle
 
 This is the integration point that matters most for a CRS: the **final
 verification step** is swappable.
@@ -177,7 +224,7 @@ folding them into `rejected` silently discards real findings.
 Other forms: `python:module:callable`, or a name registered under the
 `cc_fuzzer.verifiers` entry point group.
 
-## 7. What a confirmed finding looks like
+## 9. What a confirmed finding looks like
 
 `pipeline.finalize()` is the **only** code that creates `fuzz/findings/<id>/`,
 and only after a verifier confirms. It writes `<id>/.verified` last, atomically
@@ -194,7 +241,7 @@ verification, the marker no longer describes what is on disk and the finding
 reads as unverified again. **Do not create finding directories yourself** — the
 API refuses it and so does the hook.
 
-## 8. Which binary may run what
+## 10. Which binary may run what
 
 A crash reproduced on an instrumented binary is evidence about the
 instrumentation. The core decides, and refuses rather than falling back:
@@ -230,7 +277,7 @@ fi
 To tell a refusal from a failure, read `decision` from `--json` (`deny` vs
 `error`) — explicitly, rather than inferring it from a status code.
 
-## 9. Budgets and accounting
+## 11. Budgets and accounting
 
 ```bash
 cc-fuzzer ledger spend --json       # measured tokens and usd, by agent/model
@@ -249,7 +296,7 @@ ledger.append(c, agent="crash-triager",
 
 `call_id` makes it idempotent — the same call reported twice counts once.
 
-## 10. Smoke test your integration
+## 12. Smoke test your integration
 
 ```bash
 cc-fuzzer tick state                  # none|running|stopped|stale|corrupted
@@ -278,12 +325,57 @@ cc-fuzzer ledger spend --json
    pins the CPU budget so `fuzz_forks` does not vary with the host.
 6. **Never hand-create `fuzz/findings/<id>/`.** It is the claim that something
    was verified.
+7. **Read `submittable`, not `status == "confirmed"`.** Confirmed on weak
+   evidence (no verify binary was built) is triage-grade, not
+   submission-grade.
+8. **A minimizer that only checks "still crashes" will hand you a different
+   bug.** `minimize` preserves the stack hash; if you roll your own, do the
+   same.
+9. **Validate patches against a PoV that reproduces first.** The `before` gate
+   returns `stale_finding` for a reason: patching a PoV that never crashed
+   looks exactly like success.
+
+---
+
+## Appendix: the tick loop (you probably don't want this)
+
+`loop.step()` advances one campaign by exactly one tick and returns a
+directive. It exists for a host with **no scheduler of its own** — the Claude
+Code plugin. If your CRS already schedules work, owns fuzzer lifecycle and has
+a crash listener, the seams above are the right shape and this is not.
+
+It is here because one case does suit it: driving a single target end to end
+with no surrounding system, where you want cc-fuzzer to decide what to do next.
+
+```python
+from cc_fuzzer_core import loop
+while True:
+    r = loop.step(campaign, my_runner)   # never sleeps, never schedules
+    d = r.directive
+    if d.kind == loop.WAIT: sleep(d.delay_hint_s)
+    elif r.halted: break
+```
+
+`my_runner.run(agent, inputs, *, model, budget)` returns a `loop.AgentResult`
+carrying real token counts; the driver writes them to the ledger, which is
+what makes `cost_cap` a measurement rather than a declaration.
+
+`cc-fuzzer tick state` is worth knowing even if you skip the loop: it returns
+`none | running | stopped | stale | corrupted`, and **`stale` and `corrupted`
+exist to stop a caller acting** — state that failed validation, or a target
+source that moved under the harness.
 
 ## Reference
 
 | Need | Module | CLI |
 |---|---|---|
-| one tick | `loop` | `tick run` |
+| **triage a crash** | `crs.triage` | `crs triage` |
+| **minimize a PoV** | `minimize` | `minimize run` |
+| **validate a patch** | `crs.check_patch`, `patch` | `patch validate`, `patch scope` |
+| seed safety | `crs.safe_seeds`, `quarantine` | `quarantine run` |
+| cmplog dictionary | `crs.dictionary`, `cmplog` | `cmplog extract` |
+| delta targets | `crs.delta_targets`, `delta` | `delta find` |
+| one tick (rarely) | `loop` | `tick run` |
 | campaign state | `loop` | `tick state` |
 | prompts | `prompts` | `prompts render` |
 | build | `variants`, `builders` | `variants spec`, `build plan` |
