@@ -1,6 +1,9 @@
 {
-  "_comment": "Where this repo's host (the Claude Code plugin) keeps its rendered prompts, and what it renders them with. The core reads this instead of assuming a layout; see UPDATE_ROADMAP.md §3 and the isolation contract in tests/test_isolation.py.",
+  "_comment": "Where this repo's host (the Claude Code plugin) keeps its rendered prompts, and what it renders them with. plugin_only lists the agents that are HOST ADAPTERS with no host-neutral form, so they stay hand-written in agents/ and the drift check ignores them: nix-builder drives the nix backend, and ops-runner exists only because ctxctl blocks Bash on Claude Code's main thread (a container's driver runs those scripts itself). The core reads this instead of assuming a layout; see UPDATE_ROADMAP.md \u00a73 and tests/test_isolation.py.",
   "output_dir": "agents",
   "profile": "nix",
-  "plugin_only": ["nix-builder"]
+  "plugin_only": [
+    "nix-builder",
+    "ops-runner"
+  ]
 }

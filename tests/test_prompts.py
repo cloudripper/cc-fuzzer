@@ -58,7 +58,7 @@ class SourcesTest(unittest.TestCase):
 
     def test_unknown_profile_is_an_error(self):
         with self.assertRaises(prompts.PromptError):
-            prompts.render("ops-runner", profile="gentoo", root=REPO)
+            prompts.render("mutator", profile="gentoo", root=REPO)
 
 
 class DriftTest(unittest.TestCase):
@@ -80,11 +80,11 @@ class DriftTest(unittest.TestCase):
             out.mkdir()
             for agent in prompts.agents(REPO):
                 (out / f"{agent}.md").write_text(prompts.render(agent, root=REPO))
-            victim = out / "ops-runner.md"
+            victim = out / "mutator.md"
             victim.write_text(victim.read_text() + "\nhand-edited\n")
             r = run_cli("prompts", "check", "--dir", str(out))
             self.assertEqual(r.returncode, 1)
-            self.assertIn("ops-runner", r.stderr)
+            self.assertIn("mutator", r.stderr)
             self.assertIn("prompts write", r.stderr)
 
     def test_write_is_idempotent(self):
@@ -107,17 +107,17 @@ class FrontmatterTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             over = Path(td) / "models.json"
             over.write_text(json.dumps({"tiers": {"fast": "haiku-next"}}))
-            text = prompts.render("ops-runner", root=REPO,
+            text = prompts.render("mutator", root=REPO,
                                   env={"CC_FUZZER_MODELS": str(over)})
             self.assertIn("model: haiku-next", text)
 
     def test_no_frontmatter_drops_the_block(self):
-        text = prompts.render("ops-runner", root=REPO, frontmatter=False)
+        text = prompts.render("mutator", root=REPO, frontmatter=False)
         self.assertFalse(text.startswith("---"))
         self.assertNotIn("\nmodel:", text.split("\n\n", 1)[0])
 
     def test_cli_no_frontmatter(self):
-        r = run_cli("prompts", "render", "ops-runner", "--no-frontmatter")
+        r = run_cli("prompts", "render", "mutator", "--no-frontmatter")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertFalse(r.stdout.startswith("---"))
 
@@ -164,6 +164,37 @@ class ProfileTest(unittest.TestCase):
             prompts.load_profile(profile, REPO)   # no exception
 
 
+class FullyResolvedTest(unittest.TestCase):
+    """Every profile must render every source completely. A marker that is not
+    on a line of its own silently survives into the output, which is how a raw
+    `<!-- profile:driver_bash_note -->` reached a committed agent file once."""
+
+    def test_no_marker_or_variable_survives_any_profile(self):
+        for profile in prompts.PROFILES:
+            for agent in prompts.agents(REPO):
+                text = prompts.render(agent, profile, root=REPO)
+                with self.subTest(profile=profile, agent=agent):
+                    self.assertNotIn("<!-- profile:", text)
+                    self.assertNotIn("<!-- slot:", text)
+                    self.assertNotRegex(text, r"\{\{[A-Za-z0-9_]+\}\}")
+
+    def test_no_host_env_var_survives_a_container_render(self):
+        for agent in prompts.agents(REPO):
+            text = prompts.render(agent, "oss-fuzz", root=REPO, frontmatter=False)
+            with self.subTest(agent=agent):
+                self.assertNotIn("CLAUDE_", text)
+
+    def test_sources_name_no_host(self):
+        """The sources themselves stay host-neutral: only profiles may name a
+        host's variables or tools."""
+        banned = ("CLAUDE_", "ctxctl", "TodoWrite", "SendMessage", "ScheduleWakeup")
+        for agent in prompts.agents(REPO):
+            src = (SOURCES / f"{agent}.md").read_text()
+            for word in banned:
+                with self.subTest(agent=agent, word=word):
+                    self.assertNotIn(word, src)
+
+
 class FeatureBlockTest(unittest.TestCase):
     def test_disabled_feature_block_is_stripped(self):
         body = ("keep\n\n<!-- feature:advisory_lookup -->\nCVE talk\n<!-- /feature -->\n"
@@ -182,7 +213,7 @@ class FeatureBlockTest(unittest.TestCase):
             self.assertIn("keep", off)
 
     def test_cli_features_flag(self):
-        r = run_cli("prompts", "render", "ops-runner", "--features=-advisory_lookup")
+        r = run_cli("prompts", "render", "mutator", "--features=-advisory_lookup")
         self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_cli_reads_the_features_env_var(self):

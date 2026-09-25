@@ -120,7 +120,7 @@ this taxonomy exists to prevent.
 
 For any `harness_gap` / `state_precondition`, add an optional `harness_action` naming the
 **cheapest reshape that reaches it**, so the orchestrator selects the right structural
-move (for the main thread to dispatch) instead of a blind "extend":
+move (for the {{driver}} to dispatch) instead of a blind "extend":
 
 | `harness_action` | meaning | extra fields |
 |---|---|---|

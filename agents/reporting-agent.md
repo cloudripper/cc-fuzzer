@@ -490,7 +490,7 @@ Bundle contents: `README.md`, `EXPLOIT.md`, `REACHABILITY.md`, `ENV.md`, `exploi
 To verify:
 
     cd fuzz/findings/f001/repro
-    ./build.sh                          # apt-get install libxml2-utils (no-op if installed)
+    ./build.sh                          # installs the tools the exploit needs (no-op if present)
     ./run.sh                            # setup → exploit → verify
     echo "Final exit: $?"               # 0 = cross-boundary secret leaked, primitive confirmed
 

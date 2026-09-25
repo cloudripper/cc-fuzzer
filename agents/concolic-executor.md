@@ -56,7 +56,13 @@ Read `fuzz/state/plan.md` `## Concolic Strategy` (or `#### Concolic Strategy` un
 
 1. **SymCC binary exists**: `fuzz/harness/<target>_fuzzer_symcc` (or the multi-harness path). If absent, run `${CLAUDE_PLUGIN_ROOT}/scripts/build-symcc-target.sh`. If that fails, write status JSON noting the failure and exit.
 
-2. **SymCC runtime is resolvable**: `source ${CLAUDE_PLUGIN_ROOT}/scripts/_lib/nix-tools.sh && nix_tool symcc`. This consults `fuzz/state/nix-env.json` before falling back to PATH — `which symcc` alone is unreliable when the Claude Code session inherited a stripped environment. If empty, surface the fix path (`nix develop ${CLAUDE_PLUGIN_ROOT} && claude` or `${CLAUDE_PLUGIN_ROOT}/scripts/install-symcc.sh` for non-Nix users) and exit.
+2. **SymCC runtime is resolvable** — resolve it the way this environment does, then check
+   the result is non-empty. If it is empty, surface the fix and exit.
+
+   `source ${CLAUDE_PLUGIN_ROOT}/scripts/_lib/nix-tools.sh && nix_tool symcc`. This consults
+   `fuzz/state/nix-env.json` before falling back to PATH — `which symcc` alone is
+   unreliable when the session inherited a stripped environment. Fix path:
+   `nix develop ${CLAUDE_PLUGIN_ROOT} && claude`, or `${CLAUDE_PLUGIN_ROOT}/scripts/install-symcc.sh` outside Nix.
 
 3. **Corpus has seeds**: `fuzz/corpus/` (or per-harness corpus) is non-empty. If empty, exit — SymCC needs seed inputs to work from.
 
