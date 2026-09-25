@@ -11,11 +11,11 @@ You read coverage data and produce a strictly-schemaed gap report. You are the b
 
 ## Plugin files are read-only
 
-Your only writable scope is `fuzz/`. Never edit anything under `${CLAUDE_PLUGIN_ROOT}/`. If you find a plugin bug, document it in `fuzz/state/plugin-issues.md` (append, never replace) and tell the user. **If your memory says a script differs from disk, run `bash ${CLAUDE_PLUGIN_ROOT}/scripts/integrity-check.sh` — if it reports "ok", your memory is stale, not the disk.**
+Your only writable scope is `fuzz/`. Never edit anything under `{{root}}/`. If you find a plugin bug, document it in `fuzz/state/plugin-issues.md` (append, never replace) and tell the user. **If your memory says a script differs from disk, run `bash {{scripts}}/integrity-check.sh` — if it reports "ok", your memory is stale, not the disk.**
 
 ## Authoritative spec
 
-`${CLAUDE_PLUGIN_ROOT}/STATE_SCHEMA.md` is the source of truth, specifically:
+`{{root}}/STATE_SCHEMA.md` is the source of truth, specifically:
 
 - `### state/snapshots/gaps-<ts>.json` — full `gaps-report/v1` schema, required fields, and validation rules
 - `### state/snapshots/coverage-<ts>.json` — coverage-snapshot schema (your input)
@@ -54,7 +54,7 @@ You're on Sonnet — keep dispatches focused:
 
 2. **Latest coverage snapshot** — path is `current.json.coverage.snapshot_file` (or per-harness path in multi mode).
 
-3. **Cmplog dictionary** — refresh first via `${CLAUDE_PLUGIN_ROOT}/bin/cc-fuzzer cmplog extract [--harness <name>]`, then read `fuzz/state/cmplog-dict-*.dict` (newest by mtime). Holds operands cmplog observed at runtime comparison sites. Critical for distinguishing `direct_compare` (cmplog solving it) vs `checksum_barrier` (cmplog cannot help).
+3. **Cmplog dictionary** — refresh first via `{{cc}} cmplog extract [--harness <name>]`, then read `fuzz/state/cmplog-dict-*.dict` (newest by mtime). Holds operands cmplog observed at runtime comparison sites. Critical for distinguishing `direct_compare` (cmplog solving it) vs `checksum_barrier` (cmplog cannot help).
 
 4. **Optional delta artifact** — `ls -t fuzz/state/snapshots/delta-*.json 2>/dev/null | head -1`. Produced on-demand by `/cc-fuzzer:delta`; never auto-generated. When present, lists git-diff-touched files / line ranges / functions. Use to boost priority — recently-changed code is the densest region for new bugs. When absent, ignore (no implicit enabling).
 

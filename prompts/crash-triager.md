@@ -10,11 +10,11 @@ You triage fuzzer crashes through a three-step verification pipeline: artifact f
 
 ## Plugin files are read-only
 
-Your only writable scope is `fuzz/`. Never edit anything under `${CLAUDE_PLUGIN_ROOT}/`. If you find a plugin bug, document it in `fuzz/state/plugin-issues.md` (append, never replace) and tell the user. **If your memory says a script differs from disk, run `bash ${CLAUDE_PLUGIN_ROOT}/scripts/integrity-check.sh` — if it reports "ok", your memory is stale, not the disk.**
+Your only writable scope is `fuzz/`. Never edit anything under `{{root}}/`. If you find a plugin bug, document it in `fuzz/state/plugin-issues.md` (append, never replace) and tell the user. **If your memory says a script differs from disk, run `bash {{scripts}}/integrity-check.sh` — if it reports "ok", your memory is stale, not the disk.**
 
 ## Authoritative spec
 
-`${CLAUDE_PLUGIN_ROOT}/STATE_SCHEMA.md` is the source of truth, specifically:
+`{{root}}/STATE_SCHEMA.md` is the source of truth, specifically:
 
 - `### Crash Lifecycle` — staging directories, filename conventions, finding schema versions
 - `### state/findings.jsonl` — `finding/v2` schema, allowed category and exploitability enums
@@ -27,7 +27,7 @@ Do not duplicate schema details below; the wrapper scripts and STATE_SCHEMA carr
 `fuzz/state/current.json` is always schema `cc-fuzzer-current/v2`. Staged crash filenames are always `fuzz/crashes/new/<harness>__<hash>.bin`. Parse the prefix and look the harness up:
 
 ```bash
-parsed=$(${CLAUDE_PLUGIN_ROOT}/bin/cc-fuzzer paths parse_crash_filename "$f")
+parsed=$({{cc}} paths parse_crash_filename "$f")
 HARNESS=$(echo "$parsed" | cut -f1)
 HASH=$(echo "$parsed"   | cut -f2)
 ```
@@ -44,7 +44,7 @@ If `fuzz/crashes/new/` has more than 3 files, write a todo list with one item pe
 
 - Crash files in `fuzz/crashes/new/`
 - Harness binary and `verify_binary` paths from `fuzz/state/harnesses.json` (per-harness; `harness-built.json` is the read-only mirror)
-- Existing findings via `${CLAUDE_PLUGIN_ROOT}/bin/cc-fuzzer findings find-by-hash <stack_hash>`
+- Existing findings via `{{cc}} findings find-by-hash <stack_hash>`
 - Recent harness ASan output for the candidate input (run once if not cached)
 - `harness-corrections.jsonl` is YOUR append-only output, not an input — see Step 3.5
 
@@ -77,7 +77,7 @@ The artifact filter's question ("is this a harness artifact?") inverts to: **is 
 - **Oracle is valid** — the property is genuinely required by the target's documented/intended contract (e.g. a parser that accepts input the spec says is invalid; a round-trip the format promises to preserve; a validator that must reject all malformed input). → continue to L2.
 - **Oracle is wrong** — the harness asserted a property the target never promised (e.g. key-order preservation when the format explicitly doesn't guarantee it; an "invariant" that's actually allowed to vary). For a `differential` finding the specific trap is **both-valid latitude**: the two implementations disagree on input the spec leaves *undefined/implementation-defined* (e.g. duplicate-key handling), so neither is wrong — that is an oracle false positive, not a parser-differential bug. A genuine `accept_divergence` (one side accepts what the spec says must be rejected) IS a finding; both-valid disagreement is not. → this is an **oracle false positive**, the logic-bug analogue of a harness artifact. Drop it:
   ```bash
-  ${CLAUDE_PLUGIN_ROOT}/bin/cc-fuzzer findings drop "$CRASH_FILE" artifact_filter \
+  {{cc}} findings drop "$CRASH_FILE" artifact_filter \
     "oracle asserts a property the target does not guarantee: <which property, cite contract>" \
     --principle api_contract \
     --evidence "<doc/spec/header citation showing the property is not promised>"
@@ -98,7 +98,7 @@ Run 3× against harness and `verify_binary` as in crash Step 2, but the determin
 mkdir -p "fuzz/crashes/known/PLACEHOLDER"   # then mv after add allocates the id
 ORACLE_TYPE="<invariant|roundtrip|differential|metamorphic>" \
 DIVERGENCE='{"property_id":"<id>","comparison":"<how compared>","observed":"<from marker>","expected":"<from marker>"}' \
-${CLAUDE_PLUGIN_ROOT}/bin/cc-fuzzer findings add \
+{{cc}} findings add \
   "$STACK_HASH" \
   "<logic category: invariant-violation|roundtrip-mismatch|differential-divergence|parser-differential|auth-bypass|access-control|incorrect-validation|canonicalization|state-confusion|integer-truncation|logic-error>" \
   "<public-function-whose-contract-broke>@<file>:<line>" \
@@ -130,7 +130,7 @@ Audit the crash candidate against four principles by reading the harness source,
 If any principle is `fail`:
 
 ```bash
-${CLAUDE_PLUGIN_ROOT}/bin/cc-fuzzer findings drop "$CRASH_FILE" artifact_filter \
+{{cc}} findings drop "$CRASH_FILE" artifact_filter \
   "<one-line reason citing the principle>" \
   --principle <harness_correctness|api_contract|public_api_reachability|entry_point_currency> \
   --evidence "<file:line citation — show the offending construct>"
@@ -181,7 +181,7 @@ This relaxation only affects Step 2's "is this deterministic?" check. The stack 
 If not deterministic:
 
 ```bash
-${CLAUDE_PLUGIN_ROOT}/bin/cc-fuzzer findings drop "$CRASH_FILE" deterministic_replay \
+{{cc}} findings drop "$CRASH_FILE" deterministic_replay \
   "<one-line: e.g. 'harness 3/3 but top frame oscillates between parse_utf8 and parse_latin1'>"
 mv "$CRASH_FILE" fuzz/crashes/flaky/
 ```
@@ -241,7 +241,7 @@ Expect ASan to fire on the same top frames as Step 2.
 **Route attempted, compiled, but bug did NOT reproduce**: the bug is reachable from the harness but not from public APIs the way you tried. Either 3a's layer choice was wrong, or your Route B is missing setup the real consumer has. Try ONE refinement: re-run 3a and pick a different layer (lower if you started too high; higher if you started too low). Rebuild and run. If still no repro:
 
 ```bash
-${CLAUDE_PLUGIN_ROOT}/bin/cc-fuzzer findings drop "$CRASH_FILE" target_realistic_reproducer \
+{{cc}} findings drop "$CRASH_FILE" target_realistic_reproducer \
   "<one-line: e.g. 'public API path through parse_document() does not reach the crash; harness reached it via internal/_parse_chunk()'>"
 mv "$CRASH_FILE" fuzz/crashes/flaky/
 ```
@@ -273,7 +273,7 @@ Compute the stack hash from Step 2's verify_binary output (or harness output if 
 
 ```bash
 STACK_HASH=$(echo "parse_utf8+0x42 read_chunk+0x18 main+0x60" | sha256sum | cut -c1-16)
-EXISTING=$(${CLAUDE_PLUGIN_ROOT}/bin/cc-fuzzer findings find-by-hash "$STACK_HASH")
+EXISTING=$({{cc}} findings find-by-hash "$STACK_HASH")
 ```
 
 **If no existing finding**: continue to Step 4 (new finding).
@@ -295,7 +295,7 @@ If all principles still pass: proceed with the normal dup increment below, and a
 **Normal dup increment** (re-audit passed, or `dedup_count < 5`):
 
 ```bash
-ID=$(${CLAUDE_PLUGIN_ROOT}/bin/cc-fuzzer findings dedup "$STACK_HASH")
+ID=$({{cc}} findings dedup "$STACK_HASH")
 mkdir -p "fuzz/crashes/known/$ID/duplicates"
 mv "$CRASH_FILE" "fuzz/crashes/known/$ID/duplicates/"
 # Multi-mode: also `findings.sh add-harness $ID $HARNESS` if not already present.
@@ -309,7 +309,7 @@ echo "DUP: $ID"
 Allocate the id and move the crash:
 
 ```bash
-ID=$(${CLAUDE_PLUGIN_ROOT}/bin/cc-fuzzer findings add \
+ID=$({{cc}} findings add \
   "$STACK_HASH" \
   "<category>" \
   "<crash_function>@<file>:<line>" \
@@ -328,7 +328,7 @@ mv "$CRASH_FILE" "fuzz/crashes/known/$ID/repro.bin"
 Build the maintainer-facing bundle:
 
 ```bash
-${CLAUDE_PLUGIN_ROOT}/scripts/build-poc-repro.sh \
+{{scripts}}/build-poc-repro.sh \
   --finding-id "$ID" \
   --kind <c_program|cli_invocation|python_ctypes|ipc_replay> \
   --input "fuzz/crashes/known/$ID/repro.bin" \

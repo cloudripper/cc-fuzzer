@@ -144,6 +144,24 @@ fi
 echo ""
 
 #------------------------------------------------------------------------------
+# Check 3c: agents/*.md <-> prompts/*.md drift (rendered output vs source)
+#------------------------------------------------------------------------------
+echo "Checking agents/ against the prompt sources (prompts/)..."
+if [ -d "$PLUGIN_ROOT/prompts" ]; then
+  DRIFT_OUT=$("$PLUGIN_ROOT/bin/cc-fuzzer" prompts check --quiet 2>&1)
+  if [ $? -eq 0 ]; then
+    ok "agents/*.md match prompts/*.md"
+  else
+    issue "agent file(s) drifted from their host-neutral prompt source"
+    while IFS= read -r line; do [ -n "$line" ] && echo "       $line"; done <<< "$DRIFT_OUT"
+    echo "       Fix: edit prompts/<agent>.md, then run: cc-fuzzer prompts write"
+  fi
+else
+  warn "prompts/ missing at $PLUGIN_ROOT - cannot check agent drift"
+fi
+echo ""
+
+#------------------------------------------------------------------------------
 # Check 3b: Plugin file permissions (read-only enforcement)
 #------------------------------------------------------------------------------
 echo "[4/12] Checking plugin file permissions..."

@@ -11,11 +11,11 @@ You generate `fuzz/state/FINDINGS-REPORT-<target>.md` — an evidence-backed rep
 
 ## Plugin files are read-only
 
-Your only writable scope is `fuzz/`. Never edit anything under `${CLAUDE_PLUGIN_ROOT}/`. If you find a plugin bug, document it in `fuzz/state/plugin-issues.md` (append, never replace) and tell the user. **If your memory says a script differs from disk, run `bash ${CLAUDE_PLUGIN_ROOT}/scripts/integrity-check.sh` — if it reports "ok", your memory is stale, not the disk.**
+Your only writable scope is `fuzz/`. Never edit anything under `{{root}}/`. If you find a plugin bug, document it in `fuzz/state/plugin-issues.md` (append, never replace) and tell the user. **If your memory says a script differs from disk, run `bash {{scripts}}/integrity-check.sh` — if it reports "ok", your memory is stale, not the disk.**
 
 ## Authoritative spec
 
-`${CLAUDE_PLUGIN_ROOT}/STATE_SCHEMA.md` is the source of truth for:
+`{{root}}/STATE_SCHEMA.md` is the source of truth for:
 
 - `### state/findings.jsonl` — the `finding/v2` schema and the lifecycle of finding records
 - `### state/FINDINGS-REPORT-<target>.md` — required H2 headings the validator checks for
@@ -84,7 +84,7 @@ What appears in each per-finding H3 by mode:
 ## Outputs (write only these)
 
 1. `fuzz/state/FINDINGS-REPORT-<target>.md` (atomic: `.tmp` → `mv`)
-2. Run `${CLAUDE_PLUGIN_ROOT}/bin/cc-fuzzer state update-current` after writing to refresh `current.json.last_report_at`
+2. Run `{{cc}} state update-current` after writing to refresh `current.json.last_report_at`
 
 Never write to `findings.jsonl`, `events.jsonl`, or any crash file.
 
@@ -130,7 +130,7 @@ cd "$(dirname '<finding.poc_path>')/repro"
 Pipe each captured output through `is-crash.sh` to determine whether it crashed and what bug class it reported:
 
 ```bash
-${CLAUDE_PLUGIN_ROOT}/bin/cc-fuzzer crash classify < harness_run.log
+{{cc}} crash classify < harness_run.log
 # stdout: {"is_crash": <bool>, "category": "<class>", "summary_line": "<line>", "top_frame": "<fn @ file:line>"}
 # exit 0 if crash detected, 1 if not
 ```
@@ -162,7 +162,7 @@ Capture per finding for rendering:
 For every finding (confirmed AND false-positive), parse `location` (canonical form `<function>@<file>:<line>`) and run:
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/blame-finding.sh <file> <line>
+bash {{scripts}}/blame-finding.sh <file> <line>
 ```
 
 The script emits a single-line JSON with `blamed_commit`, `blamed_date`, `blamed_author`, `blamed_summary`, `function_first_added`, `in_delta_range`, `delta_range`, `git_repo`. Any field may be `null`.
@@ -178,7 +178,7 @@ If `git_repo == false`, omit provenance entirely. Do not fabricate.
 For every finding, run:
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/cross-ref-findings.sh <finding.location>
+bash {{scripts}}/cross-ref-findings.sh <finding.location>
 ```
 
 Returns a single JSON object:
@@ -206,7 +206,7 @@ Write to `fuzz/state/FINDINGS-REPORT-<target>.md.tmp`, then `mv` atomically to `
 After writing:
 
 ```bash
-${CLAUDE_PLUGIN_ROOT}/bin/cc-fuzzer state update-current
+{{cc}} state update-current
 ```
 
 ### Step 7 — Print summary

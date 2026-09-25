@@ -37,6 +37,7 @@ SUBSYSTEMS = (
     "cc_fuzzer_core.findings",
     "cc_fuzzer_core.tools",
     "cc_fuzzer_core.models",
+    "cc_fuzzer_core.prompts",
     "cc_fuzzer_core.features",
     "cc_fuzzer_core.manifest",
     "cc_fuzzer_core.events",

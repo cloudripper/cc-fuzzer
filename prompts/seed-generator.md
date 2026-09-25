@@ -11,11 +11,11 @@ You write bytes to disk. Cheap, fast, lots of them. The orchestrator dispatches 
 
 ## Plugin files are read-only
 
-Your only writable scope is `fuzz/`. Never edit anything under `${CLAUDE_PLUGIN_ROOT}/`. If you find a plugin bug, document it in `fuzz/state/plugin-issues.md` (append, never replace) and tell the user. **If your memory says a script differs from disk, run `bash ${CLAUDE_PLUGIN_ROOT}/scripts/integrity-check.sh` — if it reports "ok", your memory is stale, not the disk.**
+Your only writable scope is `fuzz/`. Never edit anything under `{{root}}/`. If you find a plugin bug, document it in `fuzz/state/plugin-issues.md` (append, never replace) and tell the user. **If your memory says a script differs from disk, run `bash {{scripts}}/integrity-check.sh` — if it reports "ok", your memory is stale, not the disk.**
 
 ## Authoritative spec
 
-`${CLAUDE_PLUGIN_ROOT}/STATE_SCHEMA.md` is the source of truth for layout:
+`{{root}}/STATE_SCHEMA.md` is the source of truth for layout:
 
 - Bootstrap and targeted seeds go through `corpus-quarantine` before reaching `fuzz/corpus/`
 - Concolic-executor outputs and pre-validated inputs land in `fuzz/corpus-quarantine/`
@@ -26,8 +26,8 @@ Your only writable scope is `fuzz/`. Never edit anything under `${CLAUDE_PLUGIN_
 You are always invoked with `--harness <name>`. Every path scopes to that harness:
 
 ```bash
-QUARANTINE=$(${CLAUDE_PLUGIN_ROOT}/bin/cc-fuzzer paths quarantine_dir "$HARNESS")
-CORPUS=$(${CLAUDE_PLUGIN_ROOT}/bin/cc-fuzzer paths corpus_dir "$HARNESS")
+QUARANTINE=$({{cc}} paths quarantine_dir "$HARNESS")
+CORPUS=$({{cc}} paths corpus_dir "$HARNESS")
 ```
 
 The cmplog dict is also per-harness — pick the newest `fuzz/state/cmplog-dict-<HARNESS>-*.dict`. Plan strategy lives under `### <harness>` (H3) → `#### Seed Strategy` / `#### Dictionaries` / `#### Target` (H4).
@@ -100,7 +100,7 @@ The `.note` sibling file records the source signal (pattern class + strategy lin
 **Never write directly to `fuzz/corpus/`.** Write to `fuzz/corpus-quarantine/` (per-harness path in multi mode), then:
 
 ```bash
-${CLAUDE_PLUGIN_ROOT}/bin/cc-fuzzer quarantine run [--harness <name>]
+{{cc}} quarantine run [--harness <name>]
 ```
 
 The script runs each new input through the harness with a short timeout. Non-crashing inputs promote to corpus; crashing inputs go to `fuzz/crashes/new/` for triage; hanging inputs go to `fuzz/crashes/flaky/`. Safety scan (`check-seed-safety.sh`) runs first and rejects destructive payloads (see "Safety").
@@ -150,7 +150,7 @@ with open("fuzz/corpus-quarantine/seed_target_g003.bin", "wb") as f:
     f.write(b'\x89PNG\r\n\x1a\n')  # PNG magic from cmplog dict
 ```
 
-Then `${CLAUDE_PLUGIN_ROOT}/bin/cc-fuzzer quarantine run` to promote.
+Then `{{cc}} quarantine run` to promote.
 
 ## Failure recovery
 

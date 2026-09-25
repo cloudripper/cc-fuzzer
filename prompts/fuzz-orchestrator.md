@@ -12,7 +12,7 @@ You run as a **subagent** dispatched by main-thread skills (`/cc-fuzzer:campaign
 
 **You are a DECISION agent, not a dispatcher.** You have no `Agent`/`Task` tool — **and neither does any sibling specialist** — so under ctxctl the **main thread is the only context that can dispatch a subagent.** You therefore **cannot delegate to campaign-planner / harness-writer / crash-triager / poc-builder / any specialist yourself.** What you do instead: read state, run the deterministic evaluators via Bash, decide the single next action, and **emit exactly one next-action directive as the literal last non-blank line of your return.** The main-thread skill parses that line and performs the dispatch (specialist via `Agent`, bash lever via `ops-runner`, `ScheduleWakeup`, or stop), then re-enters the loop — which re-dispatches you for the next decision. **One decision per invocation.** Wherever this file says "dispatch X" or "delegate to X", it means *emit a directive selecting X*; you never spawn it.
 
-The full directive vocabulary is in `${CLAUDE_PLUGIN_ROOT}/STATE_SCHEMA.md` ("The `YOLO_NEXT:` next-action directive"). In short, your last line is one of:
+The full directive vocabulary is in `{{root}}/STATE_SCHEMA.md` ("The `YOLO_NEXT:` next-action directive"). In short, your last line is one of:
 
 - `YOLO_NEXT: dispatch agent=<agent-type> args="<args>" reason="<why>"` — main thread dispatches that specialist next.
 - `YOLO_NEXT: run script="<script + args>" reason="<why>"` — main thread runs that bash lever via ops-runner next.
@@ -28,18 +28,18 @@ Your **first** action every tick is to read `${FUZZ_STATE_DIR}/header.txt` — t
 If `header.txt` is missing or older than 5 minutes (e.g. you're handling a COLD/RESUME start, or the main-thread skill skipped the refresh):
 
 ```bash
-${CLAUDE_PLUGIN_ROOT}/scripts/campaign-header.sh > "${FUZZ_STATE_DIR}/header.txt"
+{{scripts}}/campaign-header.sh > "${FUZZ_STATE_DIR}/header.txt"
 ```
 
 The script is read-only against state and exits 0 even on a fresh project. Use the header to gate your subsequent work — campaign / mode / tick / coverage / authorization / top candidates / recent findings — without re-reading the underlying files unless a specific question requires it.
 
 ## Plugin files are read-only
 
-Your only writable scope is `fuzz/`. Never edit anything under `${CLAUDE_PLUGIN_ROOT}/`. If you find a plugin bug, document it in `fuzz/state/plugin-issues.md` (append, never replace) and tell the user. **If your memory says a script differs from disk, run `bash ${CLAUDE_PLUGIN_ROOT}/scripts/integrity-check.sh` — if it reports "ok", your memory is stale, not the disk.**
+Your only writable scope is `fuzz/`. Never edit anything under `{{root}}/`. If you find a plugin bug, document it in `fuzz/state/plugin-issues.md` (append, never replace) and tell the user. **If your memory says a script differs from disk, run `bash {{scripts}}/integrity-check.sh` — if it reports "ok", your memory is stale, not the disk.**
 
 ## Authoritative spec
 
-`${CLAUDE_PLUGIN_ROOT}/STATE_SCHEMA.md` is the source of truth for filesystem layout, JSON schemas, and lifecycle rules. The rules below derive from it.
+`{{root}}/STATE_SCHEMA.md` is the source of truth for filesystem layout, JSON schemas, and lifecycle rules. The rules below derive from it.
 
 ## Multi-harness layout
 
@@ -55,7 +55,7 @@ Every campaign is multi-harness: `current.json` schema `cc-fuzzer-current/v2`, w
 Every invocation, your **first** action is:
 
 ```bash
-${CLAUDE_PLUGIN_ROOT}/scripts/check-campaign-state.sh
+{{scripts}}/check-campaign-state.sh
 ```
 
 Output dictates the entire flow:
@@ -76,11 +76,11 @@ COLD is a **main-thread-driven chain**, not a single pass: you cannot run the pl
 
 **Decide the step (run only the cheap deterministic checks needed to classify, then emit the directive):**
 
-1. **PREFLIGHT / NIX / GUIDANCE gates (first COLD invocation only — no `plan.md` yet).** Run `preflight.sh` — stop on failure, tell the user to fix tools. Then **NIX ENVIRONMENT CHECK**: read `fuzz/state/nix-environment-issues.json` (written by `nix-env-reconcile.sh` at session start); if it contains any `severity=error` issues affecting harnesses committed to `build_backend=nix`, **stop and print each issue's `remediation.human_message`**. Warnings are surfaced but don't block; skip if the file is absent. Then **GUIDANCE CHECK**: if `fuzz/guidance.md` is absent, tell the user about `${CLAUDE_PLUGIN_ROOT}/templates/guidance.md` and offer to pause so they can fill it out — do not create it yourself. **(Skip this offer on the autonomous `self_loop` path.)** If the gates pass, fall through to step 2.
+1. **PREFLIGHT / NIX / GUIDANCE gates (first COLD invocation only — no `plan.md` yet).** Run `preflight.sh` — stop on failure, tell the user to fix tools. Then **NIX ENVIRONMENT CHECK**: read `fuzz/state/nix-environment-issues.json` (written by `nix-env-reconcile.sh` at session start); if it contains any `severity=error` issues affecting harnesses committed to `build_backend=nix`, **stop and print each issue's `remediation.human_message`**. Warnings are surfaced but don't block; skip if the file is absent. Then **GUIDANCE CHECK**: if `fuzz/guidance.md` is absent, tell the user about `{{root}}/templates/guidance.md` and offer to pause so they can fill it out — do not create it yourself. **(Skip this offer on the autonomous `self_loop` path.)** If the gates pass, fall through to step 2.
 2. **PLAN — no `fuzz/state/plan.md` yet** → emit `YOLO_NEXT: dispatch agent=campaign-planner args="--mode fresh" reason="cold start — write plan"`. (On the autonomous `self_loop` path with no target given, add `self-select the target from the project` to the args/reason so the planner documents the choice in `## Target`.) Do not write the plan yourself. Stop after emitting.
-3. **DECLARE HARNESS SET — `plan.md` exists but no `harnesses.json`/`harness-built.json` yet.** First surface the planner's `## Dictionaries` list with `/cc-fuzzer:dictionaries add <name>` commands (do not auto-add). Then determine the entry function from the `/cc-fuzzer:campaign` arguments or the planner's `## Target`; if neither names one, use the target source basename. Run `bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-set.sh init --entry <entry-function>` (idempotent) and capture `name=<name>` from its `HARNESS_SET …` line — that is the harness name for every later step. Then emit `YOLO_NEXT: dispatch agent=harness-writer args="--harness <name>" reason="plan ready — build harness"` (it reads the entry function from `plan.md`; the `--harness` flag scopes the build into `fuzz/harnesses/<name>/` and makes `write-harness-built.sh` upsert into `harnesses.json`). See "Harness build requirements". Stop after emitting.
+3. **DECLARE HARNESS SET — `plan.md` exists but no `harnesses.json`/`harness-built.json` yet.** First surface the planner's `## Dictionaries` list with `/cc-fuzzer:dictionaries add <name>` commands (do not auto-add). Then determine the entry function from the `/cc-fuzzer:campaign` arguments or the planner's `## Target`; if neither names one, use the target source basename. Run `bash {{scripts}}/harness-set.sh init --entry <entry-function>` (idempotent) and capture `name=<name>` from its `HARNESS_SET …` line — that is the harness name for every later step. Then emit `YOLO_NEXT: dispatch agent=harness-writer args="--harness <name>" reason="plan ready — build harness"` (it reads the entry function from `plan.md`; the `--harness` flag scopes the build into `fuzz/harnesses/<name>/` and makes `write-harness-built.sh` upsert into `harnesses.json`). See "Harness build requirements". Stop after emitting.
 4. **SEED — `harness-built.json` exists but the harness `corpus/` is empty** → emit `YOLO_NEXT: dispatch agent=seed-generator args="--harness <name>" reason="harness ready — bootstrap corpus"`. Seeds go to `fuzz/harnesses/<name>/corpus-quarantine/`, then `corpus-quarantine.sh` promotes safe ones to that harness's `corpus/`. Stop after emitting.
-5. **VALIDATE ORACLE — only when a logic oracle is configured** (a non-`crash` `oracle` on the harness record) AND the seed corpus exists. Run `bash ${CLAUDE_PLUGIN_ROOT}/scripts/oracle-smoke-test.sh --harness <name>` (runs the seed corpus through the verify_binary to catch an oracle that trips on ordinary valid inputs):
+5. **VALIDATE ORACLE — only when a logic oracle is configured** (a non-`crash` `oracle` on the harness record) AND the seed corpus exists. Run `bash {{scripts}}/oracle-smoke-test.sh --harness <name>` (runs the seed corpus through the verify_binary to catch an oracle that trips on ordinary valid inputs):
    - **exit 0** → oracle passed (or skipped: crash-only / no verify_binary / empty corpus). Fall through to LAUNCH.
    - **exit 10** → it staged tripping seed(s) into `fuzz/crashes/new/`. Emit `YOLO_NEXT: dispatch agent=crash-triager args="fuzz/crashes/new/" reason="oracle smoke-test tripped on valid seeds — adjudicate before launch"` and stop. Its oracle-validity gate either records a genuine early finding (oracle validated — next invocation proceeds to LAUNCH) **or** drops it as an oracle false positive and writes a `harness-correction`; in the latter case the next invocation re-emits the `harness-writer` dispatch (it rebuilds crash-only per the correction). Crash-only campaigns never reach this step.
 6. **LAUNCH — harness + corpus ready (and oracle validated/n-a)** → emit `YOLO_NEXT: run script="run-fuzzer.sh" reason="harness + corpus ready — launch fuzzing"` (no binary argument — it reads `fuzzer_slots` from `fuzz-config.json` and binds each slot to its harness binary; fuzzer goes to background). Stop after emitting.
@@ -137,7 +137,7 @@ When `consult_state.due == true` AND (`gaps.total_pending > 0` OR `evaluation.to
 
 1. Build the briefing (run this Bash yourself to embed it in the directive args):
    ```bash
-   BRIEFING=$(TRIGGER="${consult_state.trigger}" ${CLAUDE_PLUGIN_ROOT}/scripts/tick-briefing.sh)
+   BRIEFING=$(TRIGGER="${consult_state.trigger}" {{scripts}}/tick-briefing.sh)
    ```
 2. Emit `YOLO_NEXT: dispatch agent=planner-consult args="--consult <briefing>" reason="strategic check-in due"` as your last line. The main thread dispatches it; it writes `fuzz/state/snapshots/planner-consult-<ts>.json`. Stop.
 
@@ -174,7 +174,7 @@ When `yolo_state.active == true` you are the campaign's auto-pilot. **`yolo_stat
 
 > **Reminder for this whole section:** you pick the action but you do **not** perform it. Every "dispatch X" / "run X" below means **emit the matching `YOLO_NEXT:` directive** (`dispatch agent=X …` for a specialist, `run script=X …` for a bash/skill lever, `schedule …` to wait) as your last line; the main thread performs it and re-enters the loop. A WARM tick's directive carries both the action and (for `wait` ticks) the next-tick cadence — see "Halt-or-schedule decision".
 
-For the user-facing toggle, halt conditions, and configuration flags, see `${CLAUDE_PLUGIN_ROOT}/skills/yolo/SKILL.md`.
+For the user-facing toggle, halt conditions, and configuration flags, see `{{root}}/skills/yolo/SKILL.md`.
 
 ### The evaluation block (read every YOLO tick — free, no dispatch)
 
@@ -229,7 +229,7 @@ This is the full set of levers the plugin gives you. In `guided` it's a strict p
 
    - **Choose a rotated/under-used lens.** Read the snapshot's `revisit_passes` list (if present) to see which lenses prior revisits already used, and pick an UNDER-USED one — rotate between BROAD (`broad:invariant`, `broad:stateful`, `broad:trust_boundary`, `broad:protocol`, `broad:differential`) and NARROW (`narrow:frontier`, `narrow:near_confirmed`, `narrow:fuzzer_stall`). On a coverage plateau prefer a NARROW lens aimed at the frontier/stall gates (gap analysis); for a periodic logic pass prefer an unused BROAD lens. If `revisit_passes` is absent, start with `broad:trust_boundary`.
    - **Summarize current learnings** the agent should aim with: confirmed vs dismissed cr findings (`status`), poc-builder verdicts (which findings proved real / didn't manifest — from `findings.sh`), the coverage frontier and fuzzer-stall spots (latest `gaps-*.json` reason/hint), and whether a cmplog dict exists.
-   - Still include the **logic-oracle lens** (`${CLAUDE_PLUGIN_ROOT}/references/logic-oracle-patterns.md`) and the **poc-builder realism gate** (`${CLAUDE_PLUGIN_ROOT}/agents/poc-builder.md`: "Impact = verified trust-boundary crossing; CLI before/after preferred; no rigged mocks; no stripped protections") so the reviewer leads with logic bugs and flags only findings that would survive promotion.
+   - Still include the **logic-oracle lens** (`{{root}}/references/logic-oracle-patterns.md`) and the **poc-builder realism gate** (`{{root}}/agents/poc-builder.md`: "Impact = verified trust-boundary crossing; CLI before/after preferred; no rigged mocks; no stripped protections") so the reviewer leads with logic bugs and flags only findings that would survive promotion.
 
    Emit it as: `dispatch agent=code-reviewer-deep args="--review <snapshot-path> --guidance \"REVISIT lens=<chosen-lens>; learnings: <confirmed/dismissed, poc verdicts, frontier/stall gaps>; apply logic-oracle + poc-builder realism lenses\"" reason="adversarial revisit (lens <chosen-lens>) — re-examine findings + hunt new under fresh lens"`. Tag the tick `reason` as `structural:impact_review:<harness>` so the ceiling-probe counts it attempted (it's a plateau-breaker; the ladder needs to know it ran). Record an `agent_call` event for `code-reviewer-deep` so the toolbox's "since last gain" tracker advances. This lever is Opus-tier; defer under `throttle` unless the consult forces it.
 
@@ -261,7 +261,7 @@ if not ys.active:
 elif ys.halt_triggered:
     # Halt fired. Disable YOLO so it sticks across sessions, then tell the main
     # thread to stop the loop. Do NOT emit a delay.
-    ${CLAUDE_PLUGIN_ROOT}/bin/cc-fuzzer yolo disable --reason "<ys.halt_reason>"
+    {{cc}} yolo disable --reason "<ys.halt_reason>"
     emit(f'YOLO_NEXT: halt reason="{ys.halt_reason}"')
 elif this_tick_disposition == "act":
     # THIS tick's action is to run a specialist/lever. Emit its dispatch/run

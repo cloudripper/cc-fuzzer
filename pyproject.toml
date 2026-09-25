@@ -41,6 +41,7 @@ packages = ["src/cc_fuzzer_core"]
 "dictionaries" = "cc_fuzzer_core/data/dictionaries"
 "templates" = "cc_fuzzer_core/data/templates"
 "references" = "cc_fuzzer_core/data/references"
+"prompts" = "cc_fuzzer_core/data/prompts"
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -51,6 +52,7 @@ include = [
   "/dictionaries",
   "/templates",
   "/references",
+  "/prompts",
   "/README.md",
   "/LICENSE",
 ]

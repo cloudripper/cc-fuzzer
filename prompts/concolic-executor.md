@@ -11,11 +11,11 @@ You drive SymCC. The LLM identified *which* branches matter (the gap report); Sy
 
 ## Plugin files are read-only
 
-Your only writable scope is `fuzz/`. Never edit anything under `${CLAUDE_PLUGIN_ROOT}/`. If you find a plugin bug, document it in `fuzz/state/plugin-issues.md` (append, never replace) and tell the user. **If your memory says a script differs from disk, run `bash ${CLAUDE_PLUGIN_ROOT}/scripts/integrity-check.sh` — if it reports "ok", your memory is stale, not the disk.**
+Your only writable scope is `fuzz/`. Never edit anything under `{{root}}/`. If you find a plugin bug, document it in `fuzz/state/plugin-issues.md` (append, never replace) and tell the user. **If your memory says a script differs from disk, run `bash {{scripts}}/integrity-check.sh` — if it reports "ok", your memory is stale, not the disk.**
 
 ## Authoritative spec
 
-`${CLAUDE_PLUGIN_ROOT}/STATE_SCHEMA.md` is the source of truth, specifically:
+`{{root}}/STATE_SCHEMA.md` is the source of truth, specifically:
 
 - `### state/snapshots/concolic-<ts>.json` — full `concolic-result/v1` schema and lifecycle
 - `### Multi-Harness Mode` — per-harness layout
@@ -54,9 +54,9 @@ Read `fuzz/state/plan.md` `## Concolic Strategy` (or `#### Concolic Strategy` un
 
 ## Prerequisites (check first, exit early on failure)
 
-1. **SymCC binary exists**: `fuzz/harness/<target>_fuzzer_symcc` (or the multi-harness path). If absent, run `${CLAUDE_PLUGIN_ROOT}/scripts/build-symcc-target.sh`. If that fails, write status JSON noting the failure and exit.
+1. **SymCC binary exists**: `fuzz/harness/<target>_fuzzer_symcc` (or the multi-harness path). If absent, run `{{scripts}}/build-symcc-target.sh`. If that fails, write status JSON noting the failure and exit.
 
-2. **SymCC runtime is resolvable**: `source ${CLAUDE_PLUGIN_ROOT}/scripts/_lib/nix-tools.sh && nix_tool symcc`. This consults `fuzz/state/nix-env.json` before falling back to PATH — `which symcc` alone is unreliable when the Claude Code session inherited a stripped environment. If empty, surface the fix path (`nix develop ${CLAUDE_PLUGIN_ROOT} && claude` or `${CLAUDE_PLUGIN_ROOT}/scripts/install-symcc.sh` for non-Nix users) and exit.
+2. **SymCC runtime is resolvable**: `source {{scripts}}/_lib/nix-tools.sh && nix_tool symcc`. This consults `fuzz/state/nix-env.json` before falling back to PATH — `which symcc` alone is unreliable when the Claude Code session inherited a stripped environment. If empty, surface the fix path (`nix develop {{root}} && claude` or `{{scripts}}/install-symcc.sh` for non-Nix users) and exit.
 
 3. **Corpus has seeds**: `fuzz/corpus/` (or per-harness corpus) is non-empty. If empty, exit — SymCC needs seed inputs to work from.
 
@@ -82,7 +82,7 @@ Pick **3 seeds per gap** by default. If the gap's `priority == "high"` and the b
 ### 2. Invoke SymCC per seed
 
 ```bash
-${CLAUDE_PLUGIN_ROOT}/scripts/run-concolic.sh \
+{{scripts}}/run-concolic.sh \
   --binary fuzz/harness/<target>_fuzzer_symcc \
   --seed <seed-path> \
   --output fuzz/corpus-quarantine/ \
@@ -99,7 +99,7 @@ Track per-invocation outcome: `outputs_generated`, `solver_timeout`, `solver_err
 After all invocations for this dispatch complete:
 
 ```bash
-${CLAUDE_PLUGIN_ROOT}/bin/cc-fuzzer quarantine run [--harness <name>]
+{{cc}} quarantine run [--harness <name>]
 ```
 
 Survivors auto-promote to corpus. Crashing inputs go to `fuzz/crashes/new/` (the triager picks them up next tick). Hangs go to `fuzz/crashes/flaky/`.
