@@ -67,7 +67,9 @@ class TriageResult:
     top_frame: str = ""
     binary: str = ""
     variant: str = ""
-    evidence_grade: str = ""
+    evidence_grade: str = ""      # after the oracle: see evidence_source
+    evidence_source: str = ""     # "replay" or "oracle" (an authoritative one)
+    replay_grade: str = ""        # what local replay alone established
     verdict_step: str = ""
     original_size: int = 0
     size: int = 0
@@ -82,7 +84,9 @@ class TriageResult:
         """Confirmed by the configured oracle AND resting on real evidence.
 
         `weak` means the crash was only shown on the fuzzing binary because no
-        verify binary was built -- usable for triage, not for a submission.
+        verify binary was built -- usable for triage, not for a submission --
+        unless an oracle declared `authoritative` confirmed it, which upgrades
+        the grade (evidence_source="oracle").
         """
         return self.status == CONFIRMED and self.evidence_grade == _v.STRONG
 
@@ -93,6 +97,8 @@ class TriageResult:
                 "stack_hash": self.stack_hash, "category": self.category,
                 "top_frame": self.top_frame, "binary": self.binary,
                 "variant": self.variant, "evidence_grade": self.evidence_grade,
+                "evidence_source": self.evidence_source,
+                "replay_grade": self.replay_grade,
                 "verdict_step": self.verdict_step,
                 "original_size": self.original_size, "size": self.size,
                 "marker": self.marker, "directory": self.directory,
@@ -132,7 +138,8 @@ def triage(record: Mapping, crash: str, *, harness: str = "",
     base = {"replay": r.as_dict(), "original_pov": crash,
             "stack_hash": r.stack_hash, "category": r.category,
             "top_frame": r.top_frame, "binary": r.binary, "variant": r.variant,
-            "evidence_grade": r.evidence_grade,
+            "evidence_grade": r.evidence_grade, "replay_grade": r.evidence_grade,
+            "evidence_source": _verifiers.SOURCE_REPLAY,
             "original_size": Path(crash).stat().st_size if Path(crash).is_file() else 0}
 
     if r.verdict == _replay.NO_CRASH:
@@ -168,6 +175,9 @@ def triage(record: Mapping, crash: str, *, harness: str = "",
         status = REJECTED if v.status == _verifiers.REJECTED else INCONCLUSIVE
         return TriageResult(status, v.reason, **common)
 
+    common["evidence_grade"], common["evidence_source"] = _verifiers.evidence(
+        r.evidence_grade, v, config)
+
     sens = {}
     if do_sensitivity:
         try:
@@ -184,7 +194,9 @@ def triage(record: Mapping, crash: str, *, harness: str = "",
         f = _pipeline.finalize(campaign, finding_id,
                                finding or {"id": finding_id, "stack_hash": r.stack_hash},
                                record=record, reproducer=pov, config=config,
-                               harness=harness, replay_result=r.as_dict())
+                               harness=harness, replay_result=r.as_dict(),
+                               # the oracle already answered; do not ask twice
+                               verify_fn=lambda _f, _c: v)
         marker, directory = f.marker, f.directory
     return TriageResult(CONFIRMED, v.reason, marker=marker, directory=directory, **common)
 
@@ -259,7 +271,7 @@ def _cmd_triage(a):
         return 2
     print(json.dumps(r.as_dict(), indent=2) if a.json else
           f"{r.status}: {r.reason}\n  pov {r.pov} ({r.original_size} -> {r.size} bytes)\n"
-          f"  bug {r.stack_hash} {r.category} [{r.evidence_grade}]\n"
+          f"  bug {r.stack_hash} {r.category} [{r.evidence_grade} via {r.evidence_source}]\n"
           f"  submittable: {r.submittable}"
           + (f"\n  bytes {r.sensitivity['mask']}  (# load-bearing, ~ constrained, . free)"
              if r.sensitivity else ""))

@@ -121,6 +121,59 @@ class TriageTest(unittest.TestCase):
         self.assertEqual(r.evidence_grade, variants.WEAK)
         self.assertFalse(r.submittable)
 
+    def _authoritative(self, body=ORACLE_OK, name="oracle.sh"):
+        cfg = self._oracle(body, name)
+        cfg["verification"]["authoritative"] = True
+        return cfg
+
+    def test_an_authoritative_oracle_upgrades_weak_evidence(self):
+        """The OSS-CRS case: every binary is a fuzzing build, so local replay is
+        weak, but the scoring oracle itself reproduced it."""
+        rec = {"harness_binary": self.record["verify_binary"]}
+        r = crs.triage(rec, str(self.crash), harness="parser",
+                       config=self._authoritative())
+        self.assertEqual(r.replay_grade, variants.WEAK)
+        self.assertEqual(r.evidence_grade, variants.STRONG)
+        self.assertEqual(r.evidence_source, "oracle")
+        self.assertTrue(r.submittable)
+
+    def test_an_authoritative_rejection_upgrades_nothing(self):
+        rec = {"harness_binary": self.record["verify_binary"]}
+        r = crs.triage(rec, str(self.crash), harness="parser",
+                       config=self._authoritative(ORACLE_NO, "no.sh"))
+        self.assertEqual(r.evidence_grade, variants.WEAK)
+        self.assertFalse(r.submittable)
+
+    def test_authoritative_must_be_literally_true(self):
+        rec = {"harness_binary": self.record["verify_binary"]}
+        cfg = self._oracle()
+        cfg["verification"]["authoritative"] = "yes"
+        r = crs.triage(rec, str(self.crash), harness="parser", config=cfg)
+        self.assertEqual(r.evidence_grade, variants.WEAK)
+
+    def test_strong_replay_evidence_is_credited_to_replay(self):
+        r = crs.triage(self.record, str(self.crash), harness="parser",
+                       config=self._authoritative())
+        self.assertEqual((r.evidence_grade, r.evidence_source),
+                         (variants.STRONG, "replay"))
+
+    def test_the_marker_records_the_oracle_and_the_oracle_runs_once(self):
+        count = self.d / "calls"
+        body = ORACLE_OK.replace("r=$(cat);", f"echo x >> {count}; r=$(cat);")
+        rec = {"harness_binary": self.record["verify_binary"]}
+
+        class C:
+            project_root = self.d
+            fuzz_root = self.d / "fuzz"
+            state_dir = self.d / "fuzz" / "state"
+        r = crs.triage(rec, str(self.crash), harness="parser",
+                       config=self._authoritative(body, "counting.sh"),
+                       campaign=C(), finding_id="pov-1")
+        doc = json.loads(Path(r.marker).read_text())
+        self.assertEqual((doc["evidence_grade"], doc["evidence_source"]),
+                         ("strong", "oracle"))
+        self.assertEqual(len(count.read_text().split()), 1)
+
     def test_it_refuses_an_instrumented_binary(self):
         rec = {"cmplog_binary": self.record["verify_binary"]}
         with self.assertRaises(variants.SelectionError):
@@ -202,6 +255,17 @@ class PatchSeamTest(unittest.TestCase):
                                 stack_hash=t.stack_hash)
             self.assertEqual(v.status, patch.FIXES, v.reason)
             self.assertTrue(v.validated)
+
+
+class AuthoritativeTest(unittest.TestCase):
+    def test_poc_realism_cannot_be_declared_authoritative(self):
+        """It checks an agent's work; it is not an oracle."""
+        from cc_fuzzer_core.crash import verifiers
+        self.assertFalse(verifiers.authoritative(
+            {"verification": {"final_step": "poc-realism", "authoritative": True}}))
+        self.assertTrue(verifiers.authoritative(
+            {"verification": {"final_step": "command:/x", "authoritative": True}}))
+        self.assertFalse(verifiers.authoritative({"verification": {"final_step": "command:/x"}}))
 
 
 class SurfaceTest(unittest.TestCase):

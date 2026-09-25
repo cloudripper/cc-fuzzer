@@ -71,12 +71,14 @@ class Marker:
     status: str
     at: str
     evidence: tuple = field(default=())
+    evidence_source: str = "replay"
 
     def as_dict(self) -> dict:
         return {"schema": MARKER_SCHEMA, "finding_id": self.finding_id,
                 "reproducer": self.reproducer, "reproducer_sha256": self.reproducer_sha256,
                 "binary": self.binary, "binary_sha256": self.binary_sha256,
                 "variant": self.variant, "evidence_grade": self.evidence_grade,
+                "evidence_source": self.evidence_source,
                 "classify_verdict": self.classify_verdict, "stack_hash": self.stack_hash,
                 "step": self.step, "status": self.status, "at": self.at,
                 "evidence": list(self.evidence)}
@@ -195,6 +197,7 @@ def finalize(campaign, fid: str, finding: Mapping, *, record: Mapping,
 
     sel = _v.select(record, _v.A_VERIFY if not replay_result else _v.A_REPLAY,
                     harness=harness)
+    grade, source = _verifiers.evidence(sel.evidence_grade, verdict, config)
     findings_dir = Path(getattr(campaign, "fuzz_root", ".")) / "findings" / fid
     marker = Marker(
         finding_id=fid,
@@ -203,7 +206,8 @@ def finalize(campaign, fid: str, finding: Mapping, *, record: Mapping,
         binary=sel.binary,
         binary_sha256=sha256_file(sel.binary),
         variant=sel.variant,
-        evidence_grade=sel.evidence_grade,
+        evidence_grade=grade,
+        evidence_source=source,
         classify_verdict=str((replay_result or {}).get("verdict") or ""),
         stack_hash=str((replay_result or {}).get("stack_hash")
                        or (finding or {}).get("stack_hash") or ""),

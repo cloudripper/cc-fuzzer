@@ -64,6 +64,23 @@ requires `evidence_grade == "strong"`. A crash shown only on the fuzzing
 binary — because no verify binary was built — is good enough to triage and not
 good enough to submit.
 
+**If your oracle is the scoring oracle, say so.** In OSS-CRS every binary is a
+libFuzzer build, so local replay always grades `weak` and nothing would ever
+be submittable. Declare the oracle authoritative and its confirmation upgrades
+the grade:
+
+```python
+cfg = {"verification": {"final_step": "command:/opt/crs/run-pov-oracle.sh",
+                        "authoritative": True}}      # literally true, not "yes"
+r = crs.triage({"harness_binary": "/out/parser"}, crash, harness="parser", config=cfg)
+r.replay_grade, r.evidence_grade, r.evidence_source  # "weak", "strong", "oracle"
+```
+
+Only a confirmation upgrades; a rejection or an inconclusive answer adds
+nothing, and a `strong` replay is never downgraded. `poc-realism` cannot be
+declared authoritative: it checks an agent's work, it is not an oracle. The
+finding marker records `evidence_source` too, so the upgrade is auditable.
+
 Three distinctions the adapter refuses to collapse, because each leads
 somewhere different:
 
