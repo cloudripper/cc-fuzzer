@@ -182,7 +182,7 @@ def _newest_snapshot(snapshots: Path, harness: str) -> Path | None:
 
 def _files_in(d: Path):
     try:
-        return [e.path for e in os.scandir(d) if e.is_file(follow_symlinks=False)]
+        return sorted(e.path for e in os.scandir(d) if e.is_file(follow_symlinks=False))
     except OSError:
         return []
 
@@ -372,15 +372,18 @@ def snapshot(c: Campaign, harness: str = "", *, env=None, now: int | None = None
         prev_ts = int(stem) if stem.isdigit() and stem.isascii() else 0
     new_crashes = []
     new_dir = io_(f"{crashes_root}/new")
-    for dp, _dirs, fns in os.walk(new_dir):
-        for fn in fns:
+    for dp, dirs, fns in os.walk(new_dir):
+        dirs.sort()
+        for fn in sorted(fns):
             fp = os.path.join(dp, fn)
             if not fnmatch.fnmatchcase(fn, f"{harness}__*.bin") or os.path.islink(fp) or not os.path.isfile(fp):
                 continue
             if os.stat(fp).st_mtime > prev_ts:
                 rel = f"{crashes_root}/new" + fp[len(str(new_dir)):]
                 new_crashes.append(rel)
-    new_crashes = new_crashes[:50]
+    # sorted, and only then capped: readdir order would otherwise decide WHICH
+    # 50 crashes a snapshot reports, not just the order they appear in
+    new_crashes = sorted(new_crashes)[:50]
 
     # 6. top unreached functions
     unreached = []

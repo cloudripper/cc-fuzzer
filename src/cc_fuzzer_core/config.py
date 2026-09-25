@@ -184,13 +184,30 @@ def write(c: Campaign | str | os.PathLike, doc: dict) -> Path:
 # fuzz_forks
 # ---------------------------------------------------------------------------
 
-def fork_cap() -> int:
-    """nproc - 1 with a floor of 1 (nproc = CPUs this process may run on)."""
+ENV_CPUS = "CC_FUZZER_CPUS"
+
+
+def cpus(env=None) -> int:
+    """CPUs the campaign may use. $CC_FUZZER_CPUS states it outright -- a
+    container that is given a CPU budget smaller than the machine says so
+    here, and it keeps `fuzz_forks` from varying with whatever host a run
+    lands on. Otherwise: the CPUs this process may actually run on."""
+    env = os.environ if env is None else env
+    raw = (env.get(ENV_CPUS) or "").strip()
+    if raw:
+        try:
+            return max(1, int(raw))
+        except ValueError:
+            pass
     try:
-        n = len(os.sched_getaffinity(0))
+        return len(os.sched_getaffinity(0))
     except (AttributeError, OSError):
-        n = os.cpu_count() or 2
-    return max(1, n - 1)
+        return os.cpu_count() or 2
+
+
+def fork_cap(env=None) -> int:
+    """cpus() - 1 with a floor of 1."""
+    return max(1, cpus(env) - 1)
 
 
 @dataclass(frozen=True)

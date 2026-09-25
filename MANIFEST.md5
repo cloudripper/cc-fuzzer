@@ -49,7 +49,7 @@ e89113b9b0fc64bce8819b57aea5386f  scripts/_lib/ceiling_probe.py
 6de2ca6bede1f2f79d828e29b3feda9b  scripts/_lib/enums.py
 fd143692dde7ec039a8eaecb7c02673f  scripts/_lib/fuzz-config.sh
 459abfe39165788d2819f690d648c52f  scripts/_lib/harness-path.sh
-82eeb2ea02a3f9c2c6e9acdd2fbc113f  scripts/_lib/nix-tools.sh
+61ee961abeec935241ed1e4354826834  scripts/_lib/nix-tools.sh
 289e30cac04195cf5e52cb80db7f2f6e  scripts/_lib/path-anchor.sh
 46e65bf467557e34663f0a483108a408  scripts/_lib/root.sh
 345e05d2a813f79850d357544e5c8c50  scripts/_lib/state_checks.py
@@ -110,9 +110,9 @@ c4d1dff681a96d34f0ac8fccecbc707e  scripts/write-harness-built.sh
 7a0c7c6f7ff94edcf52f367204c63f55  src/cc_fuzzer_core/__init__.py
 81df487b0971d3b41a1613371d67df65  src/cc_fuzzer_core/__main__.py
 8c6b8d67866a2cfdcf5f702a862e565a  src/cc_fuzzer_core/cli.py
-469a377361b4e66687778c46beab2b39  src/cc_fuzzer_core/cmplog.py
-b72bfbf569f1d0c6aded6b744fc93529  src/cc_fuzzer_core/config.py
-8adf2efc95fbdc25aaf4734d6f775831  src/cc_fuzzer_core/coverage.py
+b749542267f72f8d13d502718b1e6a7c  src/cc_fuzzer_core/cmplog.py
+546441c1cfd7f30452d96f205b7b8fca  src/cc_fuzzer_core/config.py
+82b020ef6ef7e983722bb0485f8d4d89  src/cc_fuzzer_core/coverage.py
 6f02bd68429cf3b878ca461b07752beb  src/cc_fuzzer_core/crash/__init__.py
 edd2ef13c1a14be5d257860ed72a34e8  src/cc_fuzzer_core/crash/classify.py
 16996fd420eeee27bbf1fd8ea9906bd2  src/cc_fuzzer_core/crash/detect.py
@@ -131,7 +131,7 @@ a2af8e85cc92935a8fd973747a0cb6b2  src/cc_fuzzer_core/prescan/code_review_prescan
 a1359881b6f12e7f34457f4ecaf39d4a  src/cc_fuzzer_core/prescan/merge.py
 fdbe9c652691f3fc1132df68d060d907  src/cc_fuzzer_core/prescan/sast_scan.py
 c1888e45a51159c8e090d74186ad92f7  src/cc_fuzzer_core/prompts.py
-512501ecc74b66966d8484caafb7318d  src/cc_fuzzer_core/quarantine.py
+268b2e2e7bc6a92f432fe588a3bb6131  src/cc_fuzzer_core/quarantine.py
 4d6d423c89ad954f275dd88a937b64fb  src/cc_fuzzer_core/schema/__init__.py
 e824df09e2a3178e28605bfad407daeb  src/cc_fuzzer_core/schema/checks.py
 435e4147c8b31a775f88ac454223c2be  src/cc_fuzzer_core/schema/fields.py
@@ -148,7 +148,7 @@ ad3c4b5882edecf12ee28c92f8124bef  src/cc_fuzzer_core/state/derive_tick.py
 b7a39e9253538f8e96faf5ef2d973b1b  src/cc_fuzzer_core/state/toolbox.py
 8acb8673ee9a410485991685fb295990  src/cc_fuzzer_core/state/yolo_evaluate.py
 705eb14b7954b6469f0f25e05b3d9365  src/cc_fuzzer_core/state/yolo_state.py
-fd1f26dfc6f0f1af3be959ac5975f761  src/cc_fuzzer_core/tools.py
+ebe65bef6bb78b6bc6140e533d78c51f  src/cc_fuzzer_core/tools.py
 a012158cbac7a2b368f75bde83f60060  templates/authorization.json
 82f6e177eb81db38c06752dec5100322  templates/authorization.json.example
 bf357df6f228d472aeb6c36cef77e3fc  templates/fuzz.gitignore

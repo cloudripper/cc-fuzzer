@@ -1,6 +1,6 @@
 {
   "argv": [
-    "/usr/bin/python3",
+    "<PYTHON>",
     "-m",
     "cc_fuzzer_core",
     "prescan",

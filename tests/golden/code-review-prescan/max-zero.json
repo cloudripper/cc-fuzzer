@@ -1,10 +1,7 @@
 {
   "argv": [
-    "/usr/bin/python3",
-    "-m",
-    "cc_fuzzer_core",
-    "prescan",
-    "run",
+    "bash",
+    "<ROOT>/scripts/code-review-run.sh",
     "--max-functions",
     "0",
     "--no-sast"

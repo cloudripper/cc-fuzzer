@@ -51,9 +51,14 @@ def printable_runs(data: bytes) -> bytes:
 
 
 def _files(d: str):
-    """Regular files under d, depth-first in directory order (find -type f)."""
+    """Regular files under d, depth-first, NAME-SORTED at each level.
+
+    Sorted, not readdir order: the dictionary this feeds is an output artifact,
+    and readdir order varies by filesystem, so the same corpus would otherwise
+    yield a different dictionary on another machine.
+    """
     try:
-        entries = list(os.scandir(d))
+        entries = sorted(os.scandir(d), key=lambda e: e.name)
     except OSError:
         return
     for e in entries:

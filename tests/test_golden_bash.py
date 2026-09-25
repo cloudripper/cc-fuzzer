@@ -16,6 +16,7 @@ import subprocess
 import unittest
 
 from tests.support.cases import ALL_CASES, run_case
+from tests.support import golden as golden_support
 from tests.support.golden import (FIXTURES, FROZEN_NOW, GoldenTestCase, bash,
                                   python_script, require_tools)
 
@@ -26,6 +27,22 @@ LOGS = FIXTURES / "sanitizer-logs"
 # ---------------------------------------------------------------------------
 # validate-state.sh
 # ---------------------------------------------------------------------------
+
+# This module OWNS the goldens: it is the only place CC_FUZZER_UPDATE_GOLDEN=1
+# may rewrite them (see tests/support/golden.py RECORDING_ALLOWED).
+_recording = None
+
+
+def setUpModule():
+    global _recording
+    _recording = golden_support.allow_recording()
+    _recording.__enter__()
+
+
+def tearDownModule():
+    if _recording is not None:
+        _recording.__exit__(None, None, None)
+
 
 class TestValidateState(GoldenTestCase):
     def _run(self, fixture, case, setup=None, env=None):
