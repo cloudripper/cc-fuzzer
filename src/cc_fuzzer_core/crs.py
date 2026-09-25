@@ -205,10 +205,15 @@ def triage(record: Mapping, crash: str, *, harness: str = "",
 # the patch seam
 # ---------------------------------------------------------------------------
 
-def check_patch(record: Mapping, patch_file: str, pov: str, *, project_root,
+def check_patch(record: Mapping, patch_file: str, pov, *, project_root,
                 config: Mapping | None = None, harness: str = "",
                 stack_hash: str = "") -> _patch.PatchVerdict:
     """Does this patch stop the PoV without breaking the program?
+
+    `pov` is one path or a list: every variant of the bug the patch is meant
+    to fix. With `patch.pov` / `patch.pov_after` configured, the PoV runs
+    through the host's runner (e.g. `libCRS run-pov --rebuild-id {build}`)
+    instead of the local binary.
 
     Thin on purpose: the gates and their order live in cc_fuzzer_core.patch,
     and the order is the point (the PoV must crash BEFORE the patch, or

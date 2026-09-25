@@ -156,7 +156,7 @@ Five gates, in this order:
 | **before** | the PoV must crash **without** the patch |
 | **apply** | it applies cleanly |
 | **build** | a build failure is not a fix |
-| **after** | the PoV must stop reproducing |
+| **after** | the PoV must stop reproducing, and not crash somewhere else instead |
 | **tests** | the project's own tests must still pass |
 
 `before` is the one everyone skips, and it is why `stale_finding` is a
@@ -175,6 +175,34 @@ for its target:
            "revert": "command:git checkout -- .",
            "timeout_s": 900}}
 ```
+
+**Several PoVs.** Pass a list: every variant of the bug the patch is meant to
+fix. All must crash before and none may crash after; `v.povs` has the per-PoV
+result (`before`, `after` of `no-crash` / `same` / `moved`).
+
+**Running the PoV somewhere else.** By default `before` and `after` replay on
+the local binary. When the authoritative runner is the host's (OSS-CRS runs
+PoVs through `libCRS run-pov` against a sidecar build), configure it:
+
+```json
+{"patch": {"build":     "command:/opt/crs/build.sh {patch}",
+           "pov":       "command:/opt/crs/pov.sh {pov} {harness}",
+           "pov_after": "command:/opt/crs/pov.sh {pov} {harness} --rebuild-id {build}",
+           "test":      "command:/opt/crs/test.sh {patch} {build}"}}
+```
+
+`{build}` is the last non-empty stdout line of the build step (a rebuild id,
+an image tag), empty during `before`. A pov command answers with one line:
+
+```json
+{"schema": "pov-run/v1", "crashed": true, "output": "<sanitizer report>"}
+```
+
+`output` is optional; when given, the stack hash is computed from it exactly as
+local replay would, which is what lets `after` tell `same` from `moved`.
+Anything that is not an answer (no JSON, a timeout) is `inconclusive`, never a
+pass. Placeholders are `{patch}`, `{pov}`, `{harness}`, `{build}`; any other
+is an error rather than an empty string.
 
 `cc-fuzzer patch scope fix.diff` reports what the diff touches and flags a
 patch that only deletes code — the shape of "fixed" by removing the path that
