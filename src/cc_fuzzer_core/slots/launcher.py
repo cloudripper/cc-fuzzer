@@ -92,11 +92,26 @@ def _text(v) -> str:
 
 def resolve_binaries(c: Campaign, harness: str, requested: str = "") -> SlotBinaries:
     """The slot's harness binary (--binary, else the harness record's
-    harness_binary) and, for AFL++, its cmplog binary."""
+    harness_binary) and, for AFL++, its cmplog binary.
+
+    Both go through variants.select (§12). The launcher is the ONE caller
+    allowed to ask for a cmplog binary -- it hands it to AFL++ with -c, which
+    is what that build exists for -- and it says so with caller=. Every other
+    caller asking for cmplog is refused, so an instrumented binary cannot end
+    up being run by hand and treated as evidence.
+    """
+    from cc_fuzzer_core import variants as _v
     rec = c.layout().harness_record(harness) or {}
-    cmplog_bin = _text(rec.get("cmplog_binary"))
+    try:
+        fuzz_bin = _v.select(rec, _v.A_FUZZ, caller=_v.LAUNCHER_CALLER, harness=harness).binary
+    except _v.SelectionError:
+        fuzz_bin = ""
+    try:
+        cmplog_bin = _v.select(rec, _v.A_CMPLOG, caller=_v.LAUNCHER_CALLER, harness=harness).binary
+    except _v.SelectionError:
+        cmplog_bin = ""
     return SlotBinaries(
-        harness_binary=requested or _text(rec.get("harness_binary")),
+        harness_binary=requested or fuzz_bin,
         cmplog_binary="" if cmplog_bin == "None" else cmplog_bin,
         cmplog_enabled=_text(rec.get("cmplog_enabled")) in ("True", "true"),
     )

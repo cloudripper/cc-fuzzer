@@ -39,6 +39,7 @@ CLI: `cc-fuzzer variants list|show|spec`.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from dataclasses import dataclass, replace
 from typing import Mapping
@@ -233,6 +234,112 @@ def required_names(config: Mapping | None = None, harness: str = "") -> list:
 
 
 # ---------------------------------------------------------------------------
+# selection: which binary an action is allowed to run on (§12)
+# ---------------------------------------------------------------------------
+
+# The actions that reach for a binary.
+A_FUZZ, A_CMPLOG, A_CONCOLIC, A_COVERAGE = "fuzz", "cmplog", "concolic", "coverage"
+A_REPLAY, A_VERIFY, A_POC = "replay", "verify", "poc"
+ACTIONS = (A_FUZZ, A_CMPLOG, A_CONCOLIC, A_COVERAGE, A_REPLAY, A_VERIFY, A_POC)
+
+# action -> the variants it may use, best first.
+_ALLOWED = {
+    A_FUZZ:     ("fuzzer",),
+    A_COVERAGE: ("coverage",),
+    A_CMPLOG:   ("cmplog",),
+    A_CONCOLIC: ("symcc",),
+    # Evidence actions. NEVER cmplog, symcc or coverage: a crash reproduced on
+    # an instrumented binary is evidence about the instrumentation.
+    A_VERIFY:   ("verify",),
+    A_POC:      ("verify",),
+    A_REPLAY:   ("verify", "fuzzer"),
+}
+# Actions only the slot launcher may ask for: an instrumented binary is for
+# feeding the fuzzer, never for running by hand.
+LAUNCHER_ONLY = (A_CMPLOG, A_CONCOLIC)
+LAUNCHER_CALLER = "launcher"
+
+# Evidence quality of a selection. `weak` is still usable -- it is what the
+# triager falls back to when no verify binary was built -- but it is recorded
+# so a finding cannot silently rest on it.
+STRONG, WEAK = "strong", "weak"
+
+
+class SelectionError(VariantError):
+    pass
+
+
+@dataclass(frozen=True)
+class Selection:
+    binary: str
+    variant: str
+    reason: str
+    evidence_grade: str = STRONG
+
+    def as_dict(self) -> dict:
+        return {"binary": self.binary, "variant": self.variant,
+                "reason": self.reason, "evidence_grade": self.evidence_grade}
+
+
+def check_action(action: str) -> str:
+    if action not in ACTIONS:
+        raise SelectionError(f"unknown action '{action}' (known: {', '.join(ACTIONS)})")
+    return action
+
+
+def allowed_variants(action: str) -> tuple:
+    return _ALLOWED[check_action(action)]
+
+
+def forbidden_for_evidence() -> tuple:
+    """Variants whose binaries can never carry evidence."""
+    return ("cmplog", "symcc", "coverage")
+
+
+def select(record: Mapping, action: str, *, caller: str = "", harness: str = "") -> Selection:
+    """Which binary `action` runs on, from a harness-built record.
+
+    Raises SelectionError rather than falling back to whatever is built: under
+    time pressure a triager reaches for the binary that already exists, and
+    that is exactly how an instrumented binary ends up behind a finding.
+    """
+    check_action(action)
+    if action in LAUNCHER_ONLY and caller != LAUNCHER_CALLER:
+        raise SelectionError(
+            f"{action} binaries are reachable only through the slot launcher "
+            f"(caller={caller or 'unset'!s}); they are for feeding the fuzzer, not for "
+            f"running by hand")
+    rec = record or {}
+    for i, name in enumerate(allowed_variants(action)):
+        field = BINARY_FIELD[name]
+        path = rec.get(field)
+        path = "" if path in (None, "None") else str(path)
+        if not path:
+            continue
+        if i == 0:
+            return Selection(path, name, f"{action} runs on {field}")
+        return Selection(
+            path, name,
+            f"{action} fell back to {field}: no {BINARY_FIELD[allowed_variants(action)[0]]} "
+            f"was built for {harness or 'this harness'}",
+            WEAK)
+    wanted = ", ".join(BINARY_FIELD[n] for n in allowed_variants(action))
+    raise SelectionError(
+        f"no binary for action '{action}' on {harness or 'this harness'}: "
+        f"none of {wanted} is recorded")
+
+
+def check_binary(record: Mapping, action: str, binary: str, *, caller: str = "",
+                 harness: str = "") -> Selection:
+    """Refuse `binary` unless it is the one select() would have chosen."""
+    sel = select(record, action, caller=caller, harness=harness)
+    if os.path.realpath(binary) != os.path.realpath(sel.binary):
+        raise SelectionError(
+            f"'{action}' may not run on {binary}: use {sel.binary} ({sel.variant})")
+    return sel
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -258,6 +365,40 @@ def _cmd_list(a):
 def _cmd_show(a):
     v = default(a.variant)
     print(json.dumps(v.as_dict(), indent=2))
+    return 0
+
+
+def harness_record(campaign=None, harness: str = "") -> dict:
+    """The harness-built record select() reads. Falls back to the
+    harness-built.json mirror when no harness is named."""
+    from cc_fuzzer_core.paths import HarnessLayout, campaign as _campaign
+    c = campaign or _campaign(strict=False)
+    if harness:
+        layout = HarnessLayout(c.fuzz_root, c.state_dir)
+        for rec in (layout.records() if hasattr(layout, "records") else []):
+            if rec.get("name") == harness:
+                return rec
+        try:
+            doc = json.loads((c.state_dir / "harnesses.json").read_text())
+            for rec in doc.get("harnesses", []):
+                if rec.get("name") == harness:
+                    return rec
+        except Exception:
+            pass
+        raise SelectionError(f"no harness named '{harness}' in harnesses.json")
+    try:
+        return json.loads((c.state_dir / "harness-built.json").read_text())
+    except Exception:
+        raise SelectionError("no harness-built.json; name a harness with --harness")
+
+
+def _cmd_select(a):
+    rec = harness_record(harness=a.harness)
+    sel = select(rec, a.action, caller=a.caller, harness=a.harness)
+    if a.json:
+        print(json.dumps(sel.as_dict(), indent=2))
+    else:
+        print(sel.binary)
     return 0
 
 
@@ -287,6 +428,14 @@ def register_cli(subparsers):
     v = verbs.add_parser("show", help="one variant's declaration as JSON")
     v.add_argument("variant", choices=NAMES)
     v.set_defaults(func=_run(_cmd_show))
+
+    v = verbs.add_parser("select",
+                         help="which binary an action may run on (§12)")
+    v.add_argument("--harness", default="")
+    v.add_argument("--action", required=True, choices=ACTIONS)
+    v.add_argument("--caller", default="", help="e.g. launcher, for cmplog/concolic")
+    v.add_argument("--json", action="store_true")
+    v.set_defaults(func=_run(_cmd_select))
 
     v = verbs.add_parser("spec", help="the build-spec/v1 for a harness")
     v.add_argument("--harness", default="", help="harness name (for its overrides)")

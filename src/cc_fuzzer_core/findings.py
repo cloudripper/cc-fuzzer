@@ -249,6 +249,25 @@ def _harness_field(c: Campaign, harness: str, key: str) -> str:
     return "" if v == "None" else v
 
 
+def _binary_record(c: Campaign, harness: str) -> dict:
+    """The binary fields variants.select() reads, from the harness record (or
+    the single-record mirror)."""
+    from cc_fuzzer_core.variants import BINARY_FIELD
+    rec = {}
+    for field in BINARY_FIELD.values():
+        rec[field] = _harness_field(c, harness, field) or _mirror_field(c, field)
+    return rec
+
+
+def _verify_binary(c: Campaign, harness: str) -> str:
+    """The binary Stage 2 may use, per §12. "" when none is recorded."""
+    from cc_fuzzer_core import variants as _v
+    try:
+        return _v.select(_binary_record(c, harness), _v.A_VERIFY, harness=harness).binary
+    except _v.SelectionError:
+        return ""
+
+
 def _write_harnesses_txt(c: Campaign, fid: str) -> None:
     """crashes/known/<id>/harnesses.txt := the entry's harnesses[], sorted
     and unique, one per line (only when that directory exists)."""
@@ -399,7 +418,11 @@ def _verify_new(c: Campaign, stack_hash: str, reproducer: str, harness: str, log
 
     # Stage 2: the standalone ASan binary (no -fsanitize=fuzzer). A crash that
     # doesn't reproduce here only exists inside libFuzzer: a harness artifact.
-    vbin = _harness_field(c, harness, "verify_binary") or _mirror_field(c, "verify_binary")
+    #
+    # The binary is chosen by variants.select (§12), not read straight out of
+    # the record: which build an action may use is a core rule, so a cmplog,
+    # symcc or coverage binary can never end up standing behind a finding.
+    vbin = _verify_binary(c, harness)
     s2 = None
     if vbin and _executable(c, vbin):
         s2 = _attempts(c, vbin, reproducer, stage="stage2", log_file=vlog)
