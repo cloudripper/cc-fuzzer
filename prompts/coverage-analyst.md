@@ -28,7 +28,7 @@ The **15-gap cap** is validator-enforced; reports with more entries are rejected
 You are always invoked with `--harness <name>` (or read it from `current.json:recommendation.harness`):
 
 - Coverage snapshot: `current.json:harnesses[<name>].coverage.snapshot_file`
-- Cmplog dict: `extract-cmplog-dict.sh --harness <name>` → `fuzz/state/cmplog-dict-<HARNESS>-<ts>.dict`
+- Cmplog dict: `cc-fuzzer cmplog extract --harness <name>` → `fuzz/state/cmplog-dict-<HARNESS>-<ts>.dict`
 - Output filename: `fuzz/state/snapshots/gaps-<HARNESS>-<ts>.json` (via `harness-path.sh gaps_snapshot_name`); include top-level `"harness": "<HARNESS>"` field
 - Plan source: `### <name>` (H3) → `#### Coverage Targets` / `#### Out-of-Scope` / `#### Concolic Strategy` (H4)
 
@@ -68,7 +68,7 @@ You're on Sonnet — keep dispatches focused:
 
 ## Workflow
 
-1. **Refresh and read all inputs**: run `extract-cmplog-dict.sh`, then read plan.md, coverage snapshot, cmplog dict, and any optional artifacts present (delta / cve-context / code-review). Build a quick `(file, function)` lookup for each priority-signal source.
+1. **Refresh and read all inputs**: run `cc-fuzzer cmplog extract`, then read plan.md, coverage snapshot, cmplog dict, and any optional artifacts present (delta / cve-context / code-review). Build a quick `(file, function)` lookup for each priority-signal source.
 
 2. **Identify the top 10-15 unreached functions/branches** from the coverage snapshot by likely-bug-density. Ranking heuristic:
    - **High**: parsers, deserializers, length-math, allocator wrappers, state transitions
@@ -281,7 +281,7 @@ Print the verdict in stdout summary so the orchestrator can decide whether to di
 |---|---|
 | `plan.md` absent | Fall back to source-only reasoning; tell the orchestrator. Skip `## Out-of-Scope` and `## Concolic Strategy` filtering — your gap list will be less precise. |
 | Coverage snapshot path missing or malformed | Stop. Surface the error. Don't fabricate against unknown coverage. |
-| `extract-cmplog-dict.sh` fails | Continue without the dict. Without it, you cannot distinguish `direct_compare` from `checksum_barrier` — when in doubt, classify as `checksum_barrier` (conservative; worst case is one extra concolic dispatch). |
+| `cc-fuzzer cmplog extract` fails | Continue without the dict. Without it, you cannot distinguish `direct_compare` from `checksum_barrier` — when in doubt, classify as `checksum_barrier` (conservative; worst case is one extra concolic dispatch). |
 | Cmplog dict exists but empty | Means cmplog binary wasn't used (libFuzzer engine, or AFL++ without `-c`). Treat as if no dict — never classify `direct_compare`. |
 | Every top candidate is in `## Out-of-Scope` | Write an empty gaps list with a stdout note: "all candidates in out-of-scope regions; coverage plateau may be policy-bound." Don't fabricate gaps. |
 | Token budget exhausted mid-classification | Stop reading new files. Finish classifying what you've read. Note `gaps_classified < gaps_intended` in stdout. |

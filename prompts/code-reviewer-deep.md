@@ -50,7 +50,7 @@ Code review is never complete. Logic bugs in particular need creative thinking a
 **1. Ingest current campaign LEARNINGS before reviewing.** A revisit is informed by everything the campaign has learned since the prior pass. Read (cheaply, only what exists):
    - **Coverage gaps** — the latest `fuzz/state/snapshots/gaps-*.json`: what the fuzzer has and has NOT reached, the coverage frontier, and the spots it keeps bouncing off (`reason`, `hint`).
    - **Finding lifecycle** — the snapshot's per-finding `status`: which are `confirmed`, which `dismissed`, which still `candidate`. Confirmed/dismissed findings teach you where the real boundaries are.
-   - **PoC-builder verdicts** — `fuzz/state/findings.jsonl` (via `findings.sh`) for imported cr candidates: which findings proved REAL (a verifier crossed a boundary) and which did NOT manifest. A dismissed PoC narrows where to look; a confirmed one tells you the neighborhood is fertile.
+   - **PoC-builder verdicts** — `fuzz/state/findings.jsonl` (via `cc-fuzzer findings`) for imported cr candidates: which findings proved REAL (a verifier crossed a boundary) and which did NOT manifest. A dismissed PoC narrows where to look; a confirmed one tells you the neighborhood is fertile.
    - **Runtime evidence** — the cmplog dictionary if present (operands the fuzzer actually observed), which grounds reachability reasoning.
    - **Orchestrator context** — whatever learnings summary arrived in `--guidance`.
    Use these to AIM the new pass — don't re-walk the whole target blind.

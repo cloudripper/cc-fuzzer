@@ -166,7 +166,7 @@ This agent runs on Haiku and dispatches are rare (only when format invariants bl
 
 If your mutator includes a "splice in known-good constants" path (typical for protocol mutators that splice in magic bytes, valid TLV records, etc.), the constant pool MUST be harmless. **Never bake destructive shell payloads** (`rm -rf /`, fork bombs, `mkfs`, `>/proc/sysrq-trigger`, etc.) into the constant tables.
 
-The seed corpus and the mutator's constant tables are the two places a careless agent can introduce a payload the fuzzer will then spread across the corpus on the next interesting mutation. The pre-promotion `check-seed-safety.sh` only sees seeds going into `fuzz/corpus-quarantine/`; it cannot see what a custom mutator produces in memory.
+The seed corpus and the mutator's constant tables are the two places a careless agent can introduce a payload the fuzzer will then spread across the corpus on the next interesting mutation. The pre-promotion `cc-fuzzer quarantine safety` only sees seeds going into `fuzz/corpus-quarantine/`; it cannot see what a custom mutator produces in memory.
 
 Default to printable markers (`CCFUZZ_HIT`, `AAAA`) or zeroed buffers. If a destructive constant is unavoidable for some rare reason, escalate to the user — do not ship it.
 

@@ -88,7 +88,7 @@ The directive arrives in your prompt naming the action and target (derived from 
   that exercises a different call shape than the original.
 - **`mock` / `driver`** — author a **mock for the named `mock_target`** (a hostile broker,
   a socket peer, a clock) so an otherwise-unreachable server/peer path becomes drivable
-  in-process. Use the harness's `mocks` scaffolding (the nix manifest has a `mocks` slot);
+  in-process. Use the harness's `mocks` scaffolding (the build manifest has a `mocks` slot);
   the mock supplies adversarial-but-well-formed peer behaviour so the fuzzer drives the
   real code under test, **never** a rigged mock that fakes the bug. Keep crash + oracle
   detection on.
@@ -559,7 +559,7 @@ Up to 5 attempts total. Categorize the error, apply minimal fix, rerun.
 
 ## Writing harness-built.json
 
-**Do not hand-write the JSON.** Past agents pasted literal placeholder strings like `"00000000<...>"` for hashes, making every subsequent `check-campaign-state.sh` return `stale` forever. The wrapper exists specifically to remove that opportunity.
+**Do not hand-write the JSON.** Past agents pasted literal placeholder strings like `"00000000<...>"` for hashes, making every subsequent `cc-fuzzer tick state` return `stale` forever. The wrapper exists specifically to remove that opportunity.
 
 Call (always with `--harness <name>` — the wrapper hard-refuses a `--harness`-less invocation):
 
@@ -577,7 +577,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/write-harness-built.sh \
   --cmplog-binary fuzz/harnesses/<name>/harness/<name>_fuzzer_cmplog
 ```
 
-The wrapper computes real SHA-256 hashes from disk, sets `built_at`, validates every required binary is executable, and writes atomically. With `--harness`, it upserts the `harness-built/v7` record into `fuzz/state/harnesses.json` and refreshes the read-only `harness-built.json` mirror. Add `--build-backend nix` when using the nix build path, otherwise the default is `legacy`.
+The wrapper computes real SHA-256 hashes from disk, sets `built_at`, validates every required binary is executable, and writes atomically. With `--harness`, it upserts the `harness-built/v7` record into `fuzz/state/harnesses.json` and refreshes the read-only `harness-built.json` mirror. The backend comes from the build result (`--build-result`), so you do not pass `--build-backend` by hand; it defaults to `legacy` only for a build that reports nothing.
 
 **Variants**:
 - `--no-coverage --coverage-disabled-reason "..."` when coverage was skipped
