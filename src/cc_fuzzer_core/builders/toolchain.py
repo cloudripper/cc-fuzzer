@@ -39,6 +39,12 @@ INSTR_ENV = {
 # the tool name to resolve through cc_fuzzer_core.tools.which
 TOOL = {"clang++": "clang++", "afl-clang-fast++": "afl-clang-fast++", "sym++": "sym++"}
 
+# Sanitizers that LOG AND CONTINUE by default. A fuzzer needs the opposite: a
+# violation has to abort, or there is no crash to find and dedupe -- the run
+# just prints and carries on. Asking for one of these therefore also means
+# asking for -fno-sanitize-recover on it.
+RECOVERING = ("integer", "implicit-conversion")
+
 
 def compiler(variant: Mapping) -> str:
     return COMPILER.get(variant.get("instrumentation"), "clang++")
@@ -55,6 +61,9 @@ def cflags(variant: Mapping) -> list:
     san = list(variant.get("sanitizers") or ())
     if san:
         out.append("-fsanitize=" + ",".join(san))
+        recovering = [s for s in san if s in RECOVERING]
+        if recovering:
+            out.append("-fno-sanitize-recover=" + ",".join(recovering))
     return out
 
 

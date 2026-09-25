@@ -89,6 +89,36 @@ class NixParityTest(unittest.TestCase):
                                "symcc": "parser_fuzzer_symcc"})
 
 
+class RecoveringSanitizerTest(unittest.TestCase):
+    """integer/implicit-conversion log and continue by default. For a fuzzer
+    that means no crash to find or dedupe, so asking for one of them also means
+    asking for -fno-sanitize-recover; the harness-writer prompt promises this."""
+
+    def test_recover_is_disabled_for_the_integer_suite(self):
+        flags = toolchain.cflags({"sanitizers": ["address", "undefined", "fuzzer",
+                                                 "integer", "implicit-conversion"],
+                                  "instrumentation": "libfuzzer", "optimization": "1"})
+        self.assertIn("-fno-sanitize-recover=integer,implicit-conversion", flags)
+        self.assertLess(flags.index("-fsanitize=address,undefined,fuzzer,integer,implicit-conversion"),
+                        flags.index("-fno-sanitize-recover=integer,implicit-conversion"))
+
+    def test_the_default_variants_are_untouched(self):
+        for name in variants.NAMES:
+            flags = toolchain.cflags(variants.default(name).as_dict())
+            self.assertFalse([f for f in flags if f.startswith("-fno-sanitize-recover")], name)
+
+    def test_the_prompt_promise_matches_the_builder(self):
+        """The prompt tells the agent to state the need in fuzz-config.json and
+        says the builder adds the flag. Pin that it does."""
+        src = (REPO / "prompts" / "harness-writer.md").read_text()
+        self.assertIn("-fno-sanitize-recover", src)
+        cfg = {"harnesses": [{"name": "p", "variants": {
+            "verify": {"sanitizers": ["address", "undefined", "integer", "implicit-conversion"]}}}]}
+        step = [s for s in builders.plan(variants.spec(cfg, "p"), "nix", harness="p")["steps"]
+                if s["variant"] == "verify"][0]
+        self.assertIn("-fno-sanitize-recover=integer,implicit-conversion", step["cflags"])
+
+
 class ScriptBuilderTest(unittest.TestCase):
     def test_spec_reaches_build_sh_through_the_environment(self):
         step = script.step(variants.default("verify").as_dict(), harness="parser")

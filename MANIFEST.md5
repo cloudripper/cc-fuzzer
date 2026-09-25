@@ -24,7 +24,7 @@ ef7543a9265d22a9a525009ad626f045  prompts/concolic-executor.md
 12beca31b7e97a2fb486f5906edb927a  prompts/coverage-analyst.md
 8516088cfcd245b74080097d84a4e90f  prompts/crash-triager.md
 9e09958a2665fdf08f6fdbf33d527aa3  prompts/fuzz-orchestrator.md
-52a02fd3c5dde3013e0ff3c47912f3f4  prompts/harness-writer.md
+4df5c7271585908515afed60f97eb803  prompts/harness-writer.md
 1cddf7fcc63fbd174dac378b71afbe07  prompts/mutator.md
 90a2cd8aaa5f156041f97b73efe18738  prompts/planner-consult.md
 c0cf59e4ec94f75cc22a36ed416c3af5  prompts/poc-builder.md
@@ -113,7 +113,7 @@ fe3b8d694186b83378094e38a6b18f61  src/cc_fuzzer_core/builders/__init__.py
 9a695b380ea3f7b6d498995c7147a260  src/cc_fuzzer_core/builders/nix.py
 48b5c0243876cf7c1af7724bf4559cb5  src/cc_fuzzer_core/builders/ossfuzz.py
 20ac54ed256dd5041ecfa708b7a51a90  src/cc_fuzzer_core/builders/script.py
-29755102ea8656a225c92eee3d776baa  src/cc_fuzzer_core/builders/toolchain.py
+e9f82154f2827218549d284fe6a331dc  src/cc_fuzzer_core/builders/toolchain.py
 9b0a824fe16cb91d3ddbf2686090c122  src/cc_fuzzer_core/cli.py
 b749542267f72f8d13d502718b1e6a7c  src/cc_fuzzer_core/cmplog.py
 546441c1cfd7f30452d96f205b7b8fca  src/cc_fuzzer_core/config.py

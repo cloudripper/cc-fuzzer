@@ -104,48 +104,49 @@ harness to make a known crash "go away"; reshaping is for reaching *new* surface
 
 ## Build matrix
 
-Every COLD start produces THREE binaries plus one optional:
+**You do not write compiler flags.** What each binary is FOR is declared once,
+in the core, and a builder translates that declaration for whichever toolchain
+this environment has. `{{cc}} variants list` shows the declarations;
+`{{cc}} variants spec --harness <name>` resolves them for this harness, including
+anything the campaign turned on in `fuzz-config.json`.
 
-### 1. Fuzzing binary — `fuzz/harnesses/<name>/harness/<name>_fuzzer`
+Every COLD start produces three binaries; cmplog and symcc are built when the
+campaign asks for them.
 
+| variant | binary | what it is for |
+|---|---|---|
+| `fuzzer` | `<name>_fuzzer` | the binary the fuzzer drives. **Required** — a build that cannot produce it has failed. |
+| `coverage` | `<name>_fuzzer_cov` | line coverage for `snapshot-coverage`. |
+| `verify` | `<name>_fuzzer_verify` | the binary a crash must reproduce on before it counts. |
+| `cmplog` | `<name>_fuzzer_cmplog` | AFL++ input-to-state (Redqueen), opt-in. |
+| `symcc` | `<name>_fuzzer_symcc` | concolic execution, opt-in. |
+
+The declarations are not arbitrary, and these are the reasons behind them:
+
+- **The coverage binary carries no fuzzer sanitizer.** It runs as a normal
+  program, one input at a time, through the `cov_main.c` shim (reads `argv[1]`
+  or stdin and calls `LLVMFuzzerTestOneInput`). It is built `-O0` because
+  inlining makes line attribution lie.
+- **The verify binary carries neither the fuzzer sanitizer nor coverage
+  instrumentation.** That is the whole point of it: a crash that reproduces
+  only under the fuzzer's own instrumentation is evidence about the
+  instrumentation, not about the target. `crash-triager` cross-checks here, and
+  a crash that fires in the fuzzing binary but not in this one is a harness
+  artifact and must not be recorded as a finding.
+- **The cmplog binary carries no sanitizers at all.** Pure comparison
+  instrumentation; AFL++ consumes it with `-c <binary>`.
+
+Ask for the build with:
+
+```bash
+{{cc}} build plan --harness <name> --backend <backend>    # the exact commands, runs nothing
 ```
-clang++ -g -O1 -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer ...
-```
 
-### 2. Coverage binary — `fuzz/harnesses/<name>/harness/<name>_fuzzer_cov`
-
-```
-clang++ -g -O0 -fprofile-instr-generate -fcoverage-mapping ...
-```
-
-- **No** `-fsanitize=fuzzer`. The coverage binary runs as a normal program, one input at a time, called by `snapshot-coverage.sh`.
-- Uses `fuzz/harnesses/<name>/harness/cov_main.c` shim (reads stdin or `argv[1]`, calls `LLVMFuzzerTestOneInput`).
-- `-O0` for accurate line numbers.
-
-### 3. Verification binary — `fuzz/harnesses/<name>/harness/<name>_fuzzer_verify`
-
-```
-clang++ -g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer ...
-```
-
-- **No** `-fsanitize=fuzzer`. Same `cov_main.c` shim as coverage — invokable as `./target_fuzzer_verify input.bin`.
-- No coverage profiling either. Pure ASan+UBSan for clean signal.
-- Used by `crash-triager` for Stage 2 cross-verification. A crash that reproduces in the fuzzer harness but NOT here is a harness artifact and must NOT be recorded as a finding.
-- If the verify build fails: one repair attempt, then write `fuzz/state/verify-build-failed.log` and use `--no-verify` on the wrapper script. **Do not fail the campaign** — the orchestrator continues with findings marked as potentially unverified.
-
-### 4. Cmplog binary (optional) — `fuzz/harnesses/<name>/harness/<name>_fuzzer_cmplog`
-
-**Only when AFL++ is the engine AND `afl-clang-fast` is installed.**
-
-```
-AFL_LLVM_CMPLOG=1 afl-clang-fast++ -g -O1 ...
-```
-
-- Redqueen / input-to-state instrumentation. AFL++ uses it via `-c <binary>` to observe comparison operands at runtime and feed them back as mutations.
-- **NEVER add `-fsanitize` to the cmplog build.** Pure cmplog instrumentation, no sanitizers.
-- If `afl-clang-fast` is missing OR libFuzzer is the engine, **warn loudly but continue**. Use `--no-cmplog --cmplog-disabled-reason "..."` on the wrapper. Pick one of:
-  - `"afl-clang-fast not in PATH; install AFL++ to enable Redqueen-style input-to-state"`
-  - `"engine is libFuzzer; cmplog is AFL++-only"`
+If a variant cannot be built here, that is recorded rather than papered over:
+the build result distinguishes `skipped` (the campaign did not ask for it),
+`unsupported` (asked for, and this toolchain cannot) and `failed` (it tried and
+broke), and each carries its reason into the harness record. Do not fail the
+campaign over a non-required variant — record why it is missing and continue.
 
 ## Coverage build is mandatory
 
@@ -349,11 +350,16 @@ Keep the op vocabulary small (3–6 ops) and the reference `model` minimal — i
 
 ### UBSan integer/implicit-conversion suite (silent numeric corruption)
 
-When `## Oracle` (or the plan's `## Harness`) requests the integer suite — appropriate when the target does length/size arithmetic on attacker-controlled values — add to the **fuzzing and verify** builds (NOT coverage, NOT cmplog):
+When `## Oracle` (or the plan's `## Harness`) requests the integer suite — appropriate when the target does length/size arithmetic on attacker-controlled values — the **fuzzing and verify** binaries need two more sanitizers (NOT coverage, NOT cmplog). State that as a need in `fuzz-config.json`, so every builder honours it rather than only a clang command line:
 
+```json
+"harnesses": [{"name": "<name>", "variants": {
+  "fuzzer": {"sanitizers": ["address", "undefined", "fuzzer", "integer", "implicit-conversion"]},
+  "verify": {"sanitizers": ["address", "undefined", "integer", "implicit-conversion"]}
+}}]
 ```
--fsanitize=integer,implicit-conversion -fno-sanitize-recover=integer,implicit-conversion
-```
+
+The builder adds `-fno-sanitize-recover` for these; check with `{{cc}} build plan --harness <name>`.
 
 `-fno-sanitize-recover` makes a violation abort (a hard, deduplicable signal) rather than log-and-continue. Because `-fsanitize=integer` also flags *defined* unsigned wraparound that is often intentional (hashing, counters, ring buffers), write an allowlist so the signal isn't drowned:
 
@@ -480,35 +486,27 @@ This path applies when:
 
 1. Read `fuzz/state/plan.md` (`## Target` + `## Harness`). Verify the entry function exists in the target source and confirm its signature.
 2. Write `fuzz/harnesses/<name>/harness/<name>_fuzzer.cc`.
-3. Write `fuzz/harnesses/<name>/harness/build.sh` containing build commands for all required binaries plus a guarded cmplog build:
+3. Write `fuzz/harnesses/<name>/harness/build.sh`. It receives the variant it is
+   being asked for through the environment, so one script covers every variant
+   instead of hard-coding a compiler line per binary:
 
    ```bash
    #!/usr/bin/env bash
    set -e
    H=fuzz/harnesses/<name>/harness
-   # 1. Fuzzing
-   clang++ -g -O1 -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer \
-     $H/<name>_fuzzer.cc <objects> -o $H/<name>_fuzzer
-
-   # 2. Coverage
-   clang++ -g -O0 -fprofile-instr-generate -fcoverage-mapping \
-     $H/<name>_fuzzer.cc $H/cov_main.c <objects> \
-     -o $H/<name>_fuzzer_cov
-
-   # 3. Verify (ASan-only standalone)
-   clang++ -g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer \
-     $H/<name>_fuzzer.cc $H/cov_main.c <objects> \
-     -o $H/<name>_fuzzer_verify
-
-   # 4. Cmplog (optional)
-   if command -v afl-clang-fast++ >/dev/null 2>&1; then
-     AFL_LLVM_CMPLOG=1 afl-clang-fast++ -g -O1 \
-       $H/<name>_fuzzer.cc <objects> \
-       -o $H/<name>_fuzzer_cmplog
-   else
-     echo "WARNING: afl-clang-fast++ not found; skipping cmplog build." >&2
-   fi
+   SRC="$H/<name>_fuzzer.cc"
+   # The shim supplies main() for the standalone variants (coverage, verify);
+   # libFuzzer and AFL bring their own.
+   [ "$CC_FUZZER_LINK_MODE" = "standalone-main" ] && SRC="$SRC $H/cov_main.c"
+   # $CC_FUZZER_CFLAGS already carries this variant's sanitizers, optimization
+   # and instrumentation — do not add flags of your own here.
+   $CC_FUZZER_COMPILER $CC_FUZZER_CFLAGS $SRC <objects> -o "$H/$CC_FUZZER_OUTPUT"
    ```
+
+   The variables (`CC_FUZZER_VARIANT`, `_PURPOSE`, `_SANITIZERS`,
+   `_INSTRUMENTATION`, `_LINK_MODE`, `_CFLAGS`, `_COMPILER`, `_OUTPUT`,
+   `_REQUIRED`) come from the resolved spec. A script that ignores them still
+   works the way it always did, which is why existing harnesses keep building.
 
 4. Write `fuzz/harnesses/<name>/harness/cov_main.c`:
 
