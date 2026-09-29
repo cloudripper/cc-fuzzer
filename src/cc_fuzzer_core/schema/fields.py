@@ -62,10 +62,14 @@ BUDGET = FileSchema(
     "budget/v1",
     _f("campaign_started,limit_usd,spent_usd,last_updated"),
     _f("campaign_started,limit_usd,spent_usd,spent_per_model,tokens_in,tokens_out,last_updated"))
+# Every top-level block something in the core reads. A block missing here
+# makes `schema validate` flag the file and `tick state` report `corrupted`,
+# so a new config block is not done until it is listed.
 FUZZ_CONFIG = FileSchema(
     "fuzz-config/v3",
     _f("fuzz_forks,harnesses,fuzzer_slots"),
-    _f("fuzz_forks,harnesses,fuzzer_slots,tick,cve,yolo,code_review,models,features"))
+    _f("fuzz_forks,harnesses,fuzzer_slots,tick,cve,yolo,code_review,models,features,"
+       "poc,variants,build,verification,query,patch,submission,determinism,gate,cull"))
 FUZZERS = FileSchema("fuzzers/v2", ("slots",), ("slots",))
 
 # Snapshot files, in the order validate-state.sh checks them: (glob, schema).

@@ -14,3 +14,9 @@ fuzz/
 # ...except the synthetic fixture campaigns the test suite runs against.
 !/tests/fixtures/*/fuzz/
 *.tar.gz
+
+# Packaging output (python -m build, pip wheel)
+dist/
+build/
+*.egg-info/
+.pytest_cache/

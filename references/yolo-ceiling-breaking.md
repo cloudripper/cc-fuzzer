@@ -17,7 +17,7 @@ and keep going.
 
 ## The escalation ladder
 
-A deterministic probe (`scripts/ceiling-probe.sh` → `_lib/ceiling_probe.py`, also folded
+A deterministic probe (`scripts/ceiling-probe.sh` → `cc-fuzzer state ceiling-probe`, `cc_fuzzer_core.state.ceiling`; also folded
 into `current.json.yolo_state.evaluation.ceiling_probe` every tick) decides whether a
 plateau is a real ceiling. It cross-references the uncovered functions against:
 

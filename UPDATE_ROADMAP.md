@@ -1,11 +1,11 @@
 # cc-fuzzer: carve out a host-independent core
 
-> **Status: delivered.** All twelve sections are implemented, tested and
-> merged; the suite is green (489 passed / 0 failed). This document is kept as
-> the design record — it describes what was decided and why, not work
-> outstanding. For using the result, see
-> [docs/EMBEDDING.md](docs/EMBEDDING.md); for how the plugin sits on top of it,
-> see the README's "The core".
+> **Status: delivered (0.31.0 to 0.32.0).** All twelve sections are
+> implemented and tested, and CI runs the suite on Python 3.10 to 3.13. This
+> document is the design record: it says what was decided and why, in the
+> words used when it was decided. Where the build differs, the table below is
+> authoritative. For using the result see [docs/EMBEDDING.md](docs/EMBEDDING.md);
+> for how the plugin sits on top of it, the README's "The core".
 >
 > | § | Delivered as |
 > |---|---|
@@ -22,13 +22,34 @@
 > | §11 promotion gate | `crash.pipeline.finalize`, `.verified` marker, `hooks/gate-findings.sh` |
 > | §12 selection | `variants.select`, `gate`, `hooks/gate-verify-build.sh` |
 >
+> **Where the build differs from the plan below**
+>
+> | Plan said | Built |
+> |---|---|
+> | §3: downstream calls `render(agent, profile="oss-fuzz")` at runtime | The prompts assume the `fuzz/` layout, so a CRS writes its own and calls the core's judgement (`crs.*`, gates, policies). EMBEDDING.md §6. |
+> | §3, §9: committed agents rendered with all features on, every block kept | Rendered at the feature DEFAULTS: every default-on block is kept, an optional integration's block (default off) is stripped. |
+> | §4: LLM filter verdicts through `cc-fuzzer findings filter-verdict` | Not built. The triager records a failed filter with `findings drop artifact_filter` as before. |
+> | §4: the orchestrator runs `cc-fuzzer verify <id>` inline | No `verify` CLI: `pipeline.finalize` (and `crs.triage` for a CRS) run the configured verifier. |
+> | §6: oss-fuzz maps verify to `SANITIZER=undefined` | `SANITIZER=address` by default (a UBSan-only verify binary misses memory bugs); per-variant `sanitizer` override; `build.verify_variant_source` can name an existing build. |
+> | §7: `cc-fuzzer tick --once --json`; plugin uses `tick prepare` / `tick apply` | `cc-fuzzer tick run [--prepare] [--json]` (`--once` accepted); the tick skill dispatches after `--prepare`. |
+> | §9: four flags, all default true | Plus three optional-integration flags (`cull_intake`, `cull_feedback`, `cull_query_engine`), default false. |
+> | §11: the hook allows writes through `findings promote`/`finalize` | Through `findings promote` (finalize is an API, not a command); the protected directories and sanctioned writers are configurable (`gate.protected_dirs`, `gate.allow_commands`). |
+>
+> **Beyond the plan**, built for the CRS consumer (all in EMBEDDING.md):
+> `crs.triage` (replay, stack-hash-preserving minimization, byte sensitivity
+> map, verify, submission policy, delta relevance), `crs.check_patch`
+> (host PoV runner, PoV clusters, step policy, extra gates),
+> `crs.cluster`/`merge_by_patch`, authoritative oracles, `errors`
+> (`BudgetExhausted`), ledger scopes and `guard`, `determinism`, versioned
+> export schemas, CodeQL against a host database with a parametric query
+> pack, SARIF in/out, and the optional cull integration
+> (`cc_fuzzer_core.integrations.cull`).
+>
 > **Still bash-only**, and therefore not reachable from a container: the
 > campaign lifecycle scripts `stop-fuzzer.sh`, `status.sh`, `reset-campaign.sh`,
 > `reverify-after-rebuild.sh`, `dictionaries.sh`, `run-concolic.sh`,
 > `build-poc-repro.sh`. A CRS supplies its own equivalents; porting them was
-> never in this roadmap's scope. `yolo-route.sh` is superseded by
-> `loop.route()` and kept only until the plugin skills stop calling it.
-
+> never in this roadmap's scope.
 
 ## Context
 

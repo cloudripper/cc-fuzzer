@@ -12,7 +12,7 @@ Under ctxctl the top-level thread cannot run Bash directly. Dispatch **ops-runne
 2. Read the Agent's return.
 3. If validation passes, print a brief summary of state (number of findings, snapshots, corpus seeds, fuzzer running status) drawn from the return.
 4. If validation fails, print the errors verbatim and suggest one of:
-   - `/fuzz-reset` for unfixable corruption or schema-version mismatch (v0.30 requires schema v12; older state cannot be migrated)
+   - `/fuzz-reset` for unfixable corruption or schema-version mismatch (the plugin requires schema v13; older state cannot be migrated)
    - Manual fixes for individual issues
 
 No header.txt refresh is needed — `validate-state.sh` reads state directly.

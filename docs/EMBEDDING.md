@@ -27,12 +27,16 @@ protects the fix. Neither needs a tick, a `current.json`, or a scheduler —
 ## 1. Install
 
 ```bash
-pip install /path/to/cc-fuzzer          # or: pip install cc-fuzzer-core
+pip install /path/to/cc-fuzzer          # from a checkout
+pip wheel --no-deps -w vendor/ /path/to/cc-fuzzer   # a wheel to vendor into an offline image
 cc-fuzzer --version
 ```
 
-The wheel carries its own data (prompts, rules, dictionaries, templates,
-`STATE_SCHEMA.md`, `models.json`). `CC_FUZZER_ROOT` is **not** required.
+The package is stdlib-only and needs Python 3.10 or newer. The wheel carries
+its own data (prompts, rules and the query pack, dictionaries, templates,
+`STATE_SCHEMA.md`, `models.json`). `CC_FUZZER_ROOT` is **not** required. Pin
+it by commit and wheel sha256 when you vendor it: the version is bumped per
+release, not per change.
 
 ## 2. Seam one: a crash arrives
 
@@ -43,11 +47,11 @@ record = {"verify_binary": "/out/parser_verify"}     # all the state it needs
 cfg    = {"verification": {"final_step": "command:/opt/crs/oracle.sh"}}
 
 r = crs.triage(record, "/crashes/x.bin", harness="parser", config=cfg)
-if r.submittable:
+if r.should_submit:                     # submittable AND the submission policy
     submit(r.pov, r.stack_hash)        # r.pov is the MINIMIZED input
 ```
 
-`triage` does five things, in this order, and stops as soon as the answer is
+`triage` does these, in this order, and stops as soon as the answer is
 known:
 
 | | |
@@ -57,6 +61,8 @@ known:
 | **verify** | your oracle, via `verification.final_step` |
 | **byte map** | only if confirmed: which bytes of the PoV decide the bug (see §3.1) |
 | **marker** | only if confirmed, and only if you pass a campaign |
+| **delta relevance** | only if you pass `delta_range` (reported, never a filter) |
+| **policy** | always: `policy_verdict`, and so `should_submit` |
 
 `status` is one of `confirmed`, `rejected`, `inconclusive`, `not_a_crash`,
 `flaky`. Read **`r.submittable`** rather than `status == "confirmed"`: it also
@@ -260,6 +266,19 @@ Anything that is not an answer (no JSON, a timeout) is `inconclusive`, never a
 pass. Placeholders are `{patch}`, `{pov}`, `{harness}`, `{build}`; any other
 is an error rather than an empty string.
 
+**Which PoVs are one bug.** A patcher should be handed a bug, not a pile of
+inputs. `crs.cluster(exports)` groups triage exports by stack hash (shortest
+PoV first, as the representative). The stack hash says where a crash
+surfaced, not where the bug is, so a patch settles the rest:
+`crs.merge_by_patch(clusters, "fix.diff", record=..., project_root=...)`
+runs the patch against every cluster's representative in one validation
+(one build) and merges the clusters it stops (`pov-cluster/v1`, with
+`merged_by` naming the patch).
+
+```bash
+cc-fuzzer crs cluster r1.json r2.json r3.json --patch fix.diff
+```
+
 **Steps that did not run.** "Not configured", "ran and passed" and "ran with
 nothing to do" are different facts (libCRS `apply-patch-test` succeeds, by
 contract, when the project has no test script). A policy per step decides
@@ -344,17 +363,28 @@ standardise on.
 
 ## 6. Prompts
 
+**A CRS should usually write its own prompts, not render these.** Every
+cc-fuzzer agent prompt is written for a cc-fuzzer campaign: it reads and
+writes the `fuzz/` layout (`fuzz/state/`, `fuzz/corpus-quarantine/`,
+`fuzz/harnesses/<name>/`), calls the campaign's scripts, and hands off to
+the other agents by name. A framework with its own layout (OSS-CRS's `/out`,
+`/work`, `/artifacts`) gets instructions that point at directories that do
+not exist. The `oss-fuzz` profile changes the toolchain vocabulary (no nix,
+no `CLAUDE_*`, no `apt-get`), not the layout.
+
+What transfers is the judgement, and it already lives in the core, not in a
+prompt: `crs.triage`, `crs.check_patch`, `crs.cluster`, the gates, the
+policies. Have your agents call those, and keep the prose yours.
+
+Rendering one is still possible when a host does adopt the `fuzz/` layout:
+
 ```python
 from cc_fuzzer_core import prompts
 text = prompts.render("seed-generator", profile="oss-fuzz", frontmatter=False)
 ```
 
-`profile="oss-fuzz"` yields text with no nix, no `CLAUDE_*`, no `apt-get` and
-no Claude Code tool vocabulary — verified across all 14 agents. The ones a CRS
-is most likely to want: `seed-generator`, `mutator`, `harness-writer`,
-`crash-triager`, `query-analyst`.
-
-Feature flags strip prompt sections and gate subsystems together:
+Feature flags strip prompt sections and gate subsystems together; an
+optional integration's flag (`cull_*`) is off unless turned on:
 
 ```bash
 export CC_FUZZER_FEATURES="-advisory_lookup,-disclosure_reporting,-logic_oracles,-impact_tiering"
@@ -469,6 +499,23 @@ fi
 
 To tell a refusal from a failure, read `decision` from `--json` (`deny` vs
 `error`) — explicitly, rather than inferring it from a status code.
+
+The same contract guards writes into directories only the promote path may
+fill. The default is `fuzz/findings/`; a CRS whose framework submits from a
+watched directory protects that one too, and names the one process allowed
+to write there:
+
+```json
+{"gate": {"protected_dirs": ["findings", "/artifacts/povs"],
+          "allow_commands": ["crs-promote-pov"]}}
+```
+
+```bash
+cc-fuzzer gate classify-write --command "cp crash-1 /artifacts/povs/" --config cfg.json  # exit 1
+```
+
+Entries are path suffixes, matched on whole components (`/artifacts/povs-old`
+is not `/artifacts/povs`).
 
 ## 11. Budgets and accounting
 
@@ -600,6 +647,9 @@ CodeQL lever runs only through `query.codeql_engine` (`cull query`, once cull
 ships engine mode), never agent-written QL. The line-coverage export for
 cull's rerank waits for cull to define the format.
 
+What the integration is still waiting on from cull, and what each update
+switches on: [cull-upstream.md](cull-upstream.md).
+
 ## Things that will bite
 
 1. **Any non-zero from `gate` means not allowed.** Never treat a non-zero
@@ -616,15 +666,23 @@ cull's rerank waits for cull to define the format.
    pins the CPU budget so `fuzz_forks` does not vary with the host.
 6. **Never hand-create `fuzz/findings/<id>/`.** It is the claim that something
    was verified.
-7. **Read `submittable`, not `status == "confirmed"`.** Confirmed on weak
-   evidence (no verify binary was built) is triage-grade, not
-   submission-grade.
+7. **Read `should_submit`, not `status == "confirmed"`.** `submittable` is
+   confirmed on strong evidence (weak evidence, a crash shown only on the
+   fuzzing binary, is triage-grade); `should_submit` also asks your
+   submission policy. If every binary you have is a fuzzing build, declare
+   your oracle `authoritative` or nothing is ever submittable.
 8. **A minimizer that only checks "still crashes" will hand you a different
    bug.** `minimize` preserves the stack hash; if you roll your own, do the
    same.
 9. **Validate patches against a PoV that reproduces first.** The `before` gate
    returns `stale_finding` for a reason: patching a PoV that never crashed
    looks exactly like success.
+10. **Catch `errors.BudgetError`; do not retry it.** A gateway that ran out of
+    budget says so again on every retry. Fall through to the work that needs
+    no model.
+11. **A patch that moves the crash did not fix it.** `after` reports `moved`
+    and the verdict is `does_not_fix`; one that only rejects the exact bad
+    value is what the `neighbours` extra gate exists to catch.
 
 ---
 
@@ -664,6 +722,7 @@ source that moved under the harness.
 | **minimize a PoV** | `minimize` | `minimize run` |
 | **which PoV bytes matter** | `minimize.sensitivity` | `minimize sensitivity` |
 | **validate a patch** | `crs.check_patch`, `patch` | `patch validate`, `patch scope` |
+| **group PoVs into bugs** | `crs.cluster`, `crs.merge_by_patch` | `crs cluster` |
 | seed safety | `crs.safe_seeds`, `quarantine` | `quarantine run` |
 | cmplog dictionary | `crs.dictionary`, `cmplog` | `cmplog extract` |
 | delta targets | `crs.delta_targets`, `delta` | `delta find` |
@@ -674,7 +733,14 @@ source that moved under the harness.
 | binary choice | `variants` | `variants select` |
 | replay | `crash.replay` | `crash replay` |
 | verification | `crash.verifiers`, `crash.pipeline` | — |
-| refusals | `gate` | `gate classify-command`, `gate check-finding` |
+| refusals | `gate` | `gate classify-command`, `gate check-finding`, `gate classify-write` |
+| submission policy | `crs.judge` (`submission.policy`) | `crs triage --policy` |
+| budget errors | `errors` | — |
+| spend caps | `ledger.guard`, `ledger.check` | `ledger guard` |
+| reproducibility knobs | `determinism` | — |
+| SARIF in/out | `prescan.sast_scan.normalize_sarif`, `export_sarif` | — |
+| query templates | `query.templates`, `query.fill` | `query template list\|fill` |
+| cull's candidates (optional) | `integrations.cull` | `intake cull`, `cull queue\|cards\|feedback\|hints\|diff\|engine` |
 | findings | `findings` | `findings` |
 | spend | `ledger` | `ledger spend` |
 | queries | `query` | `query run`, `query budget` |

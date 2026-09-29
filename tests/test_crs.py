@@ -440,6 +440,54 @@ class AuthoritativeTest(unittest.TestCase):
         self.assertFalse(verifiers.authoritative({"verification": {"final_step": "command:/x"}}))
 
 
+class ClusterTest(unittest.TestCase):
+    """Which PoVs are one bug: stack hash first, then a patch settles it."""
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.addCleanup(self.td.cleanup)
+        self.d = Path(self.td.name)
+        (self.d / "p.diff").write_text("--- a/x.c\n+++ b/x.c\n@@\n-a\n+b\n")
+        self.docs = []
+        for name, h, size in (("a1", "hA", 9), ("a2", "hA", 3), ("b1", "hB", 5), ("c1", "hC", 7)):
+            p = self.d / name
+            p.write_bytes(b"x" * size)
+            self.docs.append({"pov": str(p), "stack_hash": h})
+
+    def test_grouped_by_stack_hash_shortest_first(self):
+        cs = crs.cluster(self.docs)
+        self.assertEqual([c.id for c in cs], ["hA", "hB", "hC"])
+        self.assertEqual(Path(cs[0].representative).name, "a2")
+        self.assertEqual(cs[0].as_dict()["schema"], "pov-cluster/v1")
+
+    def _merge(self, fixes):
+        def fn(pov, phase, build):
+            name = Path(pov).name
+            return patch.PovRun(phase == "before" or name not in fixes, "h")
+        return crs.merge_by_patch(crs.cluster(self.docs), str(self.d / "p.diff"), record={},
+                                  project_root=self.d, replay_fn=fn)
+
+    def test_one_patch_that_stops_two_groups_makes_them_one_bug(self):
+        cs, v = self._merge({"a2", "b1"})
+        self.assertEqual(cs[0].stack_hashes, ("hA", "hB"))
+        self.assertEqual(Path(cs[0].representative).name, "a2")
+        self.assertEqual(len(cs[0].povs), 3)
+        self.assertTrue(cs[0].merged_by.endswith("p.diff"))
+        self.assertEqual([c.id for c in cs[1:]], ["hC"])
+        self.assertEqual(v.status, patch.DOES_NOT_FIX, "hC still crashes")
+
+    def test_a_patch_that_stops_one_group_merges_nothing(self):
+        cs, _ = self._merge({"b1"})
+        self.assertEqual(len(cs), 3)
+
+    def test_a_stale_representative_merges_nothing(self):
+        def fn(pov, phase, build):
+            return patch.PovRun(False)
+        cs, v = crs.merge_by_patch(crs.cluster(self.docs), str(self.d / "p.diff"), record={},
+                                   project_root=self.d, replay_fn=fn)
+        self.assertEqual((len(cs), v.status), (3, patch.STALE))
+
+
 class SurfaceTest(unittest.TestCase):
     def test_the_adapter_does_not_import_the_loop(self):
         """If the CRS surface reached for the tick machinery, 'no loop needed'

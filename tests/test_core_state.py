@@ -150,22 +150,20 @@ class TestShims(unittest.TestCase):
                 self.assertNotIn("<<'PY'", text)
                 self.assertNotIn("python3 -c", text)
 
-    def test_lib_modules_are_reexports(self):
-        env = {**os.environ, "PYTHONPATH": str(REPO / "src")}
-        code = ("import sys; sys.path.insert(0, %r)\n"
-                "import yolo_evaluate, toolbox_eval, ceiling_probe\n"
-                "from cc_fuzzer_core.state import yolo_evaluate as y, toolbox as t, ceiling as c\n"
-                "assert (yolo_evaluate, toolbox_eval, ceiling_probe) == (y, t, c)\n") % str(REPO / "scripts" / "_lib")
-        r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env, timeout=60)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertFalse((REPO / "scripts" / "_lib" / "build_current_multi.py").exists())
+    def test_the_transition_shims_are_gone(self):
+        """The core owns these; the _lib re-export shims nothing called were
+        removed. Their CLIs are `cc-fuzzer state evaluate|toolbox|ceiling-probe`."""
+        for gone in ("build_current_multi.py", "yolo_evaluate.py", "toolbox_eval.py",
+                     "ceiling_probe.py"):
+            with self.subTest(gone=gone):
+                self.assertFalse((REPO / "scripts" / "_lib" / gone).exists())
 
-    def test_lib_testing_clis(self):
+    def test_the_state_clis_that_replace_them(self):
         env = {**os.environ, "PYTHONPATH": str(REPO / "src")}
         cur = FIXTURES / "campaign-plateau" / "fuzz" / "state" / "current.json"
-        for mod, key in (("yolo_evaluate", "suggested_disposition"), ("toolbox_eval", "eligible_levers")):
-            with self.subTest(mod=mod):
-                r = subprocess.run([sys.executable, str(REPO / "scripts" / "_lib" / f"{mod}.py"), str(cur)],
+        for verb, key in (("evaluate", "suggested_disposition"), ("toolbox", "eligible_levers")):
+            with self.subTest(verb=verb):
+                r = subprocess.run([sys.executable, "-m", "cc_fuzzer_core", "state", verb, str(cur)],
                                    capture_output=True, text=True, env=env, timeout=60)
                 self.assertEqual(r.returncode, 0, r.stderr)
                 self.assertIn(key, __import__("json").loads(r.stdout))

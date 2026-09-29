@@ -40,6 +40,7 @@ import re
 import shlex
 import sys
 from dataclasses import dataclass, field
+from typing import Mapping
 
 from cc_fuzzer_core import variants as _variants
 
@@ -154,10 +155,38 @@ def classify_command(command: str, *, record=None, harness: str = "") -> Verdict
 
 FINDINGS_DIR = "findings"
 PROMOTE_COMMAND = "cc-fuzzer findings promote <id>"
+# The commands that ARE the promote path, and may therefore write there.
+PROMOTE_COMMANDS = ("cc-fuzzer findings promote", "findings.sh promote")
 
 # A Bash command that writes into a path: redirections and the usual movers.
 _WRITE_RE = re.compile(
     r"(>>?|\b(?:cp|mv|mkdir|tee|install|rsync|touch|ln|dd)\b|\brm\b)")
+
+
+def protected(config=None) -> tuple:
+    """(dirs, allowed commands) the write gate enforces.
+
+    `dirs` are path SUFFIXES: "findings" protects fuzz/findings/ (the plugin
+    default); a CRS whose submission directory is watched by the framework
+    protects it the same way:
+
+        {"gate": {"protected_dirs": ["findings", "/artifacts/povs"],
+                  "allow_commands": ["crs-promote-pov"]}}
+
+    `allow_commands` ADD to the promote path's own commands: a command that
+    contains one of them is the sanctioned writer and may write there.
+    """
+    block = (config or {}).get("gate") or {}
+    if not isinstance(block, Mapping):
+        block = {}
+    dirs = block.get("protected_dirs") or (FINDINGS_DIR,)
+    if isinstance(dirs, str):
+        dirs = (dirs,)
+    dirs = tuple(d.strip().strip("/") for d in dirs if isinstance(d, str) and d.strip().strip("/"))
+    allow = block.get("allow_commands") or ()
+    if isinstance(allow, str):
+        allow = (allow,)
+    return dirs or (FINDINGS_DIR,), PROMOTE_COMMANDS + tuple(a for a in allow if isinstance(a, str) and a)
 
 
 def check_finding_dir(path) -> Verdict:
@@ -170,32 +199,52 @@ def check_finding_dir(path) -> Verdict:
                    suggestion=f"promote it through {PROMOTE_COMMAND}")
 
 
-def _touches_findings(command: str) -> tuple:
-    """Tokens in `command` that point inside fuzz/findings/."""
+def _dir_re(d: str):
+    return re.compile(rf"(^|/){re.escape(d)}(/|$)")
+
+
+def _touches(command: str, dirs) -> tuple:
+    """Tokens in `command` that point inside a protected directory."""
     hits = []
+    pats = [_dir_re(d) for d in dirs]
     for tok in _tokens(command):
         cleaned = tok.lstrip("<>")
-        if re.search(rf"(^|/){FINDINGS_DIR}/", cleaned) or cleaned.endswith(f"/{FINDINGS_DIR}"):
+        if any(p.search(cleaned) for p in pats):
             hits.append(tok)
-    if not hits and re.search(rf"\b{FINDINGS_DIR}/", command):
-        hits.append(FINDINGS_DIR + "/")
+    if not hits:
+        for d in dirs:
+            if re.search(rf"\b{re.escape(d)}/", command):
+                hits.append(d + "/")
+                break
     return tuple(hits)
 
 
+def _touches_findings(command: str) -> tuple:
+    return _touches(command, (FINDINGS_DIR,))
+
+
+def _where(d: str) -> str:
+    return f"fuzz/{d}/" if d == FINDINGS_DIR else f"{d}/"
+
+
 def classify_finding_write(command: str, *, tool: str = "Bash",
-                           path: str = "") -> Verdict:
-    """Refuse a write under fuzz/findings/ that does not go through promote.
+                           path: str = "", config=None) -> Verdict:
+    """Refuse a write under a protected directory (default fuzz/findings/)
+    that does not go through the promote path.
 
     The rule is not "be careful writing there": a finding directory IS the
     claim that something was verified, so creating one by hand asserts a
-    verification that never happened.
+    verification that never happened. The same holds for any directory a
+    framework submits from; `config` names those (see protected()).
     """
+    dirs, allow = protected(config)
     if tool in ("Write", "Edit", "MultiEdit"):
         target = path or ""
-        if not re.search(rf"(^|/){FINDINGS_DIR}/", target):
+        hit = next((d for d in dirs if _dir_re(d).search(target)), None)
+        if hit is None:
             return Verdict(ALLOW)
         return Verdict(DENY,
-                       f"{target} is under fuzz/{FINDINGS_DIR}/. A finding directory is the "
+                       f"{target} is under {_where(hit)}. A finding directory is the "
                        f"claim that a crash was verified, so it is created only by the "
                        f"promote path, which writes a verification marker after a verifier "
                        f"confirms the crash.",
@@ -203,14 +252,15 @@ def classify_finding_write(command: str, *, tool: str = "Bash",
 
     if not command:
         return Verdict(ALLOW)
-    if "cc-fuzzer findings promote" in command or "findings.sh promote" in command \
-            or "findings finalize" in command:
+    if any(a in command for a in allow):
         return Verdict(ALLOW, "the promote path may write findings")
-    hits = _touches_findings(command)
+    hits = _touches(command, dirs)
     if not hits or not _WRITE_RE.search(command):
         return Verdict(ALLOW)
+    hit = next((d for d in dirs if any(_dir_re(d).search(h.lstrip("<>")) or h == d + "/"
+                                       for h in hits)), dirs[0])
     return Verdict(DENY,
-                   f"this command writes under fuzz/{FINDINGS_DIR}/ ({hits[0]}). A finding "
+                   f"this command writes under {_where(hit)} ({hits[0]}). A finding "
                    f"directory is the claim that a crash was verified; it is created only "
                    f"by the promote path, which writes a verification marker after a "
                    f"verifier confirms the crash.",
@@ -270,9 +320,22 @@ def _cmd_check_finding(a):
     return 0 if v.allowed else 1
 
 
+def _gate_config(a):
+    """--config, else the campaign's fuzz-config.json, else the defaults."""
+    if getattr(a, "config", None):
+        with open(a.config) as f:
+            return json.load(f)
+    try:
+        from cc_fuzzer_core import config as _config
+        from cc_fuzzer_core.paths import campaign
+        return _config.load(campaign(strict=False))
+    except Exception:  # noqa: BLE001 - no campaign: the defaults still protect
+        return {}
+
+
 def _cmd_classify_write(a):
     command = a.command if a.command is not None else (sys.stdin.read() if not a.path else "")
-    v = classify_finding_write(command, tool=a.tool, path=a.path or "")
+    v = classify_finding_write(command, tool=a.tool, path=a.path or "", config=_gate_config(a))
     if a.json:
         print(json.dumps(v.as_dict(), indent=2))
     elif not v.allowed:
@@ -301,8 +364,11 @@ def register_cli(subparsers):
     v.set_defaults(func=_guard(_cmd_check_finding))
 
     v = verbs.add_parser("classify-write",
-                         help="may this write under fuzz/findings/ proceed? (exit 1 = deny)")
+                         help="may this write under a protected dir (default fuzz/findings/) "
+                              "proceed? (exit 1 = deny)")
     v.add_argument("--command", help="a Bash command (default: stdin)")
+    v.add_argument("--config", help="fuzz-config.json with a gate block "
+                                    "(default: the campaign's)")
     v.add_argument("--tool", default="Bash")
     v.add_argument("--path", default="", help="the target path, for Write/Edit")
     v.add_argument("--json", action="store_true")

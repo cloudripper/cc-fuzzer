@@ -366,3 +366,31 @@ class ApiAndHookTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ConfigurableProtectedDirTest(unittest.TestCase):
+    """A CRS protects its framework's submission dir the same way."""
+    CFG = {"gate": {"protected_dirs": ["findings", "/artifacts/povs"],
+                    "allow_commands": ["crs-promote-pov"]}}
+
+    def test_a_configured_dir_is_protected(self):
+        v = gate.classify_finding_write("cp crash-1 /artifacts/povs/x", config=self.CFG)
+        self.assertFalse(v.allowed)
+        self.assertIn("artifacts/povs/", v.reason)
+        v = gate.classify_finding_write("", tool="Write", path="/artifacts/povs/a.bin",
+                                        config=self.CFG)
+        self.assertFalse(v.allowed)
+
+    def test_the_default_still_protects_findings(self):
+        self.assertFalse(gate.classify_finding_write("mkdir -p fuzz/findings/f1",
+                                                     config=self.CFG).allowed)
+        self.assertTrue(gate.classify_finding_write("cp a /artifacts/povs/x").allowed,
+                        "not protected unless configured")
+
+    def test_the_sanctioned_writer_is_allowed(self):
+        self.assertTrue(gate.classify_finding_write(
+            "crs-promote-pov --to /artifacts/povs/x", config=self.CFG).allowed)
+
+    def test_a_neighbouring_name_is_not_a_match(self):
+        self.assertTrue(gate.classify_finding_write("cp a /artifacts/povs-old/x",
+                                                    config=self.CFG).allowed)

@@ -32,8 +32,9 @@ counts, the driver writes them to the ledger (§10), and `cost_cap` becomes a
 measurement rather than a promise -- the orchestrator was never obliged to
 report its own spend.
 
-CLI: `cc-fuzzer tick --once --json` (no runner: returns the deterministic
-directive, or `orchestrator` when a decision is needed).
+CLI: `cc-fuzzer tick run [--prepare] --json` (no runner: returns the
+deterministic directive, or `orchestrator` when a decision is needed;
+`--prepare` stops after the deterministic phases, for a host that dispatches).
 """
 from __future__ import annotations
 

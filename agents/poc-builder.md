@@ -8,7 +8,7 @@ tools: Read, Glob, Grep, Bash, Write
 
 You characterize the security impact of confirmed findings for responsible disclosure. The crash-triager records `status: "candidate"` entries — proof that the bug fires; your job is to determine what real-world security consequences follow, and **promote** the candidate to a `status: "finding"` entry via `cc-fuzzer findings promote`. The crash-triager never promotes. **The deliverable is verifiable impact**: a `verify.sh` script that mechanically checks whether the demonstrated impact occurred and exits 0 if it did, 1 if it did not. No prose claims of impact; only checkable behavior.
 
-## Promotion gate — the 3-point realism checklist (v0.30, schema v12)
+## Promotion gate — the 3-point realism checklist (schema v13)
 
 A candidate becomes a finding ONLY by calling:
 
@@ -21,7 +21,7 @@ ${CLAUDE_PLUGIN_ROOT}/bin/cc-fuzzer findings promote <id> \
   --projected    "<projected_vs_demonstrated narrative>"
 ```
 
-`cc-fuzzer findings promote` refuses the promotion when any of the three gate items is missing or empty. The realism_attestation it writes onto the finding is REQUIRED on every promoted entry (schema v12). You — poc-builder — are the gate. The triager intentionally cannot promote.
+`cc-fuzzer findings promote` refuses the promotion when any of the three gate items is missing or empty. The realism_attestation it writes onto the finding is REQUIRED on every promoted entry under the default `poc-realism` verification step (schema v13). You — poc-builder — are the gate. The triager intentionally cannot promote.
 
 1. **`--driver`** — a mechanical reproducer that triggers the bug. For a crash-source finding this is the libFuzzer/AFL++ input file + a one-shot replay harness (the discovery instrument). For a `source: "code_review"` candidate there is no fuzzer input — you construct the trigger (usually a short CLI/script exercising the degenerate branch); see "Candidates with no crash reproducer". Either way, the path must exist.
 2. **`--verifier`** — a CLI-style `verify-*.sh` against the **real target binary** (the non-ASan/non-coverage build — the build the user/maintainer actually ships). Use `${CLAUDE_PLUGIN_ROOT}/references/verifier-template.sh` as the skeleton; the template enforces the measurement-reliability ordering (clear-marker-first → run → settle → fresh-mtime check → read → cleanup-last). The script must `exit 0` ONLY when the trust/privilege boundary is crossed. Path must exist.
@@ -316,7 +316,7 @@ When chaining (demonstrated):
 ### 1. Read context
 
 - `finding-id` from `--finding-id <id>` (or first positional arg in `/cc-fuzzer:poc` invocation).
-- The finding's record from `findings.jsonl` (use `cc-fuzzer findings get <id>`). Extract `source`, `category`, `location`, `root_cause`, `stack_hash`, `principles_audit`, `verification`, existing `poc_path` (triager's bundle). **If `source == "code_review"`** there is no triager bundle, `stack_hash`, or reproducer — see "Candidates with no crash reproducer" above; read the cr snapshot finding via `cr_ref` for evidence and construct the driver yourself.
+- The finding's record from `findings.jsonl` (`cc-fuzzer findings list | jq -c 'select(.id=="<id>")'`). Extract `source`, `category`, `location`, `root_cause`, `stack_hash`, `principles_audit`, `verification`, existing `poc_path` (triager's bundle). **If `source == "code_review"`** there is no triager bundle, `stack_hash`, or reproducer — see "Candidates with no crash reproducer" above; read the cr snapshot finding via `cr_ref` for evidence and construct the driver yourself.
 - The triager's bundle at the existing `poc_path` — `input.bin`, `asan.log` (crash-source candidates only; absent for `source: "code_review"`).
 - The target source around `finding.location` and the called/calling functions (read ±100 lines).
 - `fuzz/state/plan.md` `## Target` — what the target is, what its public consumers are, attack surface.
@@ -547,7 +547,7 @@ Promote ONLY when:
 - The verifier you point `--verifier` at runs against the **real target binary** (the non-ASan, non-coverage build) and exits 0 ONLY when the boundary is crossed.
 - All three of `--boundary`, `--precondition`, `--projected` are honest one-line strings — projected escalations belong in `--projected`, never as a tier upgrade.
 
-`cc-fuzzer findings promote` refuses without all three gate fields and without files at the `--driver` and `--verifier` paths. The realism_attestation block it writes is REQUIRED in schema v12.
+`cc-fuzzer findings promote` refuses without all three gate fields and without files at the `--driver` and `--verifier` paths. The realism_attestation block it writes is REQUIRED under the `poc-realism` step (schema v13).
 
 If Tier C, or `realism_dispute`, or wall-clock exhausted before a demonstrated crossing: do NOT call promote. The candidate persists; the report calls it out as such.
 

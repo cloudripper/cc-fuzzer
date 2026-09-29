@@ -125,6 +125,18 @@ while True:
     ...                                  # you decide what a `wait` means
 ```
 
+A CRS usually wants neither the loop nor the agents: it has its own
+scheduler, fuzzers and prompts. What it takes is the judgement either side
+of the fuzzer, as request/response calls with no campaign state:
+
+```python
+from cc_fuzzer_core import crs
+r = crs.triage(record, crash, harness="parser", config=cfg)   # replay, minimize, verify, policy
+if r.should_submit:
+    submit(r.pov)                                             # the minimized PoV
+v = crs.check_patch(record, "fix.diff", [r.pov], project_root=src, config=cfg)
+```
+
 Everything host-specific is data rather than a second implementation:
 
 | Difference | Where it lives |
@@ -134,6 +146,8 @@ Everything host-specific is data rather than a second implementation:
 | what counts as a confirmed finding | `verification.final_step` in fuzz-config |
 | which subsystems run at all | **feature flags** (§9) |
 | which model serves an agent | `data/models.json` |
+| which crashes are worth submitting | the **submission policy** (`submission.policy`) |
+| an outside tool's candidates (cull) | an optional **integration** (`cc_fuzzer_core.integrations`), off by default |
 
 The agents in `agents/` are *rendered output*, not sources: they come from
 `prompts/` and `cc-fuzzer prompts check` fails if they drift.
@@ -226,7 +240,7 @@ The gate is about **slash-command auto-invocation**, not subagents. **The orches
 
 ### State
 
-All campaign state lives under `fuzz/state/`. The authoritative spec is **`STATE_SCHEMA.md`** at the plugin root (current schema **v12**, v0.30+). The orchestrator reads only `current.json` on warm ticks. Findings are written exclusively by `scripts/findings.sh` (which runs the verification pipeline); the report only by `reporting-agent`. Plugin scripts are read-only — your only writable scope is `fuzz/`.
+All campaign state lives under `fuzz/state/`. The authoritative spec is **`STATE_SCHEMA.md`** at the plugin root (current schema **v13**). The orchestrator reads only `current.json` on warm ticks. Findings are written exclusively by `scripts/findings.sh` (which runs the verification pipeline); the report only by `reporting-agent`. Plugin scripts are read-only — your only writable scope is `fuzz/`.
 
 ## Key mechanisms
 
@@ -294,7 +308,7 @@ One libFuzzer slot is the default (`main`, bound to the campaign's single harnes
 
 Each slot gets its own `fuzzer-<slot>.{pid,engine,log}`; the live manifest is `fuzzers.json`. The orchestrator treats all slots as one shared-corpus campaign (one recommendation, one triage pass, one coverage view). At the top of each tick, `check-slot-liveness.sh` silently relaunches any dead slot (anti-flap throttle: 3 restarts in 60s → marked deadlocked); `restart_fuzzer` only surfaces when *every* slot is dead.
 
-**Multiple harnesses.** Every campaign uses the multi-harness layout from COLD — each harness gets its own corpus/coverage/binaries under `fuzz/harnesses/<name>/`, declared in `fuzz-config.json:harnesses[]`. A single-harness campaign is just the one-entry degenerate case, so adding a second harness later (`/cc-fuzzer:campaign --add-harness <name> --entry <fn>`) only appends. The singular layout from earlier versions is no longer supported (v0.30+ requires schema v12).
+**Multiple harnesses.** Every campaign uses the multi-harness layout from COLD — each harness gets its own corpus/coverage/binaries under `fuzz/harnesses/<name>/`, declared in `fuzz-config.json:harnesses[]`. A single-harness campaign is just the one-entry degenerate case, so adding a second harness later (`/cc-fuzzer:campaign --add-harness <name> --entry <fn>`) only appends. The singular layout from earlier versions is no longer supported (the plugin requires schema v13).
 
 > **AFL++ on `process_based` harnesses:** the launcher auto-bumps the per-input timeout to 5000 ms and passes `-t <ms>+` (skip-on-timeout) so a fork-exec'ing CLI target can clear AFL's dry-run. Override per-slot with `"timeout_ms": <ms>`.
 
@@ -354,8 +368,9 @@ A real CRS produces both proofs-of-vulnerability **and** patches, with autonomou
 | Concolic execution on hard constraints | ✓ | ✓ |
 | LLM-guided harness / seed / mutator generation | ✓ | ✓ |
 | Crash triage + verification + reporting | ✓ | ✓ |
-| Static analysis | partial (LLM code-review pass) | ✓ |
-| Patch generation, ensemble orchestration, cloud submission | out of scope | ✓ |
+| Static analysis | partial (LLM code-review pass, semgrep/CodeQL query lever, optional cull candidates) | ✓ |
+| Patch validation (PoV stops, tests pass, extra gates) | ✓ (core: `crs.check_patch`) | ✓ |
+| Patch generation, ensemble orchestration, cloud submission | out of scope (the host's) | ✓ |
 
 ### AIxCC patterns
 
@@ -367,7 +382,7 @@ cc-fuzzer is not a port of any single AIxCC system, but it reuses three named pa
 | `concolic_input_gen` — SymCC against specific uncovered constraints | [Atlantis-Multilang](https://github.com/Team-Atlanta/atlantis-multilang-snapshot/tree/main/uniafl/src/concolic) (Team Atlanta) | `concolic-executor` + `run-concolic.sh` + `build-symcc-target.sh` |
 | Iterative harness build-repair | [OSS-Fuzz-Gen](https://github.com/google/oss-fuzz-gen) (Google) | `harness-writer`'s repair loop |
 
-Ensemble / inter-CRS exchange / container orchestration are intentionally **not** used (single-host, single-process). cc-fuzzer borrows a few organizing concepts from [OSS-CRS](https://github.com/ossf/oss-crs) loosely (plugin manifest ≈ `crs.yaml`, shared corpus dir, `budget.json` spend tracking) but doesn't aspire to CRS-hood.
+The plugin itself is single-host and single-process: no ensemble, inter-CRS exchange or container orchestration. The core is built to be embedded in something that has those, such as an [OSS-CRS](https://github.com/ossf/oss-crs) CRS; see [docs/EMBEDDING.md](docs/EMBEDDING.md).
 
 ## Cost
 

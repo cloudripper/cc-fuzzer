@@ -38,11 +38,11 @@ Every mode shares the same hard halts (tick / cost / no-progress / crash-storm) 
 
 ### Toolbox board (anti-tunnel-vision)
 
-Every tick the evaluation block carries `toolbox` — the **whole known lever set, materialized deterministically** (`_lib/toolbox_eval.py`) so the orchestrator can't tunnel-vision on seedgen/concolic. It lists each `eligible` lever with its `cost_tier` and `idle_ticks`, flags `neglected_levers` (eligible but idle), and sets `tunnel_vision` + `suggested_lever` when the campaign has been riding one lever family. Under `aggressive` the disposition is steered onto the neglected lever to force breadth. The board is explicitly **`non_exhaustive` (a floor, not a ceiling)**: `references` surfaces `fuzz/guidance.md`, `fuzz/docs/`, and `fuzz/state/cve-patterns.md` (the CVE-review output, when present) so the orchestrator folds in operator domain knowledge and the CVE intel it already paid for, and invents moves the catalog can't express. When `references.cve_patterns_md` is set, read that file instead of re-dispatching the `cve_refresh` lever. Drop reference material in `fuzz/docs/` and write `fuzz/guidance.md` to steer the creative reasoning.
+Every tick the evaluation block carries `toolbox` — the **whole known lever set, materialized deterministically** (`cc_fuzzer_core.state.toolbox`; `cc-fuzzer state toolbox`) so the orchestrator can't tunnel-vision on seedgen/concolic. It lists each `eligible` lever with its `cost_tier` and `idle_ticks`, flags `neglected_levers` (eligible but idle), and sets `tunnel_vision` + `suggested_lever` when the campaign has been riding one lever family. Under `aggressive` the disposition is steered onto the neglected lever to force breadth. The board is explicitly **`non_exhaustive` (a floor, not a ceiling)**: `references` surfaces `fuzz/guidance.md`, `fuzz/docs/`, and `fuzz/state/cve-patterns.md` (the CVE-review output, when present) so the orchestrator folds in operator domain knowledge and the CVE intel it already paid for, and invents moves the catalog can't express. When `references.cve_patterns_md` is set, read that file instead of re-dispatching the `cve_refresh` lever. Drop reference material in `fuzz/docs/` and write `fuzz/guidance.md` to steer the creative reasoning.
 
 ### Plateau escalation ladder (self_loop)
 
-Under `self_loop`/`aggressive` a coverage plateau is **not** a stopping point — it's the cue to reshape the campaign and keep going. A deterministic ceiling-probe (`_lib/ceiling_probe.py`, also runnable via `scripts/ceiling-probe.sh`) cross-references the uncovered functions against gap `harness_action`s, code-review findings, CVE hotspots, and engine/gap-mix fit, and drives a four-stage ladder (`yolo_state.evaluation.ceiling_probe.ladder_stage`):
+Under `self_loop`/`aggressive` a coverage plateau is **not** a stopping point — it's the cue to reshape the campaign and keep going. A deterministic ceiling-probe (`cc_fuzzer_core.state.ceiling`, runnable as `cc-fuzzer state ceiling-probe`) cross-references the uncovered functions against gap `harness_action`s, code-review findings, CVE hotspots, and engine/gap-mix fit, and drives a four-stage ladder (`yolo_state.evaluation.ceiling_probe.ladder_stage`):
 
 0. **normal** — climbing, or flat < `--plateau-escalate-ticks`.
 1. **escalate** — take the recommended structural move: rewrite the harness entry (`harness_rewrite`), add a new harness (`harness_new`), mock a hostile peer (`mock_env`), or switch to AFL++/Redqueen (`engine_swap`). These show up as top levers on the toolbox board.
@@ -53,7 +53,7 @@ So `self_loop` keeps breaking through ceilings (reshaping harnesses, switching e
 
 ### Aggressiveness posture
 
-`--aggressiveness` decouples "how hard does a tick push to act" from the mode. It shapes two things deterministically (in `_lib/yolo_evaluate.py`):
+`--aggressiveness` decouples "how hard does a tick push to act" from the mode. It shapes two things deterministically (in `cc_fuzzer_core.state.yolo_evaluate`; `cc-fuzzer state evaluate`):
 
 - **`conservative`** — a self-climbing fuzzer or an empty gap-branch ⇒ `wait` (legacy). Backoff compounds up to `--max-backoff-multiplier`.
 - **`balanced`** — acts on a concrete, affordable gap move even while climbing; waits when there's no gap move. Backoff compounds.

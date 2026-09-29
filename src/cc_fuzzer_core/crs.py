@@ -14,6 +14,7 @@ in two request/response seams:
                                does the oracle confirm it?
     check_patch(record, ...)   a patch was written. Does it stop the PoV
                                without breaking the program?
+    cluster / merge_by_patch   which PoVs are one bug (the patcher's input)
 
 Both exist because the expensive mistake in a scored run is submitting
 something that is not true. Triage protects the finding; check_patch protects
@@ -24,7 +25,7 @@ needs one dict describing where the binaries are.
 
     r = crs.triage({"verify_binary": "/out/parser_verify"}, "/crashes/x.bin",
                    harness="parser", config=cfg)
-    if r.submittable:
+    if r.should_submit:                  # true, strong evidence, and the policy accepts it
         submit(r.pov, r.stack_hash)      # r.pov is the MINIMIZED input
         hand_to_patcher(r.sensitivity)   # which of its bytes decide the bug
 
@@ -426,6 +427,96 @@ def check_patch(record: Mapping, patch_file: str, pov, *, project_root,
 
 
 # ---------------------------------------------------------------------------
+# clusters: which PoVs are one bug
+# ---------------------------------------------------------------------------
+#
+# The stack hash says where a crash surfaced, which is not always where the
+# bug is: two inputs that crash in different frames can share one root
+# cause. A patch is the test that settles it -- if one validated fix stops
+# both, they are one bug, and a patcher should be handed them together with
+# the shortest as the representative. So:
+#
+#   cluster(povs)                        group by stack hash
+#   merge_by_patch(clusters, patch, ...) run the patch against every
+#                                        cluster's representative in ONE
+#                                        validation (one build); the ones it
+#                                        stops become one cluster
+
+CLUSTER_SCHEMA = "pov-cluster/v1"
+
+
+@dataclass(frozen=True)
+class Cluster:
+    stack_hashes: tuple
+    povs: tuple                  # paths, shortest first
+    merged_by: str = ""          # the patch that showed these are one bug
+
+    @property
+    def id(self) -> str:
+        return self.stack_hashes[0] if self.stack_hashes else ""
+
+    @property
+    def representative(self) -> str:
+        return self.povs[0] if self.povs else ""
+
+    def as_dict(self) -> dict:
+        return {"schema": CLUSTER_SCHEMA, "id": self.id, "stack_hashes": list(self.stack_hashes),
+                "povs": list(self.povs), "representative": self.representative,
+                "merged_by": self.merged_by}
+
+
+def _size(p) -> int:
+    try:
+        return Path(p).stat().st_size
+    except OSError:
+        return 1 << 62
+
+
+def cluster(povs) -> list:
+    """Group PoVs by stack hash. `povs`: dicts with `pov` and `stack_hash`
+    (triage-export/v1 documents qualify). Largest group first."""
+    groups: dict = {}
+    for d in povs:
+        h = str(d.get("stack_hash") or "")
+        if not h or not d.get("pov"):
+            continue
+        groups.setdefault(h, []).append(str(d["pov"]))
+    out = [Cluster((h,), tuple(sorted(set(ps), key=lambda p: (_size(p), p))))
+           for h, ps in groups.items()]
+    return sorted(out, key=lambda c: (-len(c.povs), c.id))
+
+
+def merge_by_patch(clusters, patch_file: str, *, record: Mapping, project_root,
+                   config: Mapping | None = None, harness: str = "", replay_fn=None) -> tuple:
+    """(clusters, verdict): the clusters whose representative this patch
+    stops are merged into one; the rest are returned unchanged.
+
+    One patch.validate over every representative, so the patched build is
+    made once. A representative that does not crash before the patch makes
+    the verdict stale and nothing is merged: that is a finding problem, not
+    a clustering one.
+    """
+    clusters = list(clusters)
+    if len(clusters) < 2:
+        return clusters, None
+    reps = [c.representative for c in clusters]
+    v = _patch.validate(record, patch_file, reps, project_root=project_root,
+                        config=config, harness=harness, replay_fn=replay_fn)
+    if v.status == _patch.STALE or not v.povs:
+        return clusters, v
+    fixed = {r.pov for r in v.povs if r.after == "no-crash"}
+    hit = [c for c in clusters if c.representative in fixed]
+    if len(hit) < 2:
+        return clusters, v
+    merged = Cluster(tuple(h for c in hit for h in c.stack_hashes),
+                     tuple(sorted({p for c in hit for p in c.povs},
+                                  key=lambda p: (_size(p), p))),
+                     str(patch_file))
+    rest = [c for c in clusters if c not in hit]
+    return [merged] + rest, v
+
+
+# ---------------------------------------------------------------------------
 # the corpus seam (thin, and honest about it)
 # ---------------------------------------------------------------------------
 
@@ -487,6 +578,34 @@ def _cmd_triage(a):
     return 0 if r.should_submit else 1
 
 
+def _cmd_cluster(a):
+    docs = []
+    for p in a.exports:
+        with open(p) as f:
+            docs.append(json.load(f))
+    cs = cluster(docs)
+    verdict = None
+    if a.patch:
+        from cc_fuzzer_core import config as _config
+        from cc_fuzzer_core.paths import campaign as _campaign
+        from cc_fuzzer_core.variants import harness_record
+        try:
+            c = _campaign(strict=False)
+            cfg = json.load(open(a.config)) if a.config else (_config.load(c) if c else {})
+            record = {"verify_binary": a.verify_binary} if a.verify_binary \
+                else harness_record(campaign=c, harness=a.harness)
+            cs, verdict = merge_by_patch(cs, a.patch, record=record,
+                                         project_root=a.project_root or
+                                         (c.project_root if c else "."),
+                                         config=cfg, harness=a.harness)
+        except Exception as e:  # noqa: BLE001 - the CLI reports, it does not raise
+            print(f"error: {type(e).__name__}: {e}", file=sys.stderr)
+            return 2
+    print(json.dumps({"clusters": [x.as_dict() for x in cs],
+                      "patch": verdict.as_dict() if verdict else None}, indent=2))
+    return 0
+
+
 def register_cli(subparsers):
     from cc_fuzzer_core.cli import add_subsystem
     _p, verbs = add_subsystem(subparsers, "crs",
@@ -504,3 +623,13 @@ def register_cli(subparsers):
     v.add_argument("--config")
     v.add_argument("--json", action="store_true")
     v.set_defaults(func=_cmd_triage)
+
+    v = verbs.add_parser("cluster", help="group triage exports by stack hash; with "
+                                         "--patch, merge the groups one patch fixes")
+    v.add_argument("exports", nargs="+", help="triage-export/v1 JSON files")
+    v.add_argument("--patch", default="")
+    v.add_argument("--harness", default="")
+    v.add_argument("--verify-binary", default="")
+    v.add_argument("--project-root", default="")
+    v.add_argument("--config")
+    v.set_defaults(func=_cmd_cluster)

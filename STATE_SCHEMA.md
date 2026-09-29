@@ -21,7 +21,7 @@ A campaign-level `state/` tree plus per-harness bundles under `harnesses/<name>/
 ```
 fuzz/
 ├── state/                          # campaign-level shared state
-│   ├── schema-version              # plain text file, contains "v12\n"
+│   ├── schema-version              # plain text file, contains "v13\n"
 │   ├── plan.md                     # REWRITABLE-with-archival; written by campaign-planner
 │   ├── harnesses.json              # harness-set/v1, array of harness-built/v7 records
 │   ├── harness-built.json          # read-only MIRROR of harnesses.json[0]
@@ -118,7 +118,7 @@ All schemas use a `schema` field at the top level identifying the schema name an
 ### `state/schema-version` (plain text)
 
 ```
-v12
+v13
 ```
 
 A single line containing the framework schema version. The orchestrator reads this on session start and refuses to operate if it doesn't match the plugin's expected version.
@@ -132,7 +132,7 @@ A compact 10-20 line text digest of campaign state, written by `scripts/campaign
 ```
 === cc-fuzzer campaign-header / v1 / <ts> ===
 campaign:    <name>           mode:    <mode>    tick:    <n>
-target:      <target>         schema:  v12       version: <plugin v>
+target:      <target>         schema:  v13       version: <plugin v>
 Features disabled: <comma list>          (only when a feature flag is off)
 
 harnesses:   <count> live, <count> stale; engines: <comma list>
@@ -611,13 +611,16 @@ Toggled via `/cc-fuzzer:yolo on [--mode ...] [--aggressiveness ...]|off|status` 
 - `pricing` — model id → USD per million input/output tokens, plus optional `cache_read_per_mtok` / `cache_write_per_mtok` (default 0.1× / 1.25× the input rate). Advisory: drives `yolo_state.estimated_cost_usd`, the `cost_cap` halt and `evaluation.cost` (whose `opus_usd` / `opus_calls` count the **deep** tier). An unpriced model is charged at the default tier's rate.
 - Every key is a partial overlay on the packaged mapping; a JSON file named by `$CC_FUZZER_MODELS` (same shape) is layered on top of this block and wins.
 
-**`features` block** (optional) — feature flags for the unscored subsystems (`cc_fuzzer_core/features.py`; `cc-fuzzer feature list [--json]` prints the effective values, `cc-fuzzer feature enabled <name>` answers with its exit code: 0 on, 1 off, 2 unknown name). Every flag defaults to `true`; turning one off gates its subsystem (nothing is deleted):
+**`features` block** (optional) — feature flags for the unscored subsystems (`cc_fuzzer_core/features.py`; `cc-fuzzer feature list [--json]` prints the effective values, `cc-fuzzer feature enabled <name>` answers with its exit code: 0 on, 1 off, 2 unknown name). The four core flags default to `true`; turning one off gates its subsystem (nothing is deleted). The three `cull_*` flags gate the optional cull integration and default to `false`:
 ```json
 "features": {
   "impact_tiering": true,
   "disclosure_reporting": true,
   "logic_oracles": true,
-  "advisory_lookup": true
+  "advisory_lookup": true,
+  "cull_intake": false,
+  "cull_feedback": false,
+  "cull_query_engine": false
 }
 ```
 - `impact_tiering` — exploit-tier / CVSS / weaponization work. Off: the `impact_review` lever and the `poc_upgrade` weak-PoC signal are never eligible, and `findings.sh promote` no longer requires `--boundary` / `--precondition` / `--projected` (recorded in `realism_attestation` only when given).
@@ -625,8 +628,23 @@ Toggled via `/cc-fuzzer:yolo on [--mode ...] [--aggressiveness ...]|off|status` 
 - `logic_oracles` — oracle-driven (logic-bug) fuzzing. Off: only the `crash` oracle is accepted — `write-harness-built.sh --oracle-config` with another `type` and `findings.sh add` with a non-`crash` `ORACLE_TYPE` exit 2 — and `oracle-smoke-test.sh` is a no-op (exit 0).
 - `advisory_lookup` — CVE / advisory intel. Off: `cve-context-build.sh` exits 0 with a skip notice and writes nothing, the `cve_refresh` lever is ineligible, `toolbox.references.cve_patterns_md` is omitted, and `cross-ref-findings.sh`, the ceiling probe and the code-review prescan ignore any `cve-context-*.json` on disk (all of them already tolerate a missing one).
 - Precedence, lowest to highest: the default (`true`) < `cve.enabled` (alias for `advisory_lookup` only) < this block < `$CC_FUZZER_FEATURES`. The env var is a comma/space-separated list: `-name` turns a flag off, `+name` or a bare `name` turns it on, later entries win (e.g. `CC_FUZZER_FEATURES="-advisory_lookup,-disclosure_reporting"`).
-- Values must be booleans and names must be one of the four above; `validate-state.sh` reports anything else as an error (the flag reader ignores such entries and keeps the default).
-- When any flag is off, `campaign-header.sh` prints `Features disabled: <names>` under the campaign meta, so plugin agents skip the matching `<!-- feature:<name> -->…<!-- /feature -->` sections of their prompts (the §3 renderer strips them from rendered prompts).
+- `cull_intake` / `cull_feedback` / `cull_query_engine` — the optional cull integration (`cc_fuzzer_core.integrations.cull`): reading cull's bug-candidate SARIF, writing `state/cull/feedback.jsonl`, and routing the codeql query engine through `cull query`. See "cull findings in code-review/v1" and `docs/EMBEDDING.md` §13.
+- Values must be booleans and names must be one of the seven above; `validate-state.sh` reports anything else as an error (the flag reader ignores such entries and keeps the default).
+- When any default-on flag is off, `campaign-header.sh` prints `Features disabled: <names>` (an optional integration that is merely not enabled is not listed) under the campaign meta, so plugin agents skip the matching `<!-- feature:<name> -->…<!-- /feature -->` sections of their prompts (the §3 renderer strips them from rendered prompts).
+
+**Core blocks** (optional; each documented where it is used, in `docs/EMBEDDING.md`). `validate-state.sh` accepts exactly these top-level keys besides the ones above, and a key it does not know fails validation, so `tick state` reports `corrupted`:
+
+| key | read by | EMBEDDING.md |
+|---|---|---|
+| `poc` | `findings promote` (verifier complexity soft caps) | — |
+| `variants`, `build` | `variants` / builders: per-variant overrides, `verify_variant_source` | §7, §2 |
+| `verification` | the final verifier: `final_step`, `timeout_s`, `authoritative` | §2, §8 |
+| `query` | the query lever: budget, engines, `codeql_db`, `codeql_direct`, `codeql_engine` | §5.1 |
+| `patch` | patch validation: commands, `steps` policy, `extra_gates` | §4 |
+| `submission` | the submission policy | §2 |
+| `determinism` | replay / minimize / sensitivity budgets, fuzzer seed | §11.1 |
+| `gate` | the write gate: `protected_dirs`, `allow_commands` | §10 |
+| `cull` | the optional cull integration | §13 |
 
 **Lifecycle**: REWRITABLE. Single canonical version. Replaced atomically.
 
@@ -1515,7 +1533,7 @@ This section gives the canonical shapes for the per-harness state objects (`harn
 ```
 fuzz/
 ├── state/                          # campaign-level shared state
-│   ├── schema-version              # "v12"
+│   ├── schema-version              # "v13"
 │   ├── plan.md                     # one plan, ## Targets enumerates harnesses
 │   ├── harnesses.json              # harness-set/v1, array of harness-built/v7
 │   ├── harness-built.json          # read-only MIRROR of harnesses.json[0]
@@ -2166,13 +2184,13 @@ Monolithic builds require the harness to be **already registered** in `harnesses
 
 When validation fails, the orchestrator refuses to operate and prints the validation report. The user must either:
 - Fix the issue manually
-- Run `/fuzz-reset` to wipe state (this is the only recovery from a schema-version mismatch — v0.30 requires v12 and there is no migration path)
+- Run `/fuzz-reset` to wipe state (this is the only recovery from a schema-version mismatch — the plugin requires v13 and there is no migration path)
 
 ## Migration Policy
 
-**There is no migration path in v0.30+.** Older campaigns cannot be upgraded in place — `state/schema-version` must equal `v12` or the validator fails. Recovery is `/fuzz-reset` then `/cc-fuzzer:campaign` to start fresh.
+**There is no migration path in v0.30+.** Older campaigns cannot be upgraded in place — `state/schema-version` must equal `v13` or the validator fails. Recovery is `/fuzz-reset` then `/cc-fuzzer:campaign` to start fresh.
 
-This is a deliberate calibration: keeping multi-version branches in every validator, every script, and every schema reader was paying ongoing complexity cost for state shapes that were already obsolete in practice. The bump from v10 to v12 (skipping v11) signals the cut.
+This is a deliberate calibration: keeping multi-version branches in every validator, every script, and every schema reader was paying ongoing complexity cost for state shapes that were already obsolete in practice. The bump from v10 to v12 (skipping v11) signalled the cut; v13 (0.31, pluggable verification: `realism_attestation` required only when `verification.final_step` is `poc-realism`) kept the same policy.
 
 ## Subagent Compliance
 
