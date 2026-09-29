@@ -361,7 +361,10 @@ def resolve_policy(name: str):
                       f"{', '.join(BUILTIN_POLICIES)} or python:module:callable")
 
 
-def _normalize(out) -> tuple:
+def normalize(out) -> tuple:
+    """A policy's answer as (verdict, reason). A policy may return a bool, a
+    verdict string, a (verdict, reason) pair or {"verdict", "reason"}; any
+    other shape, or a verdict other than accept/reject, is a PolicyError."""
     if isinstance(out, bool):
         return (ACCEPT if out else REJECT), ""
     if isinstance(out, str):
@@ -375,6 +378,19 @@ def _normalize(out) -> tuple:
     if v not in (ACCEPT, REJECT):
         raise PolicyError(f"a policy verdict must be {ACCEPT!r} or {REJECT!r}, got {v!r}")
     return v, str(reason or "")
+
+
+def policy(name: str = ""):
+    """The named policy (builtin:... or python:module:callable) as a callable
+    (result, ctx) -> (verdict, reason), its answer already normalized. A host
+    policy that composes another calls this, not the raw function."""
+    fn = resolve_policy(name)
+
+    def run(result, ctx=None) -> tuple:
+        data = result.as_dict() if isinstance(result, TriageResult) else result
+        return normalize(fn(data, dict(ctx or {})))
+    run.__name__ = f"policy[{(name or DEFAULT_POLICY).strip()}]"
+    return run
 
 
 def judge(result: TriageResult, *, config: Mapping | None = None, policy: str = "",
@@ -396,7 +412,7 @@ def judge(result: TriageResult, *, config: Mapping | None = None, policy: str = 
     if cap is not None and n >= int(cap):
         return out(REJECT, f"{n} variant(s) of {result.stack_hash} already submitted "
                            f"(max_variants_per_stack_hash={cap})")
-    v, reason = _normalize(fn(result.as_dict(), {"config": dict(block), "seen": n,
+    v, reason = normalize(fn(result.as_dict(), {"config": dict(block), "seen": n,
                                                  "policy": name}))
     return out(v, reason)
 
