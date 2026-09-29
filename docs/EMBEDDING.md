@@ -526,11 +526,12 @@ provider does, not **instead** of it.
 ## 10.1 Export schemas
 
 What crosses a container boundary is versioned, and its shape is pinned by
-goldens (`tests/golden/exports/`): a change to the shape is a new version.
+goldens (`tests/golden/exports/`). Within a version a new optional key is
+additive; a removed or retyped key is a new version.
 
 | schema | from | notable fields |
 |---|---|---|
-| `triage-export/v1` | `TriageResult.as_dict()` | status, should_submit, policy_verdict, stack_hash, category, sanitizer, frames, sanitizer_excerpt, pov_sha256, original_sha256, evidence_grade/source, sensitivity, delta_relevance, determinism |
+| `triage-export/v1` | `TriageResult.as_dict()` | status, should_submit, policy_verdict, stack_hash, category, sanitizer, frames, sanitizer_excerpt, pov_sha256, original_sha256, evidence_grade/source, sensitivity, delta_relevance, determinism, source_candidate_id |
 | `patch-export/v1` | `PatchVerdict.as_dict()` | verdict (= status), steps (with `ran`, `policy`), unverified_steps, povs (before/after), scope (with concerns, functions), build, determinism |
 | `query-run/v1` | `query.run` | unchanged |
 
@@ -566,6 +567,38 @@ cc-fuzzer ledger spend --json
 ```
 
 ---
+
+## 13. Optional: cull's candidates
+
+`cc_fuzzer_core.integrations.cull` reads [cull](https://github.com/cloudripper/cull)'s
+bug-candidate SARIF (`cull scan --format sarif-bug-candidates`). It is a
+subpackage the core never imports, and every entry point is gated by a flag
+that is **off by default** (`cull_intake`, `cull_feedback`, `cull_query_engine`),
+so without them cc-fuzzer runs exactly as before. It hands the core only what
+the core already reads:
+
+| cull gives | the integration writes | the core consumes it through |
+|---|---|---|
+| ranked candidates | `fuzz/state/cull/code-review-<ts>.json` (`code-review/v1`, `tier_classified: cull`) | `findings import-cr` (high/medium only) and the promote gate |
+| the same, by function | `fuzz/state/signals/cull.json` (`sast-signal/v1`, weighted by reach tier) | the prescan, which reads every file in `signals/` |
+| evidence per candidate | `fuzz/state/cull/intake-<ts>.json` (`cull-intake/v1`) | `cull cards` (prompt blocks), `cull queue` |
+| a crash that matches a candidate | `fuzz/state/cull/feedback.jsonl` (`cull-feedback/v1`, append-only) | cull's rerank, when it reads feedback |
+| `candidate_id` | `source_candidate_id` on `triage-export/v1` | `crs.triage(candidate_matcher=feedback.matcher(intake))` |
+
+```bash
+CC_FUZZER_FEATURES=+cull_intake cc-fuzzer intake cull proj.sarif --import
+cc-fuzzer cull queue          # reached tiers first; none-found held back
+cc-fuzzer cull cards          # what a seed-generator / mutator / poc-builder sees
+```
+
+Tolerant reader: an invalid SARIF is an error, never an empty intake, but a
+field an older cull did not ship is derived and marked `*_source: "local"`
+(`candidate_id` with cull's own formula, `confidence` from
+`cull.confidence_map`, `reach_tier` from cull's reachability label). With a
+`cull` block in the config, `query.codeql_direct` defaults to false: the
+CodeQL lever runs only through `query.codeql_engine` (`cull query`, once cull
+ships engine mode), never agent-written QL. The line-coverage export for
+cull's rerank waits for cull to define the format.
 
 ## Things that will bite
 

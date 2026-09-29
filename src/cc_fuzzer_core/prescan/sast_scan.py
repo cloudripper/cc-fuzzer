@@ -526,11 +526,17 @@ def _sarif_path(uri: str, target_root: Path) -> str:
         return u
 
 
-def normalize_sarif(sarif, target_root) -> List[dict]:
+def normalize_sarif(sarif, target_root, *, keep_properties: bool = False) -> List[dict]:
     """SARIF 2.1.0 (a path, a JSON string, or a parsed dict) -> the core's
     finding dicts: {tool, rule_id, severity, cwe, path, line, end_line,
     message}. Results without a location are dropped. Public: a framework that
-    builds its own CodeQL database hands its SARIF here."""
+    builds its own CodeQL database hands its SARIF here.
+
+    keep_properties=True also keeps what a tool put on each result for its
+    own consumers: `properties` (a property bag such as cull's `cull/v1` and
+    evidence record, verbatim), `rank`, `fingerprints`
+    (partialFingerprints), `function` (the first logical location's name),
+    `code_flows`, and `run_properties` (the run's bag, shared)."""
     if isinstance(sarif, dict):
         doc = sarif
     else:
@@ -559,6 +565,16 @@ def normalize_sarif(sarif, target_root) -> List[dict]:
             }
         for res in run.get("results") or []:
             rid = res.get("ruleId") or f"{tool}.unknown"
+            extra = {}
+            if keep_properties:
+                logical = ((res.get("locations") or [{}])[0].get("logicalLocations") or [{}])
+                extra = {"properties": dict(res.get("properties") or {}),
+                         "rank": res.get("rank"),
+                         "fingerprints": dict(res.get("partialFingerprints") or {}),
+                         "function": (logical[0] or {}).get("name") or "",
+                         "code_flows": list(res.get("codeFlows") or []),
+                         "run_properties": run.get("properties") or {},
+                         "tool_version": driver.get("version") or ""}
             level = res.get("level")
             sev = _SARIF_LEVEL.get(level, rule_meta.get(rid, {}).get("severity", "medium"))
             locs = res.get("locations") or []
@@ -578,6 +594,7 @@ def normalize_sarif(sarif, target_root) -> List[dict]:
                 "line": int(start),
                 "end_line": int(end),
                 "message": ((res.get("message") or {}).get("text") or "").strip()[:500],
+                **extra,
             })
     return findings
 
@@ -688,7 +705,11 @@ def attribute(findings: List[dict], functions: Iterable) -> Tuple[int, List[dict
             continue
 
         sev = f.get("severity", "low")
-        bump = SEVERITY_WEIGHT.get(sev, 1)
+        # A signal may carry its own weight (a ranked static tool outweighs a
+        # pattern hit); otherwise the severity decides.
+        w = f.get("weight")
+        bump = w if isinstance(w, int) and not isinstance(w, bool) and w > 0 \
+            else SEVERITY_WEIGHT.get(sev, 1)
         target.suspicion_score += bump
         key = f"sast_{f.get('tool', 'sast')}_{sev}"
         target.score_breakdown[key] = target.score_breakdown.get(key, 0) + bump

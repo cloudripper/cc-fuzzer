@@ -4,7 +4,10 @@ A consumer in another container (a patcher reading a finder's records) keys
 on these documents. Their SHAPE is the contract: these goldens pin it, and a
 change that breaks them is a new schema version, not an edit.
 
-Regenerate only on a deliberate version bump:
+Within a version, a NEW OPTIONAL key is additive (update the golden); a
+removed or retyped key is a new version.
+
+Regenerate:
     CC_FUZZER_WRITE_EXPORT_GOLDENS=1 python3 -m pytest tests/test_export_schemas.py
 """
 from __future__ import annotations
@@ -45,7 +48,7 @@ def triage_fixture() -> crs.TriageResult:
                          "frames_in_diff": ["write_chunk @ /src/framed.c:25"],
                          "functions_in_diff": [], "nearest_frame_distance": 0,
                          "files_changed": 1},
-        determinism=KNOBS)
+        determinism=KNOBS, source_candidate_id="3f2a9c1d0b7e4a65")
 
 
 def patch_fixture() -> patch.PatchVerdict:

@@ -53,6 +53,12 @@ SUBSYSTEMS = (
 )
 
 
+# Optional integrations (cc_fuzzer_core.integrations): registered when present.
+OPTIONAL_SUBSYSTEMS = (
+    "cc_fuzzer_core.integrations.cull",
+)
+
+
 def add_subsystem(subparsers, name, help_text):
     """Helper for register_cli(): add the subsystem parser and return
     (subsystem_parser, verb_subparsers). A subsystem invoked without a verb
@@ -88,6 +94,13 @@ def build_parser():
     subparsers = parser.add_subparsers(dest="subsystem", metavar="<subsystem>")
     for modname in SUBSYSTEMS:
         importlib.import_module(modname).register_cli(subparsers)
+    for modname in OPTIONAL_SUBSYSTEMS:
+        # an integration the install left out is simply absent from the CLI
+        try:
+            mod = importlib.import_module(modname)
+        except ImportError:
+            continue
+        mod.register_cli(subparsers)
     return parser
 
 

@@ -29,6 +29,18 @@ CodeQL runs only against a database the HOST built (frameworks increasingly
 build it as a target-build step); the core never builds one. Without
 `codeql_db`, or without codeql on PATH, a CodeQL query is `unavailable`.
 
+Two knobs keep agent-written QL out when a host has a better engine:
+
+  "codeql_direct": false     never run a .ql file against the database;
+                             the default is false whenever the config has a
+                             `cull` block (cull's fixed packs cover it), else true
+  "codeql_engine": "command:cull query --db {db} --template {template}
+                    --params {params} --max-hits {max_hits} --timeout {timeout} --json"
+                             route codeql queries through a host engine: the
+                             `rule` is a template name, the params a JSON
+                             object, and the answer either {"status", "hits"}
+                             or SARIF. Its status is recorded as-is.
+
 Queries come from a shipped pack of parametric templates (rules/query-pack):
 the agent fills in function and sink names rather than writing QL, which
 models do unreliably, and the same template with the same names is the same
@@ -69,6 +81,7 @@ DEFAULTS = {
     "max_hits": 200,
     "engines": list(ENGINES),
     "codeql_db": "",
+    "codeql_engine": "",
 }
 
 
@@ -94,6 +107,8 @@ class Budget:
     max_hits: int = 200
     engines: tuple = field(default=ENGINES)
     codeql_db: str = ""
+    codeql_engine: str = ""
+    codeql_direct: bool = True
 
     def allows(self, engine: str) -> bool:
         return self.enabled and engine in self.engines
@@ -104,7 +119,8 @@ class Budget:
                 "max_queries_per_dispatch": self.max_queries_per_dispatch,
                 "max_dispatches_per_campaign": self.max_dispatches_per_campaign,
                 "max_hits": self.max_hits, "engines": list(self.engines),
-                "codeql_db": self.codeql_db}
+                "codeql_db": self.codeql_db, "codeql_engine": self.codeql_engine,
+                "codeql_direct": self.codeql_direct}
 
 
 def budget(config: Mapping | None = None) -> Budget:
@@ -119,12 +135,22 @@ def budget(config: Mapping | None = None) -> Budget:
             return max(1, int(d[key]))
         except (TypeError, ValueError):
             return DEFAULTS[key]
-    engines = d["engines"] if isinstance(d["engines"], (list, tuple)) else ENGINES
+    # a `cull` block, even an empty one, means cull's packs are the CodeQL route
+    host_engine = isinstance(config, Mapping) and isinstance(config.get("cull"), Mapping)
+    if isinstance(block, Mapping) and "engines" in block:
+        engines = d["engines"] if isinstance(d["engines"], (list, tuple)) else ENGINES
+    else:
+        # With a host engine configured and no engine mode, the codeql lever
+        # would only ever run agent-written QL: default it out.
+        engines = ENGINES if not host_engine or d.get("codeql_engine") else (SEMGREP,)
+    direct = block.get("codeql_direct") if isinstance(block, Mapping) else None
+    direct = (not host_engine) if not isinstance(direct, bool) else direct
     return Budget(bool(d["enabled"]), _int("per_query_timeout_s"),
                   _int("max_queries_per_dispatch"), _int("max_dispatches_per_campaign"),
                   _int("max_hits"),
                   tuple(e for e in engines if e in ENGINES),
-                  str(d.get("codeql_db") or ""))
+                  str(d.get("codeql_db") or ""), str(d.get("codeql_engine") or ""),
+                  direct)
 
 
 # ---------------------------------------------------------------------------
@@ -201,13 +227,18 @@ class QueryRun:
     capped: bool = False
     dispatch_id: str = ""
     at: str = ""
+    params: dict = field(default_factory=dict)   # an engine template's parameters
 
     def as_dict(self) -> dict:
-        return {"schema": RUN_SCHEMA, "engine": self.engine, "rule": self.rule,
-                "hypothesis": self.hypothesis, "hit_count": len(self.hits),
-                "hits": list(self.hits), "status": self.status, "reason": self.reason,
-                "seconds": round(self.seconds, 3), "disposition": self.disposition,
-                "capped": self.capped, "dispatch_id": self.dispatch_id, "at": self.at}
+        d = {"schema": RUN_SCHEMA, "engine": self.engine, "rule": self.rule,
+             "hypothesis": self.hypothesis, "hit_count": len(self.hits),
+             "hits": list(self.hits), "status": self.status, "reason": self.reason,
+             "seconds": round(self.seconds, 3), "disposition": self.disposition,
+             "capped": self.capped, "dispatch_id": self.dispatch_id, "at": self.at}
+        if self.params:
+            # an engine run's rule is a template name: its params make it auditable
+            d["params"] = dict(self.params)
+        return d
 
 
 def _semgrep_hits(target_root: Path, rule: str, timeout: int, max_hits: int):
@@ -224,6 +255,48 @@ def _semgrep_hits(target_root: Path, rule: str, timeout: int, max_hits: int):
         else:
             hits.append({"message": str(f)[:400]})
     return status, hits
+
+
+def _engine_hits(spec: str, *, db, template: str, params: Mapping, timeout: int,
+                 max_hits: int, target_root: Path):
+    """A host query engine (`codeql_engine`): run the command, read its answer."""
+    import shlex
+    import subprocess
+    from cc_fuzzer_core.prescan import sast_scan
+    spec = spec[len("command:"):] if spec.startswith("command:") else spec
+    fill = {"db": str(db or ""), "template": template,
+            "params": json.dumps(dict(params or {}), sort_keys=True),
+            "max_hits": str(max_hits), "timeout": str(timeout)}
+    argv = [a.format(**fill) for a in shlex.split(spec)]
+    try:
+        p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout + 30)
+    except subprocess.TimeoutExpired:
+        return "timeout", []
+    except OSError as e:
+        return f"error: cannot run {argv[0] if argv else spec}: {e}", []
+    try:
+        doc = json.loads(p.stdout or "")
+    except ValueError:
+        tail = ((p.stderr or "").strip().splitlines() or [f"exit {p.returncode}"])[-1]
+        return f"error: {tail}", []
+    if isinstance(doc, Mapping) and "runs" in doc:
+        found = sast_scan.normalize_sarif(doc, Path(target_root), keep_properties=True)
+        hits = [{"file": f["path"], "line": f["line"], "message": f["message"][:400],
+                 "rule_id": f["rule_id"], "properties": f.get("properties") or {}}
+                for f in found]
+        return "ok", hits[:max_hits + 1]
+    if not isinstance(doc, Mapping):
+        return "error: engine answered neither {status, hits} nor SARIF", []
+    status = str(doc.get("status") or ("ok" if p.returncode == 0 else "error"))
+    hits = []
+    for h in doc.get("hits") or []:
+        if isinstance(h, Mapping):
+            hits.append({"file": h.get("file") or h.get("path") or "",
+                         "line": h.get("line") or 0,
+                         "message": str(h.get("message") or "")[:400],
+                         "rule_id": h.get("rule_id") or "",
+                         **({"properties": h["properties"]} if h.get("properties") else {})})
+    return status, hits[:max_hits + 1]
 
 
 def _codeql_hits(target_root: Path, rule: str, timeout: int, max_hits: int, db=None):
@@ -251,7 +324,8 @@ def _codeql_hits(target_root: Path, rule: str, timeout: int, max_hits: int, db=N
 
 
 def run(c, *, engine: str, rule: str, hypothesis: str, config: Mapping | None = None,
-        dispatch_id: str = "", disposition: str = D_NONE, target_root=None) -> QueryRun:
+        dispatch_id: str = "", disposition: str = D_NONE, target_root=None,
+        params: Mapping | None = None) -> QueryRun:
     """Run one query, enforcing the budget, and record it."""
     b = budget(config)
     if not b.enabled:
@@ -266,7 +340,8 @@ def run(c, *, engine: str, rule: str, hypothesis: str, config: Mapping | None = 
     if not hypothesis.strip():
         raise QueryError("a query needs a --hypothesis: the hits alone do not "
                          "record what was being asked")
-    if not os.path.isfile(rule):
+    via_engine = engine == CODEQL and bool(b.codeql_engine)
+    if not via_engine and not os.path.isfile(rule):
         raise QueryError(f"no such rule file: {rule}")
 
     if dispatches(c) >= b.max_dispatches_per_campaign and \
@@ -282,6 +357,14 @@ def run(c, *, engine: str, rule: str, hypothesis: str, config: Mapping | None = 
     try:
         if engine == SEMGREP:
             status, hits = _semgrep_hits(root, rule, b.per_query_timeout_s, b.max_hits)
+        elif via_engine:
+            status, hits = _engine_hits(b.codeql_engine, db=b.codeql_db or None,
+                                        template=rule, params=params or {},
+                                        timeout=b.per_query_timeout_s,
+                                        max_hits=b.max_hits, target_root=root)
+        elif not b.codeql_direct:
+            # No engine mode, and direct QL is off: never run an agent's .ql.
+            status, hits = "unavailable", []
         else:
             status, hits = _codeql_hits(root, rule, b.per_query_timeout_s, b.max_hits,
                                         db=b.codeql_db or None)
@@ -295,7 +378,8 @@ def run(c, *, engine: str, rule: str, hypothesis: str, config: Mapping | None = 
                  hits=tuple(hits[:b.max_hits]), status=status, reason=reason,
                  seconds=seconds, disposition=disposition, capped=capped,
                  dispatch_id=dispatch_id,
-                 at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+                 at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                 params=dict(params or {}) if via_engine else {})
     append_run(c, r.as_dict())
     return r
 
@@ -383,9 +467,15 @@ def _config(a):
 def _cmd_run(a):
     c = _campaign()
     try:
+        params = {}
+        for kv in a.param or []:
+            k, sep, v = kv.partition("=")
+            if not sep:
+                raise QueryError(f"--param expects KEY=VALUE, got {kv!r}")
+            params[k] = v
         r = run(c, engine=a.engine, rule=a.rule, hypothesis=a.hypothesis,
                 config=_config(a), dispatch_id=a.dispatch_id,
-                disposition=a.disposition)
+                disposition=a.disposition, params=params)
     except BudgetExhausted as e:
         print(f"query budget: {e}", file=sys.stderr)
         return 3
@@ -456,7 +546,10 @@ def register_cli(subparsers):
 
     v = verbs.add_parser("run", help="run one query and record it")
     v.add_argument("--engine", default=SEMGREP, choices=ENGINES)
-    v.add_argument("--rule", required=True, help="the rule/query file")
+    v.add_argument("--rule", required=True,
+                   help="the rule/query file; with query.codeql_engine, a template name")
+    v.add_argument("--param", action="append", default=[], metavar="KEY=VALUE",
+                   help="an engine template parameter (codeql_engine only)")
     v.add_argument("--hypothesis", required=True,
                    help="what this query is testing (recorded with the result)")
     v.add_argument("--disposition", default=D_NONE, choices=DISPOSITIONS)

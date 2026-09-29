@@ -579,15 +579,55 @@ def parse_max_functions(raw) -> Optional[int]:
     return n  # n == 0 already handled above
 
 
+SIGNAL_SCHEMA = "sast-signal/v1"
+
+
+def _signal_files(signals: str, out_path: Path, io) -> List[Path]:
+    files = [io(p.strip()) for p in (signals or "").split(",") if p.strip()]
+    auto = out_path.parent.parent / "signals"
+    if auto.is_dir():
+        files += sorted(p for p in auto.glob("*.json") if p not in files)
+    return files
+
+
+def _apply_signals(signals: str, out_path: Path, functions, io):
+    """Attribute every sast-signal/v1 file's findings; None when there are none."""
+    files = _signal_files(signals, out_path, io)
+    if not files:
+        return None
+    block = {"files": [], "findings_total": 0, "attributed": 0, "unattributed": 0}
+    for p in files:
+        try:
+            doc = json.loads(Path(p).read_text())
+            if doc.get("schema") != SIGNAL_SCHEMA or not isinstance(doc.get("findings"), list):
+                raise ValueError(f"not a {SIGNAL_SCHEMA} document")
+        except Exception as e:  # noqa: BLE001 - a bad signal file is reported, never fatal
+            block["files"].append({"path": str(p), "status": f"error: {e}"})
+            continue
+        n, un = sast_scan.attribute(doc["findings"], functions)
+        block["files"].append({"path": str(p), "tool": doc.get("tool") or "",
+                               "status": "ok", "findings": len(doc["findings"]),
+                               "attributed": n})
+        block["findings_total"] += len(doc["findings"])
+        block["attributed"] += n
+        block["unattributed"] += len(un)
+    return block
+
+
 def prescan(target_root, out, *, max_functions="50", excluded_paths: str = "",
             cve_context: str = "", sast: str = "auto", sast_rules: str = "",
             sast_timeout: int = 300, codeql_db: str = "",
-            base: Path | None = None) -> PrescanResult:
+            base: Path | None = None, signals: str = "") -> PrescanResult:
     """Run the Tier-1 prescan over target_root and write the
     code-review-prescan/v1 artifact to `out` (atomically). String arguments
     take the CLI's forms (comma lists, "all"). Relative paths (target_root,
     out, cve_context, codeql_db, local --sast-rules dirs) resolve against
-    `base` (default: the cwd); the artifact records cve_context as given."""
+    `base` (default: the cwd); the artifact records cve_context as given.
+
+    `signals` (comma list) names sast-signal/v1 files, extra Tier-1 signal an
+    integration computed ahead of time (a ranked static tool's candidates).
+    Every *.json in <state>/signals/ next to `out` joins them. Each finding is
+    attributed like a SAST hit, with the file's own weight."""
     max_n = parse_max_functions(max_functions)
     mode = "sweep" if max_n is None else "capped"
 
@@ -676,6 +716,7 @@ def prescan(target_root, out, *, max_functions="50", excluded_paths: str = "",
         sast_block = sast_res.to_dict()
         sast_block["attributed"] = attributed
         sast_block["unattributed"] = unattributed
+    signal_block = _apply_signals(signals, io(out), all_functions, io)
     # (file, name, line_start) so the order is STABLE across re-runs and the
     # window slices the merge step takes are deterministic.
     all_functions.sort(
@@ -730,6 +771,10 @@ def prescan(target_root, out, *, max_functions="50", excluded_paths: str = "",
         ],
     }
 
+    if signal_block is not None:
+        # Only when a signal file exists: a prescan without one is unchanged.
+        doc["signals"] = signal_block
+
     out_path = io(out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = out_path.with_suffix(out_path.suffix + ".tmp")
@@ -772,12 +817,16 @@ def main(argv=None, *, base: Path | None = None, quiet: bool = False) -> int:
     ap.add_argument("--codeql-db", default="",
                     help="Path to a PREBUILT CodeQL database. CodeQL is skipped when absent "
                          "(DB construction needs the build command and is not done implicitly).")
+    ap.add_argument("--signals", default="",
+                    help="Comma-separated sast-signal/v1 files (extra Tier-1 signal an "
+                         "integration computed, e.g. cull's candidates); every *.json in "
+                         "<state>/signals/ next to --out is read too.")
     args = ap.parse_args(argv)
     try:
         r = prescan(args.target_root, args.out, max_functions=args.max_functions,
                     excluded_paths=args.excluded_paths, cve_context=args.cve_context,
                     sast=args.sast, sast_rules=args.sast_rules, sast_timeout=args.sast_timeout,
-                    codeql_db=args.codeql_db, base=base)
+                    codeql_db=args.codeql_db, base=base, signals=args.signals)
     except PrescanError as e:
         print(str(e), file=sys.stderr)
         return e.code

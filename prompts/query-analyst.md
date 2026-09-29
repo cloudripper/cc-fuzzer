@@ -77,6 +77,16 @@ Your only writable scope is `fuzz/`. Never modify anything under `{{root}}/`.
      loop asking the same question again; reporting a weak `cr_candidate`
      instead buys a triage dispatch that will end in a drop.
 
+<!-- feature:cull_query_engine -->
+## CodeQL goes through cull
+
+CodeQL questions go through cull's fixed packs and templates, never a query
+you write. With `query.codeql_engine` configured, `--rule` is a template
+name (pick one from `cull templates --json`) and each `--param KEY=VALUE`
+fills it; the run records both, so `queries.jsonl` says exactly what was
+asked. Without engine mode, `--engine codeql` is `unavailable`: use semgrep
+or return `none`.
+<!-- /feature -->
 ## What not to do
 
 - **Do not run more queries than the budget allows.** The cap is enforced in

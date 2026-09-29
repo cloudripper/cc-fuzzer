@@ -360,6 +360,36 @@ class PolicyTest(unittest.TestCase):
         self.assertFalse(r.should_submit)
 
 
+class SegvPolicyTest(unittest.TestCase):
+    """A static tool that points at null dereferences (cull does by default)
+    needs ASan's SEGV accepted; a bare deadly signal with no report is not a
+    memory-safety finding."""
+    ASAN_SEGV = ("AddressSanitizer:DEADLYSIGNAL\n"
+                 "=================================================================\n"
+                 "==1==ERROR: AddressSanitizer: SEGV on unknown address 0x000000000000 "
+                 "(pc 0x55 bp 0x7f sp 0x7f T0)\n"
+                 "==1==The signal is caused by a READ memory access.\n"
+                 "==1==Hint: address points to the zero page.\n"
+                 "    #0 0x55 in parse_hdr /src/p.c:12:9\n"
+                 "SUMMARY: AddressSanitizer: SEGV /src/p.c:12:9 in parse_hdr")
+    BARE = "AddressSanitizer:DEADLYSIGNAL\n==1==ERROR: libFuzzer: deadly signal"
+
+    def _verdict(self, text):
+        from cc_fuzzer_core.crash import classify, replay
+        c = classify.classify(text, 1)
+        r = _result(category=c.category, sanitizer=replay.sanitizer_of(text))
+        return c.category, crs.judge(r, policy="builtin:memory-safety")["verdict"]
+
+    def test_segv_policy(self):
+        self.assertEqual(self._verdict(self.ASAN_SEGV), ("null-deref", crs.ACCEPT))
+        self.assertEqual(self._verdict(self.BARE), ("generic-crash", crs.REJECT))
+
+    def test_a_segv_category_from_another_classifier_is_accepted_too(self):
+        v = crs.judge(_result(category="segv", sanitizer="address"),
+                      policy="builtin:memory-safety")
+        self.assertEqual(v["verdict"], crs.ACCEPT)
+
+
 class SanitizerOfTest(unittest.TestCase):
     def test_first_detector_named_wins(self):
         from cc_fuzzer_core.crash import replay

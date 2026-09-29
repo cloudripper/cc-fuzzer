@@ -88,6 +88,7 @@ class TriageResult:
     policy_verdict: dict = field(default_factory=dict)   # see submission policy below
     delta_relevance: dict = field(default_factory=dict)  # delta-relevance/v1, when asked
     determinism: dict = field(default_factory=dict)      # determinism/v1: the knobs used
+    source_candidate_id: str = ""  # the static candidate this crash matched, if a matcher was given
 
     @property
     def submittable(self) -> bool:
@@ -127,7 +128,8 @@ class TriageResult:
                 "replay": self.replay, "minimized": self.minimized,
                 "sensitivity": self.sensitivity,
                 "delta_relevance": self.delta_relevance,
-                "determinism": self.determinism}
+                "determinism": self.determinism,
+                "source_candidate_id": self.source_candidate_id}
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +227,8 @@ def triage(record: Mapping, crash: str, *, harness: str = "",
            do_sensitivity: bool = True,
            sensitivity_probes: int | None = None,
            policy: str = "", seen: Mapping | None = None,
-           delta_range=None, minimize_rounds: int | None = None) -> TriageResult:
+           delta_range=None, minimize_rounds: int | None = None,
+           candidate_matcher=None) -> TriageResult:
     """A crash arrived. Decide what it is, in one call.
 
       1. replay it deterministically on the binary §12 selects
@@ -250,6 +253,11 @@ def triage(record: Mapping, crash: str, *, harness: str = "",
     `delta_range` (a diff file, diff text, or a git range with a campaign)
     adds delta_relevance: whether the crash's frames land in what the diff
     changed. Reported, never filtered on -- the policy may use it.
+
+    `candidate_matcher(result_dict) -> str` links the crash to the static
+    candidate that predicted it (an integration supplies it; the core knows
+    no candidate format). Its answer is `source_candidate_id`, set before the
+    policy runs so a policy can read it.
     """
     from cc_fuzzer_core import determinism as _det
     knobs = _det.resolve(config, replay_attempts=attempts, replay_timeout_s=timeout,
@@ -266,6 +274,8 @@ def triage(record: Mapping, crash: str, *, harness: str = "",
     r = replace(r, determinism=_det.echo(knobs))
     if delta_range:
         r = replace(r, delta_relevance=_delta_relevance(r, delta_range, campaign))
+    if candidate_matcher is not None:
+        r = replace(r, source_candidate_id=str(candidate_matcher(r.as_dict()) or ""))
     return replace(r, policy_verdict=judge(r, config=config, policy=policy, seen=seen))
 
 

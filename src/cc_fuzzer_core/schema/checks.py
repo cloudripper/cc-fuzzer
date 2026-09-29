@@ -484,7 +484,9 @@ def code_review(file) -> list[str]:
         if bad(ok, enums.ORACLE_KIND):
             out.append(f"{base}: findings[{i}] ({fid!r}) invalid oracle_kind '{ok}' (expected one of {sorted(enums.ORACLE_KIND)})")
         tier = f.get("tier_classified")
-        if bad(tier, ("sonnet", "opus")):
+        # `cull`: a static candidate mapped by the optional cull integration.
+        # (The message keeps its historical wording; the goldens record it.)
+        if bad(tier, ("sonnet", "opus", "cull")):
             out.append(f"{base}: findings[{i}] ({fid!r}) invalid tier_classified '{tier}' (expected sonnet or opus)")
         ndp = f.get("needs_deep_pass")
         if ndp is not None and not isinstance(ndp, bool):

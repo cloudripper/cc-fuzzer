@@ -27,11 +27,30 @@ def _off(name):
     return {"CC_FUZZER_FEATURES": f"-{name}"}
 
 
+class TestOptionalIntegrations(unittest.TestCase):
+    def test_an_optional_flag_is_turned_on_like_any_other(self):
+        f = features.load({"features": {"cull_intake": True}}, env={})
+        self.assertTrue(f.enabled("cull_intake"))
+        self.assertEqual(f.opted_in(), ["cull_intake"])
+        self.assertTrue(features.load(None, env={"CC_FUZZER_FEATURES": "+cull_feedback"})
+                        .enabled("cull_feedback"))
+
+    def test_the_default_render_strips_optional_blocks(self):
+        text = "a<!-- feature:cull_intake -->CULL<!-- /feature -->b"
+        self.assertEqual(features.strip_blocks(text, features.DEFAULTS), "ab")
+        self.assertIn("CULL", features.strip_blocks(text, {"cull_intake": True}))
+
+
 class TestLoad(unittest.TestCase):
     def test_defaults_all_on(self):
+        """Every core flag on; the optional integrations' flags off."""
         f = features.load(None, env={})
-        self.assertEqual(f.flags, {n: True for n in features.FEATURES})
-        self.assertEqual(f.disabled(), [])
+        self.assertEqual(f.flags, features.DEFAULT_ON)
+        self.assertTrue(all(v for n, v in f.flags.items() if not n.startswith("cull_")))
+        self.assertEqual([n for n, v in f.flags.items() if not v],
+                         ["cull_intake", "cull_feedback", "cull_query_engine"])
+        self.assertEqual(f.disabled(), [], "an integration that is off is not 'disabled'")
+        self.assertEqual(f.opted_in(), [])
         self.assertEqual(set(f.sources.values()), {features.SRC_DEFAULT})
 
     def test_config_block(self):

@@ -227,11 +227,16 @@ class FeatureBlockTest(unittest.TestCase):
             self.assertNotIn("CVE talk", r.stdout)
 
     def test_plugin_agents_keep_every_block(self):
-        """The committed agents are rendered with all features ON (§9)."""
+        """The committed agents are rendered at the DEFAULTS (§9): every block
+        of a default-on feature is kept; an optional integration's block
+        (default off) is stripped until a host renders with it on."""
         for agent in prompts.agents(REPO):
             src = (SOURCES / f"{agent}.md").read_text()
             for name in features.FEATURES:
-                if f"feature:{name}" in src:
+                if f"feature:{name}" in src and not features.DEFAULT_ON[name]:
+                    self.assertNotIn(f"feature:{name}", (AGENTS / f"{agent}.md").read_text(),
+                                     f"{agent} carries the optional {name} block by default")
+                elif f"feature:{name}" in src:
                     self.assertIn(f"feature:{name}", (AGENTS / f"{agent}.md").read_text(),
                                   f"{agent} lost its {name} block")
 

@@ -277,7 +277,7 @@ def render(agent: str, profile: str = "", features=None, *,
     text = path.read_text()
     text = splice_profile(text, profile, root, where=str(path))
     text = substitute_vars(text, profile_vars(profile, root), where=str(path), profile=profile)
-    text = _features.strip_blocks(text, _features.ALL_ON if features is None else features)
+    text = _features.strip_blocks(text, _features.DEFAULTS if features is None else features)
     if frontmatter:
         text = _set_model(text, agent, config, env)
     else:
@@ -354,11 +354,11 @@ def _features_arg(spec):
     if spec is None:
         return _features.load()
     if not spec:
-        return _features.ALL_ON
+        return _features.DEFAULTS
     flags, problems = _features.parse_env(spec)
     for p in problems:
         print(p, file=sys.stderr)
-    base = {n: True for n in _features.FEATURES}
+    base = dict(_features.DEFAULT_ON)
     base.update(flags)
     return base
 

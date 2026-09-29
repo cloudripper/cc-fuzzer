@@ -95,6 +95,23 @@ The `.note` sibling file records the source signal (pattern class + strategy lin
 
 **Medium-confidence code-review findings** are worth seeding when budget allows. **Low-confidence findings** stay JSON-only — they may be false positives; don't burn corpus slots on them.
 
+<!-- feature:cull_intake -->
+## Static candidates (cull)
+
+The campaign has cull's ranked candidates (`fuzz/state/cull/`). Read the
+cards before choosing a target; they are rendered from the intake, bounded,
+and in queue order (reached candidates first):
+
+```bash
+{{cc}} cull cards
+```
+
+Each card names the sink, why cull flagged it, the path input takes to it,
+the guards on the way and, when cull has them, input hints. A card is a
+place to aim, not a finding: nothing is proven until triage says so.
+`none-found` candidates come last on purpose: nothing showed input reaching
+them.
+<!-- /feature -->
 ## Quarantine pipeline
 
 **Never write directly to `fuzz/corpus/`.** Write to `fuzz/corpus-quarantine/` (per-harness path in multi mode), then:

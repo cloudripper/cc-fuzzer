@@ -124,6 +124,23 @@ size_t LLVMFuzzerCustomMutator(uint8_t *Data, size_t Size, size_t MaxSize, unsig
 
 The skeleton's three operations (flip byte, resize record, insert known record) are a complete minimal mutator. For checksummed formats, add a fourth op that recomputes the checksum over the mutated buffer.
 
+<!-- feature:cull_intake -->
+## Static candidates (cull)
+
+The campaign has cull's ranked candidates (`fuzz/state/cull/`). Read the
+cards before choosing a target; they are rendered from the intake, bounded,
+and in queue order (reached candidates first):
+
+```bash
+{{cc}} cull cards
+```
+
+Each card names the sink, why cull flagged it, the path input takes to it,
+the guards on the way and, when cull has them, input hints. A card is a
+place to aim, not a finding: nothing is proven until triage says so.
+`none-found` candidates come last on purpose: nothing showed input reaching
+them.
+<!-- /feature -->
 ## Workflow
 
 1. **Read the plan** — `fuzz/state/plan.md` `## Target` / `## Harness` / `## Mutator Notes` (if present). The campaign-planner identifies the format invariants that necessitated the mutator. Don't re-derive.

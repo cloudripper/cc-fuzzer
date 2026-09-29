@@ -113,7 +113,7 @@ def agent_of(row: dict) -> str:
 
 
 def _fields(agent: str, usage: Usage, source: str, call_id: str | None, transcript: str | None,
-            scope: str | None = None) -> dict:
+            scope: str | None = None, refs=None) -> dict:
     d = {"agent_called": agent, "tokens_in": int(usage.tokens_in), "tokens_out": int(usage.tokens_out)}
     if usage.cache_read:
         d["cache_read"] = int(usage.cache_read)
@@ -128,6 +128,10 @@ def _fields(agent: str, usage: Usage, source: str, call_id: str | None, transcri
         d["transcript"] = str(transcript)
     if scope:
         d["scope"] = scope
+    if refs:
+        # opaque links to what the call worked from (an integration's run
+        # and candidate ids); the ledger stores them, never reads them
+        d["refs"] = {str(k): v for k, v in dict(refs).items()}
     return d
 
 
@@ -143,7 +147,7 @@ def _best(rows):
 
 def append(campaign, *, agent: str, usage: Usage, source: str, call_id: str | None = None,
            transcript: str | None = None, now: float | None = None,
-           scope: str | None = None) -> Appended:
+           scope: str | None = None, refs=None) -> Appended:
     """Record one agent call. `campaign` is a Campaign or a state dir.
     Host sources must name the call (call_id); an orchestrator row need not.
     A call_id already recorded with at least this many total tokens is a
@@ -164,8 +168,8 @@ def append(campaign, *, agent: str, usage: Usage, source: str, call_id: str | No
                 if usage.total <= Usage.of_row(best).total:
                     return Appended(best, False)
                 tick = same[0].get("tick")
-        row = log.append(EVENT, _fields(agent, usage, source, call_id, transcript, scope),
-                         now=now, tick=tick)
+        row = log.append(EVENT, _fields(agent, usage, source, call_id, transcript, scope,
+                                        refs), now=now, tick=tick)
         return Appended(row, True)
 
 

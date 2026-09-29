@@ -1,0 +1,117 @@
+{
+  "cull_run": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "findings": [
+    {
+      "confidence": "high",
+      "cr_hash": "c7c54d035287dccd",
+      "cull_id": "cull-1",
+      "evidence": "the copy writes 72 bytes into a 64-byte buffer",
+      "exploitability_hint": "cull tier proven (verdict REPORT)",
+      "file": "src/util.c",
+      "function": "copy_name",
+      "id": "cr001",
+      "line_range": [
+        12,
+        12
+      ],
+      "oracle_kind": "memory",
+      "pattern": "oob_write",
+      "precondition": "reachability: none-found",
+      "status": "candidate",
+      "tier_classified": "cull"
+    },
+    {
+      "confidence": "high",
+      "cr_hash": "f74b0cf1e5c4fc4b",
+      "cull_id": "cull-2",
+      "evidence": "the node may be freed on the error path before this use | chain: LLVMFuzzerTestOneInput \u2192 drop_node",
+      "exploitability_hint": "cull tier freed-on-some-path (verdict UNDETERMINED)",
+      "file": "src/free.c",
+      "function": "drop_node",
+      "id": "cr002",
+      "line_range": [
+        30,
+        30
+      ],
+      "oracle_kind": "memory",
+      "pattern": "uaf",
+      "precondition": "input reaches drop_node via LLVMFuzzerTestOneInput \u2192 drop_node",
+      "status": "candidate",
+      "tier_classified": "cull"
+    },
+    {
+      "confidence": "medium",
+      "cr_hash": "d677e96cf66152cf",
+      "cull_id": "cull-4",
+      "evidence": "the length is not bounded by the destination | chain: LLVMFuzzerTestOneInput \u2192 dispatch \u2192 read_header",
+      "exploitability_hint": "cull tier unbounded-extent (verdict UNDETERMINED)",
+      "file": "src/parse.c",
+      "function": "read_header",
+      "id": "cr004",
+      "line_range": [
+        60,
+        60
+      ],
+      "oracle_kind": "memory",
+      "pattern": "oob_read",
+      "precondition": "input reaches read_header via LLVMFuzzerTestOneInput \u2192 dispatch \u2192 read_header",
+      "status": "candidate",
+      "tier_classified": "cull"
+    },
+    {
+      "confidence": "high",
+      "cr_hash": "133f151e2cb72d29",
+      "cull_id": "cull-5",
+      "evidence": "the length read from the header is not bounded by the 64-byte buffer | chain: LLVMFuzzerTestOneInput \u2192 parse \u2192 parse_chunk",
+      "exploitability_hint": "cull tier wrap-prone (verdict UNDETERMINED)",
+      "file": "src/parse.c",
+      "function": "parse_chunk",
+      "id": "cr005",
+      "line_range": [
+        120,
+        120
+      ],
+      "oracle_kind": "memory",
+      "pattern": "oob_write",
+      "precondition": "input reaches parse_chunk via LLVMFuzzerTestOneInput \u2192 parse \u2192 parse_chunk",
+      "status": "candidate",
+      "tier_classified": "cull"
+    },
+    {
+      "confidence": "low",
+      "cr_hash": "1aaa3b3dc0580f93",
+      "cull_id": "cull-6",
+      "evidence": "a null literal reaches the dereference on one path",
+      "exploitability_hint": "cull tier null-on-some-path (verdict UNDETERMINED)",
+      "file": "src/tbl.c",
+      "function": "lookup",
+      "id": "cr006",
+      "line_range": [
+        99,
+        99
+      ],
+      "oracle_kind": "memory",
+      "pattern": "null_deref",
+      "precondition": "reachability: none-found",
+      "status": "candidate",
+      "tier_classified": "cull"
+    }
+  ],
+  "focus_areas": [],
+  "schema": "code-review/v1",
+  "scope": {
+    "candidates_reviewed": 5,
+    "coverage_complete": false,
+    "excluded_paths": [],
+    "files_scanned": 4,
+    "functions_inventoried": 5,
+    "loc_total": 0,
+    "mode": "capped",
+    "not_reviewed": 0
+  },
+  "target": "cull",
+  "tiers_run": [
+    "cull"
+  ],
+  "ts": 1780000000
+}

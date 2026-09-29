@@ -16,8 +16,17 @@ stripped) so a downstream host can run the engine without it:
                         cve_refresh lever is ineligible, and every reader of
                         cve-context-*.json ignores it
 
+Three more gate the OPTIONAL cull integration (cc_fuzzer_core.integrations.cull)
+and are OFF by default, so the core runs exactly as it does without cull until
+a profile or config turns them on:
+
+  cull_intake           read cull's bug-candidate SARIF into candidates,
+                        code-review/v1, prescan signal and prompt cards
+  cull_feedback         write triage outcomes back as cull-feedback/v1
+  cull_query_engine     route the codeql query engine through `cull query`
+
 Precedence, lowest to highest (the last one that names a flag wins):
-  1. the default (true)
+  1. the default (DEFAULTS: true, except the cull_* flags)
   2. fuzz-config.json `cve.enabled` -- a legacy alias for advisory_lookup only
   3. fuzz-config.json `features {<name>: bool}`
   4. $CC_FUZZER_FEATURES, e.g. "-advisory_lookup,-disclosure_reporting".
@@ -51,8 +60,14 @@ IMPACT_TIERING = "impact_tiering"
 DISCLOSURE_REPORTING = "disclosure_reporting"
 LOGIC_ORACLES = "logic_oracles"
 ADVISORY_LOOKUP = "advisory_lookup"
+CULL_INTAKE = "cull_intake"
+CULL_FEEDBACK = "cull_feedback"
+CULL_QUERY_ENGINE = "cull_query_engine"
 # Display / iteration order.
-FEATURES = (IMPACT_TIERING, DISCLOSURE_REPORTING, LOGIC_ORACLES, ADVISORY_LOOKUP)
+FEATURES = (IMPACT_TIERING, DISCLOSURE_REPORTING, LOGIC_ORACLES, ADVISORY_LOOKUP,
+            CULL_INTAKE, CULL_FEEDBACK, CULL_QUERY_ENGINE)
+# Each flag's default: the optional integrations are off until asked for.
+DEFAULT_ON = {n: n not in (CULL_INTAKE, CULL_FEEDBACK, CULL_QUERY_ENGINE) for n in FEATURES}
 
 SRC_DEFAULT = "default"
 SRC_CVE_ALIAS = "fuzz-config.json:cve.enabled"
@@ -80,18 +95,26 @@ class Features:
         return self.flags[check_name(name)]
 
     def disabled(self) -> list:
-        return [n for n in FEATURES if not self.flags[n]]
+        """Flags that are on by default and have been turned off."""
+        return [n for n in FEATURES if not self.flags[n] and DEFAULT_ON[n]]
+
+    def opted_in(self) -> list:
+        """Flags that are off by default (optional integrations) and are on."""
+        return [n for n in FEATURES if self.flags[n] and not DEFAULT_ON[n]]
 
     def as_dict(self) -> dict:
         return {
             "features": {n: {"enabled": self.flags[n], "source": self.sources.get(n, SRC_DEFAULT)}
                          for n in FEATURES},
             "disabled": self.disabled(),
+            "opted_in": self.opted_in(),
             "problems": list(self.problems),
         }
 
 
 ALL_ON = Features({n: True for n in FEATURES}, {n: SRC_DEFAULT for n in FEATURES})
+# What an unconfigured host gets: every flag at its default.
+DEFAULTS = Features(dict(DEFAULT_ON), {n: SRC_DEFAULT for n in FEATURES})
 
 
 # ---------------------------------------------------------------------------
@@ -143,7 +166,7 @@ def load(config=None, env: Mapping[str, str] | None = None) -> Features:
     state dir or None (defaults + env only)."""
     env = os.environ if env is None else env
     doc = _config_doc(config)
-    flags = {n: True for n in FEATURES}
+    flags = dict(DEFAULT_ON)
     sources = {n: SRC_DEFAULT for n in FEATURES}
     problems = []
 
@@ -186,7 +209,7 @@ def _is_on(features, name: str) -> bool:
     if isinstance(features, Features):
         return features.enabled(name)
     if isinstance(features, Mapping):
-        return bool(features.get(name, True))
+        return bool(features.get(name, DEFAULT_ON[name]))
     # an iterable of the ENABLED names
     return name in set(features)
 

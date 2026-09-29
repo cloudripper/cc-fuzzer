@@ -111,6 +111,23 @@ The impact is the security consequence of the divergence, with a realistic ceili
 
 **Realism binds identically** — exploit the REAL target (and, for `differential`, the REAL reference/consumer), default config, attacker-realistic privilege; never a rigged mock. The same dispute path applies: if the divergence does not hold against the real target in realistic context (e.g., the "differential" is two-both-valid latitude the spec permits, not a bug), set `exploit_tier_reason: "realism_dispute"` and dispute the finding. Prefer a CLI `verify.sh` driving the real binaries. Everything below (tiers gate, realism self-check, dispute, cost discipline) applies unchanged; only the *nature of the check* is behavioral.
 
+<!-- feature:cull_intake -->
+## Static candidates (cull)
+
+The campaign has cull's ranked candidates (`fuzz/state/cull/`). Read the
+cards before choosing a target; they are rendered from the intake, bounded,
+and in queue order (reached candidates first):
+
+```bash
+{{cc}} cull cards
+```
+
+Each card names the sink, why cull flagged it, the path input takes to it,
+the guards on the way and, when cull has them, input hints. A card is a
+place to aim, not a finding: nothing is proven until triage says so.
+`none-found` candidates come last on purpose: nothing showed input reaching
+them.
+<!-- /feature -->
 ## Realism: exploit the REAL target, never a rigged mock
 
 A `verify.sh` that exits 0 proves nothing if the thing it exploited was a strawman *you* built to be vulnerable. The exploit must drive the bug through the **target's own code, in a realistic deployment**, exactly as an attacker would reach it — not through a reimplementation, wrapper, or listener you wrote that bakes in the vulnerable behavior or strips the protections the real system has. This is the single most important property of a valid PoC, and the thing that makes this stage able to catch triager false positives.

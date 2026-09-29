@@ -1208,6 +1208,33 @@ Produced by `cc_fuzzer_core.prescan.code_review_prescan` (invoked via `scripts/c
 
 A PARTIAL code-review snapshot scoped to one reviewer window. The sweep flow fans `top_candidates[start:start+batch_size]` across `ceil(candidates_selected / batch_size)` windows; each `code-reviewer` dispatch writes one `code-review-<ts>-w<NN>.json` covering its slice and does NOT write the consolidated markdown (the merge step owns that). Schema is `code-review/v1` but a partial need only carry `ts`, `scope` (window-scoped, with an honest per-window `candidates_reviewed`), and `findings`; `focus_areas` is optional on a partial. `cc_fuzzer_core.prescan.merge` (via `code-review-run.sh merge-code-review` / `cc-fuzzer prescan merge`) consolidates all partials into the canonical `code-review-<ts>.json`: dedup findings by `cr_hash`, reassign stable `cr<NNN>` ids in `cr_hash` order, aggregate scope, and write the loud markdown. Single-window (capped) mode produces one partial the merge passes through trivially. Validated leniently (no required `focus_areas`).
 
+### cull findings in code-review/v1 (optional integration)
+
+The optional cull integration (`cc_fuzzer_core.integrations.cull`, feature
+`cull_intake`, off by default) writes `state/cull/code-review-<ts>.json`, a
+`code-review/v1` document mapped from cull's bug-candidate SARIF. It lives
+under `state/cull/`, never `snapshots/`, so it cannot become `import-cr`'s
+"latest" snapshot; import it by path. Each finding: `cr_hash` = cull's
+`candidate_id`; `id` = `cr<NNN>` in cull's rank order (`cull_id` keeps
+`cull-<rank>`); `tier_classified` = `cull`; `oracle_kind` = `memory`;
+`pattern` from cull's family (CWE-787 `oob_write`, CWE-125 `oob_read`,
+CWE-416 `uaf`, CWE-415 `double_free`, CWE-476/690 `null_deref`, CWE-190/191
+`int_overflow` only when the result feeds memory), anything else `other`
+and left out unless `cull.import_other`. **Confidence**: cull's when it ships
+one; otherwise the configurable map (import-cr imports only high/medium):
+
+```json
+{"cull": {"confidence_map": {
+  "high":   {"max_rank": 5,  "reach_tiers": ["harness"]},
+  "medium": {"max_rank": 20, "reach_tiers": ["harness", "indirect"]}}}}
+```
+
+`max_rank` is the position in cull's rank order; a cull REPORT (proven) is
+always high; everything else is low. Reach tiers map from cull's
+reachability label: `input`, `harness` -> `harness`; `entry-point` ->
+`indirect`; none -> `none-found`; a record that predates reachability ->
+`unknown`.
+
 ### `state/snapshots/code-review-<ts>.json` — IMMUTABLE (v0.18 code-review output)
 
 Produced by the `code-reviewer` agent (Tier-2 Sonnet pass; Tier-3 Opus deep pass merges into this same file).
@@ -1299,7 +1326,7 @@ The markdown `code-review.md` header (written by the merge step) is LOUD in both
 
 **Allowed `confidence` values**: `high | medium | low` (`enums.py` `CONFIDENCE`). `needs_deep_pass` is a separate boolean field, never a confidence value.
 
-**Allowed `tier_classified` values**: `sonnet | opus`.
+**Allowed `tier_classified` values**: `sonnet | opus | cull`. `cull` marks a finding the optional cull integration (`cc_fuzzer_core.integrations.cull`, off by default) mapped from cull's bug-candidate SARIF rather than a model pass; see "cull findings in code-review/v1" below.
 
 **Oracle naming (don't conflate the two)**: the codebase uses two related-but-distinct "oracle" fields:
 - **`oracle_type`** — the *detection method*: `crash | invariant | roundtrip | differential | metamorphic` (`enums.py` `ORACLE_TYPE`). This is the canonical field on `findings.jsonl` records and `harness-built` oracle config — *how* a bug was caught.

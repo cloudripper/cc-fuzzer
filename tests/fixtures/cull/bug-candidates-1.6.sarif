@@ -1,0 +1,809 @@
+{
+ "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+ "version": "2.1.0",
+ "runs": [
+  {
+   "tool": {
+    "driver": {
+     "name": "cull",
+     "version": "0.1.0",
+     "informationUri": "https://github.com/cloudripper/cull",
+     "rules": [
+      {
+       "id": "CWE-787",
+       "name": "OutOfBoundsWrite",
+       "shortDescription": {
+        "text": "CWE-787: Out-of-bounds write"
+       },
+       "helpUri": "https://cwe.mitre.org/data/definitions/787.html",
+       "properties": {
+        "tags": [
+         "security",
+         "external/cwe/cwe-787"
+        ]
+       }
+      },
+      {
+       "id": "CWE-416",
+       "name": "UseAfterFree",
+       "shortDescription": {
+        "text": "CWE-416: Use after free"
+       },
+       "helpUri": "https://cwe.mitre.org/data/definitions/416.html",
+       "properties": {
+        "tags": [
+         "security",
+         "external/cwe/cwe-416"
+        ]
+       }
+      },
+      {
+       "id": "CWE-22",
+       "name": "Cwe22",
+       "shortDescription": {
+        "text": "CWE-22: CWE-22"
+       },
+       "helpUri": "https://cwe.mitre.org/data/definitions/22.html",
+       "properties": {
+        "tags": [
+         "security",
+         "external/cwe/cwe-22"
+        ]
+       }
+      },
+      {
+       "id": "CWE-125",
+       "name": "OutOfBoundsRead",
+       "shortDescription": {
+        "text": "CWE-125: Out-of-bounds read"
+       },
+       "helpUri": "https://cwe.mitre.org/data/definitions/125.html",
+       "properties": {
+        "tags": [
+         "security",
+         "external/cwe/cwe-125"
+        ]
+       }
+      },
+      {
+       "id": "CWE-476",
+       "name": "NullPointerDereference",
+       "shortDescription": {
+        "text": "CWE-476: NULL pointer dereference"
+       },
+       "helpUri": "https://cwe.mitre.org/data/definitions/476.html",
+       "properties": {
+        "tags": [
+         "security",
+         "external/cwe/cwe-476"
+        ]
+       }
+      }
+     ]
+    }
+   },
+   "originalUriBaseIds": {
+    "SRCROOT": {
+     "uri": "file:///work/proj/"
+    }
+   },
+   "invocations": [
+    {
+     "executionSuccessful": true,
+     "commandLine": "cull scan"
+    }
+   ],
+   "results": [
+    {
+     "ruleId": "CWE-787",
+     "ruleIndex": 0,
+     "level": "error",
+     "message": {
+      "text": "memcpy in copy_name(): the length is not bounded by the destination"
+     },
+     "locations": [
+      {
+       "physicalLocation": {
+        "artifactLocation": {
+         "uri": "src/util.c"
+        },
+        "region": {
+         "startLine": 12,
+         "startColumn": 5,
+         "snippet": {
+          "text": "memcpy(dst, src, len)"
+         }
+        }
+       },
+       "logicalLocations": [
+        {
+         "name": "copy_name",
+         "fullyQualifiedName": "copy_name",
+         "kind": "function"
+        }
+       ]
+      }
+     ],
+     "partialFingerprints": {
+      "cullSiteV1": "src/util.c:copy_name:12:5",
+      "cullCandidateV1": "c7c54d035287dccd"
+     },
+     "properties": {
+      "cull/v1": {
+       "candidate_id": "c7c54d035287dccd"
+      },
+      "verdict": "REPORT",
+      "tier": "proven",
+      "triageRank": null,
+      "reachability": null,
+      "diffProximity": null,
+      "evidence": {
+       "schema": "cull.evidence",
+       "version": "1.6.0",
+       "candidate_id": "c7c54d035287dccd",
+       "family": "CWE-787",
+       "verdict": "REPORT",
+       "tier": "proven",
+       "location": {
+        "path": "src/util.c",
+        "line": 12,
+        "column": 5,
+        "function": "copy_name",
+        "function_span": {
+         "start_line": 2,
+         "end_line": 32
+        }
+       },
+       "reachability": null,
+       "diff_proximity": null,
+       "flow_steps": [],
+       "refusal": [],
+       "guards": [
+        {
+         "text": "if (len > 64)",
+         "holds": "false"
+        }
+       ],
+       "write": {
+        "operation": "memcpy",
+        "access": "write",
+        "dest_object": "hdr->buf",
+        "storage": null,
+        "capacity": {
+         "bytes": 64,
+         "same_frame": null,
+         "runtime": false
+        },
+        "extent": {
+         "bytes": "len",
+         "upper": null
+        },
+        "offset": {
+         "start": null,
+         "min": null,
+         "max": null
+        },
+        "deciding_operands": [
+         {
+          "role": "length",
+          "expr": "len"
+         }
+        ]
+       },
+       "lifetime": null,
+       "null": null,
+       "integer": null,
+       "alert": null
+      }
+     },
+     "rank": 100.0
+    },
+    {
+     "ruleId": "CWE-416",
+     "ruleIndex": 1,
+     "level": "warning",
+     "message": {
+      "text": "memcpy in drop_node(): the length is not bounded by the destination"
+     },
+     "locations": [
+      {
+       "physicalLocation": {
+        "artifactLocation": {
+         "uri": "src/free.c"
+        },
+        "region": {
+         "startLine": 30,
+         "startColumn": 5,
+         "snippet": {
+          "text": "memcpy(dst, src, len)"
+         }
+        }
+       },
+       "logicalLocations": [
+        {
+         "name": "drop_node",
+         "fullyQualifiedName": "drop_node",
+         "kind": "function"
+        }
+       ]
+      }
+     ],
+     "partialFingerprints": {
+      "cullSiteV1": "src/free.c:drop_node:30:5",
+      "cullCandidateV1": "f74b0cf1e5c4fc4b"
+     },
+     "properties": {
+      "cull/v1": {
+       "candidate_id": "f74b0cf1e5c4fc4b"
+      },
+      "verdict": "UNDETERMINED",
+      "tier": "freed-on-some-path",
+      "triageRank": null,
+      "reachability": "harness",
+      "diffProximity": null,
+      "evidence": {
+       "schema": "cull.evidence",
+       "version": "1.6.0",
+       "candidate_id": "f74b0cf1e5c4fc4b",
+       "family": "CWE-416",
+       "verdict": "UNDETERMINED",
+       "tier": "freed-on-some-path",
+       "location": {
+        "path": "src/free.c",
+        "line": 30,
+        "column": 5,
+        "function": "drop_node",
+        "function_span": {
+         "start_line": 20,
+         "end_line": 50
+        }
+       },
+       "reachability": "harness",
+       "diff_proximity": null,
+       "flow_steps": [],
+       "refusal": [],
+       "guards": [
+        {
+         "text": "if (len > 64)",
+         "holds": "false"
+        }
+       ],
+       "write": null,
+       "lifetime": {
+        "freed_expr": null,
+        "free_line": null,
+        "free_text": null,
+        "use_kind": null,
+        "always": null,
+        "via": null
+       },
+       "null": null,
+       "integer": null,
+       "alert": null
+      }
+     },
+     "rank": 55.0
+    },
+    {
+     "ruleId": "CWE-22",
+     "ruleIndex": 2,
+     "level": "warning",
+     "message": {
+      "text": "memcpy in fmt_path(): the length is not bounded by the destination"
+     },
+     "locations": [
+      {
+       "physicalLocation": {
+        "artifactLocation": {
+         "uri": "src/misc.c"
+        },
+        "region": {
+         "startLine": 7,
+         "startColumn": 5,
+         "snippet": {
+          "text": "memcpy(dst, src, len)"
+         }
+        }
+       },
+       "logicalLocations": [
+        {
+         "name": "fmt_path",
+         "fullyQualifiedName": "fmt_path",
+         "kind": "function"
+        }
+       ]
+      }
+     ],
+     "partialFingerprints": {
+      "cullSiteV1": "src/misc.c:fmt_path:7:5",
+      "cullCandidateV1": "c739f73934140373"
+     },
+     "properties": {
+      "cull/v1": {
+       "candidate_id": "c739f73934140373"
+      },
+      "verdict": "UNDETERMINED",
+      "tier": null,
+      "triageRank": null,
+      "reachability": null,
+      "diffProximity": null,
+      "evidence": {
+       "schema": "cull.evidence",
+       "version": "1.6.0",
+       "candidate_id": "c739f73934140373",
+       "family": "CWE-22",
+       "verdict": "UNDETERMINED",
+       "tier": null,
+       "location": {
+        "path": "src/misc.c",
+        "line": 7,
+        "column": 5,
+        "function": "fmt_path",
+        "function_span": {
+         "start_line": -3,
+         "end_line": 27
+        }
+       },
+       "reachability": null,
+       "diff_proximity": null,
+       "flow_steps": [],
+       "refusal": [],
+       "guards": [
+        {
+         "text": "if (len > 64)",
+         "holds": "false"
+        }
+       ],
+       "write": {
+        "operation": "memcpy",
+        "access": "write",
+        "dest_object": "hdr->buf",
+        "storage": null,
+        "capacity": {
+         "bytes": 64,
+         "same_frame": null,
+         "runtime": false
+        },
+        "extent": {
+         "bytes": "len",
+         "upper": null
+        },
+        "offset": {
+         "start": null,
+         "min": null,
+         "max": null
+        },
+        "deciding_operands": [
+         {
+          "role": "length",
+          "expr": "len"
+         }
+        ]
+       },
+       "lifetime": null,
+       "null": null,
+       "integer": null,
+       "alert": {
+        "stage": "security-extended",
+        "rule": "cpp/path-injection",
+        "name": "Path injection",
+        "severity": 7.5,
+        "precision": "high",
+        "cwes": [
+         "CWE-CWE-22"
+        ]
+       }
+      }
+     },
+     "rank": 10.0
+    },
+    {
+     "ruleId": "CWE-125",
+     "ruleIndex": 3,
+     "level": "warning",
+     "message": {
+      "text": "memcpy in read_header(): the length is not bounded by the destination"
+     },
+     "locations": [
+      {
+       "physicalLocation": {
+        "artifactLocation": {
+         "uri": "src/parse.c"
+        },
+        "region": {
+         "startLine": 60,
+         "startColumn": 5,
+         "snippet": {
+          "text": "memcpy(dst, src, len)"
+         }
+        }
+       },
+       "logicalLocations": [
+        {
+         "name": "read_header",
+         "fullyQualifiedName": "read_header",
+         "kind": "function"
+        }
+       ]
+      }
+     ],
+     "partialFingerprints": {
+      "cullSiteV1": "src/parse.c:read_header:60:5",
+      "cullCandidateV1": "d677e96cf66152cf"
+     },
+     "properties": {
+      "cull/v1": {
+       "candidate_id": "d677e96cf66152cf"
+      },
+      "verdict": "UNDETERMINED",
+      "tier": "unbounded-extent",
+      "triageRank": null,
+      "reachability": "entry-point",
+      "diffProximity": null,
+      "evidence": {
+       "schema": "cull.evidence",
+       "version": "1.6.0",
+       "candidate_id": "d677e96cf66152cf",
+       "family": "CWE-125",
+       "verdict": "UNDETERMINED",
+       "tier": "unbounded-extent",
+       "location": {
+        "path": "src/parse.c",
+        "line": 60,
+        "column": 5,
+        "function": "read_header",
+        "function_span": {
+         "start_line": 50,
+         "end_line": 80
+        }
+       },
+       "reachability": "entry-point",
+       "diff_proximity": null,
+       "flow_steps": [],
+       "refusal": [],
+       "guards": [
+        {
+         "text": "if (len > 64)",
+         "holds": "false"
+        }
+       ],
+       "write": {
+        "operation": "memcpy",
+        "access": "read",
+        "dest_object": "hdr->buf",
+        "storage": null,
+        "capacity": {
+         "bytes": 64,
+         "same_frame": null,
+         "runtime": false
+        },
+        "extent": {
+         "bytes": "len",
+         "upper": null
+        },
+        "offset": {
+         "start": null,
+         "min": null,
+         "max": null
+        },
+        "deciding_operands": [
+         {
+          "role": "length",
+          "expr": "len"
+         }
+        ]
+       },
+       "lifetime": null,
+       "null": null,
+       "integer": null,
+       "alert": null
+      }
+     },
+     "rank": 72.0
+    },
+    {
+     "ruleId": "CWE-787",
+     "ruleIndex": 0,
+     "level": "warning",
+     "message": {
+      "text": "memcpy in parse_chunk(): the length is not bounded by the destination"
+     },
+     "locations": [
+      {
+       "physicalLocation": {
+        "artifactLocation": {
+         "uri": "src/parse.c"
+        },
+        "region": {
+         "startLine": 120,
+         "startColumn": 5,
+         "snippet": {
+          "text": "memcpy(dst, src, len)"
+         }
+        }
+       },
+       "logicalLocations": [
+        {
+         "name": "parse_chunk",
+         "fullyQualifiedName": "parse_chunk",
+         "kind": "function"
+        }
+       ]
+      }
+     ],
+     "partialFingerprints": {
+      "cullSiteV1": "src/parse.c:parse_chunk:120:5",
+      "cullCandidateV1": "133f151e2cb72d29"
+     },
+     "properties": {
+      "cull/v1": {
+       "candidate_id": "133f151e2cb72d29"
+      },
+      "verdict": "UNDETERMINED",
+      "tier": "wrap-prone",
+      "triageRank": null,
+      "reachability": "input",
+      "diffProximity": null,
+      "evidence": {
+       "schema": "cull.evidence",
+       "version": "1.6.0",
+       "candidate_id": "133f151e2cb72d29",
+       "family": "CWE-787",
+       "verdict": "UNDETERMINED",
+       "tier": "wrap-prone",
+       "location": {
+        "path": "src/parse.c",
+        "line": 120,
+        "column": 5,
+        "function": "parse_chunk",
+        "function_span": {
+         "start_line": 110,
+         "end_line": 140
+        }
+       },
+       "reachability": "input",
+       "diff_proximity": null,
+       "flow_steps": [
+        {
+         "reachability": "input",
+         "operand": "len",
+         "source": "fread",
+         "steps": [
+          {
+           "path": "src/io.c",
+           "line": 40,
+           "column": 3,
+           "message": "fread(buf, 1, n, f)"
+          },
+          {
+           "path": "src/parse.c",
+           "line": 88,
+           "column": 9,
+           "message": "len = hdr->size"
+          }
+         ]
+        }
+       ],
+       "refusal": [],
+       "guards": [
+        {
+         "text": "if (len > 64)",
+         "holds": "false"
+        }
+       ],
+       "write": {
+        "operation": "memcpy",
+        "access": "write",
+        "dest_object": "hdr->buf",
+        "storage": null,
+        "capacity": {
+         "bytes": 64,
+         "same_frame": null,
+         "runtime": false
+        },
+        "extent": {
+         "bytes": "len",
+         "upper": null
+        },
+        "offset": {
+         "start": null,
+         "min": null,
+         "max": null
+        },
+        "deciding_operands": [
+         {
+          "role": "length",
+          "expr": "len"
+         }
+        ]
+       },
+       "lifetime": null,
+       "null": null,
+       "integer": null,
+       "alert": null
+      }
+     },
+     "codeFlows": [
+      {
+       "message": {
+        "text": "input reaches `len` from fread"
+       },
+       "threadFlows": [
+        {
+         "locations": [
+          {
+           "location": {
+            "physicalLocation": {
+             "artifactLocation": {
+              "uri": "src/io.c"
+             },
+             "region": {
+              "startLine": 40,
+              "startColumn": 3
+             }
+            },
+            "message": {
+             "text": "fread(buf, 1, n, f)"
+            }
+           }
+          },
+          {
+           "location": {
+            "physicalLocation": {
+             "artifactLocation": {
+              "uri": "src/parse.c"
+             },
+             "region": {
+              "startLine": 88,
+              "startColumn": 9
+             }
+            },
+            "message": {
+             "text": "len = hdr->size"
+            }
+           }
+          }
+         ]
+        }
+       ]
+      }
+     ],
+     "rank": 91.0
+    },
+    {
+     "ruleId": "CWE-476",
+     "ruleIndex": 4,
+     "level": "warning",
+     "message": {
+      "text": "memcpy in lookup(): the length is not bounded by the destination"
+     },
+     "locations": [
+      {
+       "physicalLocation": {
+        "artifactLocation": {
+         "uri": "src/tbl.c"
+        },
+        "region": {
+         "startLine": 99,
+         "startColumn": 5,
+         "snippet": {
+          "text": "memcpy(dst, src, len)"
+         }
+        }
+       },
+       "logicalLocations": [
+        {
+         "name": "lookup",
+         "fullyQualifiedName": "lookup",
+         "kind": "function"
+        }
+       ]
+      }
+     ],
+     "partialFingerprints": {
+      "cullSiteV1": "src/tbl.c:lookup:99:5",
+      "cullCandidateV1": "1aaa3b3dc0580f93"
+     },
+     "properties": {
+      "cull/v1": {
+       "candidate_id": "1aaa3b3dc0580f93"
+      },
+      "verdict": "UNDETERMINED",
+      "tier": "null-on-some-path",
+      "triageRank": null,
+      "reachability": null,
+      "diffProximity": null,
+      "evidence": {
+       "schema": "cull.evidence",
+       "version": "1.6.0",
+       "candidate_id": "1aaa3b3dc0580f93",
+       "family": "CWE-476",
+       "verdict": "UNDETERMINED",
+       "tier": "null-on-some-path",
+       "location": {
+        "path": "src/tbl.c",
+        "line": 99,
+        "column": 5,
+        "function": "lookup",
+        "function_span": {
+         "start_line": 89,
+         "end_line": 119
+        }
+       },
+       "reachability": null,
+       "diff_proximity": null,
+       "flow_steps": [],
+       "refusal": [],
+       "guards": [
+        {
+         "text": "if (len > 64)",
+         "holds": "false"
+        }
+       ],
+       "write": null,
+       "lifetime": null,
+       "null": {
+        "var": null,
+        "kind": null,
+        "source_line": null,
+        "source_text": null,
+        "callee": null,
+        "every": null,
+        "direct": null,
+        "checked_elsewhere": null,
+        "callee_calls": null,
+        "callee_tested": null
+       },
+       "integer": null,
+       "alert": null
+      }
+     },
+     "rank": 40.0
+    }
+   ],
+   "properties": {
+    "evidenceSchema": {
+     "name": "cull.evidence",
+     "version": "1.6.0"
+    },
+    "provenFitsOmitted": 0,
+    "budget": null,
+    "analysis": {
+     "stages": [
+      {
+       "family": "CWE-787",
+       "stage": "write-evidence",
+       "fate": "landed"
+      }
+     ],
+     "degraded": false
+    },
+    "belowMinConfidence": 0,
+    "topFunctions": null,
+    "flowPathsOmitted": null,
+    "cull/v1:provenance": {
+     "cull_version": "0.1.0",
+     "codeql_version": "2.25.6",
+     "pack_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "db_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+     "diff_sha256": null,
+     "entry": [
+      "LLVMFuzzerTestOneInput"
+     ],
+     "classes": [
+      "CWE-787",
+      "CWE-125",
+      "CWE-416",
+      "CWE-476"
+     ],
+     "evidence_version": "1.6.0",
+     "escalate": false,
+     "dropped": 3,
+     "degraded": false,
+     "stage_timeout": 1800,
+     "seconds": 12.5
+    }
+   }
+  }
+ ]
+}
