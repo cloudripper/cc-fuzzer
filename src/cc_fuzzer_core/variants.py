@@ -176,6 +176,11 @@ def apply_override(base: Variant, over: Mapping) -> Variant:
                 raise VariantError(
                     f"variants.{base.name}.{k}={v!r} is not one of {', '.join(_STR_FIELDS[k])}")
             out = replace(out, **{k: v})
+        elif k == "sanitizer":
+            # OSS-Fuzz style: one $SANITIZER. Same meaning as a one-item list.
+            if not isinstance(v, str) or not v:
+                raise VariantError(f"variants.{base.name}.sanitizer must be a string")
+            out = replace(out, sanitizers=(v,))
         elif k == "sanitizers":
             if not isinstance(v, (list, tuple)) or not all(isinstance(s, str) for s in v):
                 raise VariantError(f"variants.{base.name}.sanitizers must be a list of strings")
@@ -183,7 +188,7 @@ def apply_override(base: Variant, over: Mapping) -> Variant:
         else:
             raise VariantError(
                 f"variants.{base.name}.{k} is not a known field "
-                f"(known: sanitizers, {', '.join((*_STR_FIELDS, *_BOOL_FIELDS))})")
+                f"(known: sanitizer, sanitizers, {', '.join((*_STR_FIELDS, *_BOOL_FIELDS))})")
     return out
 
 
@@ -209,7 +214,11 @@ def harness_overrides(config: Mapping, harness: str) -> dict:
     """The `variants` block for one harness in fuzz-config.json (a campaign-wide
     `variants` block applies to every harness; the per-harness one wins)."""
     doc = config or {}
-    base = dict(doc.get("variants") or {})
+    # `build.variants` and top-level `variants` are the same thing, campaign-wide.
+    base = {}
+    for block in ((doc.get("build") or {}).get("variants") or {}, doc.get("variants") or {}):
+        for k, v in block.items():
+            base[k] = {**base.get(k, {}), **v} if isinstance(v, Mapping) else v
     for h in doc.get("harnesses") or []:
         if isinstance(h, Mapping) and h.get("name") == harness:
             for k, v in (h.get("variants") or {}).items():
@@ -218,14 +227,74 @@ def harness_overrides(config: Mapping, harness: str) -> dict:
     return base
 
 
+def verify_source(config: Mapping | None) -> tuple:
+    """(source, link_mode) when the campaign names an already-built binary as
+    its verify binary, else ("", "").
+
+        {"build": {"verify_variant_source": "debug"}}
+
+    Frameworks often ship a debug build (ASan, -O0, full DWARF) that is a
+    better replay target than anything the core would build, and building a
+    second one wastes a build slot. The source is looked up in the harness
+    record as its variant field (`harness_binary` for "fuzzer") or as
+    `<source>_binary` ("debug" -> `debug_binary`).
+
+    link_mode matters to §12: a verify binary that still links the fuzzer
+    driver grades `weak` -- correct, and exactly the case an authoritative
+    oracle exists to upgrade. A known variant brings its own; an unknown one
+    (a framework's debug build is a fuzzer build) defaults to fuzzer-main
+    unless `build.verify_variant_link_mode` says otherwise.
+    """
+    block = (config or {}).get("build") or {}
+    if not isinstance(block, Mapping):
+        return "", ""
+    src = block.get("verify_variant_source") or ""
+    if not src:
+        return "", ""
+    if not isinstance(src, str):
+        raise VariantError("build.verify_variant_source must be a string")
+    mode = block.get("verify_variant_link_mode") or \
+        (BY_NAME[src].link_mode if src in BY_NAME else FUZZER_MAIN)
+    if mode not in LINK_MODES:
+        raise VariantError(f"build.verify_variant_link_mode={mode!r} is not one of "
+                           f"{', '.join(LINK_MODES)}")
+    return src, mode
+
+
+def with_verify_source(record: Mapping, config: Mapping | None) -> dict:
+    """`record` with verify_binary taken from the configured source, if any.
+
+    The named source wins over a verify_binary already in the record: the
+    configuration says which binary is the replay target.
+    """
+    src, mode = verify_source(config)
+    rec = dict(record or {})
+    if not src:
+        return rec
+    field = BINARY_FIELD.get(src) or f"{src}_binary"
+    path = rec.get(field)
+    if not path or path == "None":
+        raise SelectionError(
+            f"build.verify_variant_source={src!r} names no binary in the harness "
+            f"record (looked for {field})")
+    rec.update({"verify_binary": str(path), "verify_source": src,
+                "verify_link_mode": mode})
+    return rec
+
+
 def spec(config: Mapping | None = None, harness: str = "") -> dict:
     """A `build-spec/v1`: what this harness needs built, as needs."""
     over = harness_overrides(config or {}, harness)
+    src, _mode = verify_source(config)
+    resolved = resolve(over)
+    provided = {"verify": src} if src else {}
     return {
         "schema": SPEC_SCHEMA,
         "harness": harness,
-        "variants": [v.as_dict() for v in resolve(over) if v.enabled],
-        "skipped": [v.name for v in resolve(over) if not v.enabled],
+        "variants": [v.as_dict() for v in resolved
+                     if v.enabled and v.name not in provided],
+        "skipped": [v.name for v in resolved if not v.enabled],
+        "provided": provided,
     }
 
 
@@ -317,6 +386,12 @@ def select(record: Mapping, action: str, *, caller: str = "", harness: str = "")
         if not path:
             continue
         if i == 0:
+            if name == "verify" and rec.get("verify_link_mode") == FUZZER_MAIN:
+                return Selection(
+                    path, name,
+                    f"{action} runs on {field}, provided by "
+                    f"{rec.get('verify_source') or 'another build'}, which links the "
+                    f"fuzzer driver", WEAK)
             return Selection(path, name, f"{action} runs on {field}")
         return Selection(
             path, name,

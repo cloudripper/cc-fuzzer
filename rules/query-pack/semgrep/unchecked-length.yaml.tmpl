@@ -1,0 +1,13 @@
+rules:
+  - id: qp-unchecked-length-{{function}}-{{sink}}
+    patterns:
+      - pattern-inside: |
+          $RET {{function}}(...) { ... }
+      - pattern: {{sink}}($DST, $SRC, $LEN)
+      - pattern-not-inside: |
+          if (<... $LEN ...>) { ... }
+      - pattern-not-inside: |
+          if (<... $LEN ...>) return ...;
+    message: "{{function}} passes $LEN to {{sink}} with no comparison on it"
+    languages: [c, cpp]
+    severity: WARNING

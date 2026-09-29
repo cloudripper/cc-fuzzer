@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import json
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Mapping
 
@@ -49,7 +49,9 @@ from cc_fuzzer_core.crash import pipeline as _pipeline
 from cc_fuzzer_core.crash import replay as _replay
 from cc_fuzzer_core.crash import verifiers as _verifiers
 
-TRIAGE_SCHEMA = "triage-result/v1"
+# Consumers in other containers key on these; a change to the shape of
+# as_dict() is a new version (tests/golden/exports holds the v1 shape).
+TRIAGE_SCHEMA = "triage-export/v1"
 
 # outcomes
 CONFIRMED, REJECTED, INCONCLUSIVE, NOT_A_CRASH, FLAKY = (
@@ -67,6 +69,7 @@ class TriageResult:
     stack_hash: str = ""
     category: str = ""
     top_frame: str = ""
+    sanitizer: str = ""           # the detector that reported it (replay.sanitizer_of)
     frames: tuple = ()            # top first, up to replay.REPORT_FRAMES
     sanitizer_excerpt: str = ""   # the report, bounded (replay.excerpt)
     binary: str = ""
@@ -82,6 +85,9 @@ class TriageResult:
     replay: dict = field(default_factory=dict)
     minimized: dict = field(default_factory=dict)
     sensitivity: dict = field(default_factory=dict)
+    policy_verdict: dict = field(default_factory=dict)   # see submission policy below
+    delta_relevance: dict = field(default_factory=dict)  # delta-relevance/v1, when asked
+    determinism: dict = field(default_factory=dict)      # determinism/v1: the knobs used
 
     @property
     def submittable(self) -> bool:
@@ -94,13 +100,21 @@ class TriageResult:
         """
         return self.status == CONFIRMED and self.evidence_grade == _v.STRONG
 
+    @property
+    def should_submit(self) -> bool:
+        """submittable AND the submission policy accepts it."""
+        return self.submittable and self.policy_verdict.get("verdict") == ACCEPT
+
     def as_dict(self) -> dict:
         return {"schema": TRIAGE_SCHEMA, "status": self.status,
                 "submittable": self.submittable, "reason": self.reason,
                 "pov": self.pov, "original_pov": self.original_pov,
                 "pov_sha256": self.pov_sha256,
                 "original_sha256": self.original_sha256,
+                "should_submit": self.should_submit,
+                "policy_verdict": dict(self.policy_verdict),
                 "stack_hash": self.stack_hash, "category": self.category,
+                "sanitizer": self.sanitizer,
                 "top_frame": self.top_frame, "frames": list(self.frames),
                 "sanitizer_excerpt": self.sanitizer_excerpt,
                 "binary": self.binary,
@@ -111,42 +125,31 @@ class TriageResult:
                 "original_size": self.original_size, "size": self.size,
                 "marker": self.marker, "directory": self.directory,
                 "replay": self.replay, "minimized": self.minimized,
-                "sensitivity": self.sensitivity}
+                "sensitivity": self.sensitivity,
+                "delta_relevance": self.delta_relevance,
+                "determinism": self.determinism}
 
 
 # ---------------------------------------------------------------------------
 # the crash seam
 # ---------------------------------------------------------------------------
 
-def triage(record: Mapping, crash: str, *, harness: str = "",
+def _triage(record: Mapping, crash: str, *, harness: str = "",
            config: Mapping | None = None, campaign=None, finding_id: str = "",
            finding: Mapping | None = None, do_minimize: bool = True,
            attempts: int = _replay.ATTEMPTS, timeout: int = _replay.TIMEOUT_S,
            minimize_probes: int = _minimize.MAX_PROBES,
            do_sensitivity: bool = True,
-           sensitivity_probes: int = _minimize.SENSITIVITY_MAX_PROBES) -> TriageResult:
-    """A crash arrived. Decide what it is, in one call.
-
-      1. replay it deterministically on the binary §12 selects
-      2. reduce it to the smallest input showing THE SAME bug
-      3. hand it to the configured final verifier (your oracle)
-      4. if confirmed, map which of its bytes decide the bug (sensitivity)
-      5. if confirmed and a campaign was given, write the finding marker
-
-    Step 4 runs only on confirmed bugs: it costs two probes per byte and its
-    reader is whoever writes the patch, so there is nobody to spend it on for
-    a rejected crash.
-
-    A flaky reproducer stops at step 1: it is a real bug with an unreliable
-    trigger, which is a different thing from a finding, and minimizing it
-    would be measuring noise.
-    """
+           sensitivity_probes: int = _minimize.SENSITIVITY_MAX_PROBES,
+           minimize_rounds: int = _minimize.MAX_ROUNDS) -> TriageResult:
+    """triage() without the submission policy; see triage()."""
+    record = _v.with_verify_source(record, config)
     r = _replay.replay(record, crash, harness=harness, attempts=attempts,
                        timeout=timeout)
     base = {"replay": r.as_dict(), "original_pov": crash,
             "stack_hash": r.stack_hash, "category": r.category,
             "top_frame": r.top_frame, "frames": tuple(r.frames),
-            "sanitizer_excerpt": r.excerpt,
+            "sanitizer_excerpt": r.excerpt, "sanitizer": r.sanitizer,
             "original_sha256": _pipeline.sha256_file(crash),
             "binary": r.binary, "variant": r.variant,
             "evidence_grade": r.evidence_grade, "replay_grade": r.evidence_grade,
@@ -166,7 +169,7 @@ def triage(record: Mapping, crash: str, *, harness: str = "",
         try:
             m = _minimize.minimize(record, crash, harness=harness,
                                    stack_hash=r.stack_hash, timeout=timeout,
-                                   max_probes=minimize_probes)
+                                   max_probes=minimize_probes, max_rounds=minimize_rounds)
             out = Path(crash).with_suffix(Path(crash).suffix + ".min")
             _minimize.write(m, out)
             pov, mini = str(out), m.as_dict()
@@ -214,26 +217,202 @@ def triage(record: Mapping, crash: str, *, harness: str = "",
     return TriageResult(CONFIRMED, v.reason, marker=marker, directory=directory, **common)
 
 
+def triage(record: Mapping, crash: str, *, harness: str = "",
+           config: Mapping | None = None, campaign=None, finding_id: str = "",
+           finding: Mapping | None = None, do_minimize: bool = True,
+           attempts: int | None = None, timeout: int | None = None,
+           minimize_probes: int | None = None,
+           do_sensitivity: bool = True,
+           sensitivity_probes: int | None = None,
+           policy: str = "", seen: Mapping | None = None,
+           delta_range=None, minimize_rounds: int | None = None) -> TriageResult:
+    """A crash arrived. Decide what it is, in one call.
+
+      1. replay it deterministically on the binary §12 selects
+      2. reduce it to the smallest input showing THE SAME bug
+      3. hand it to the configured final verifier (your oracle)
+      4. if confirmed, map which of its bytes decide the bug (sensitivity)
+      5. if confirmed and a campaign was given, write the finding marker
+      6. ask the submission policy whether it is worth submitting
+
+    Step 4 runs only on confirmed bugs: it costs two probes per byte and its
+    reader is whoever writes the patch, so there is nobody to spend it on for
+    a rejected crash.
+
+    A flaky reproducer stops at step 1: it is a real bug with an unreliable
+    trigger, which is a different thing from a finding, and minimizing it
+    would be measuring noise.
+
+    `policy` overrides `submission.policy` in config; `seen` maps stack_hash
+    to how many variants of that bug were already submitted (for
+    `max_variants_per_stack_hash`). The core keeps no submission state.
+
+    `delta_range` (a diff file, diff text, or a git range with a campaign)
+    adds delta_relevance: whether the crash's frames land in what the diff
+    changed. Reported, never filtered on -- the policy may use it.
+    """
+    from cc_fuzzer_core import determinism as _det
+    knobs = _det.resolve(config, replay_attempts=attempts, replay_timeout_s=timeout,
+                         minimize_max_probes=minimize_probes,
+                         minimize_max_rounds=minimize_rounds,
+                         sensitivity_max_probes=sensitivity_probes)
+    r = _triage(record, crash, harness=harness, config=config, campaign=campaign,
+                finding_id=finding_id, finding=finding, do_minimize=do_minimize,
+                attempts=knobs["replay_attempts"], timeout=knobs["replay_timeout_s"],
+                minimize_probes=knobs["minimize_max_probes"],
+                minimize_rounds=knobs["minimize_max_rounds"],
+                do_sensitivity=do_sensitivity,
+                sensitivity_probes=knobs["sensitivity_max_probes"])
+    r = replace(r, determinism=_det.echo(knobs))
+    if delta_range:
+        r = replace(r, delta_relevance=_delta_relevance(r, delta_range, campaign))
+    return replace(r, policy_verdict=judge(r, config=config, policy=policy, seen=seen))
+
+
+def _delta_relevance(r: TriageResult, delta_range, campaign) -> dict:
+    from cc_fuzzer_core import delta as _delta
+    try:
+        targets = _delta.targets_of(delta_range,
+                                    project_root=getattr(campaign, "project_root", None))
+    except (_delta.DeltaError, OSError) as e:
+        # Reporting, not gating: a diff we cannot read says nothing either way.
+        return {"schema": _delta.RELEVANCE_SCHEMA, "error": str(e)}
+    return _delta.relevance(r.frames, targets)
+
+
+# ---------------------------------------------------------------------------
+# the submission policy hook
+# ---------------------------------------------------------------------------
+#
+# `submittable` answers "is this TRUE" (confirmed, strong evidence). Whether a
+# true finding is WORTH submitting depends on the consumer's scoring oracle --
+# a memory-safety scorer does not want a signed-overflow report -- so it is a
+# hook, not a rule in classify.py:
+#
+#     {"submission": {"policy": "builtin:memory-safety",
+#                     "max_variants_per_stack_hash": 2}}
+#
+#   builtin:any-confirmed   accept every confirmed finding (the default)
+#   builtin:memory-safety   accept ASan/MSan memory errors; reject ubsan-*,
+#                           oom, timeout, leak, generic-crash
+#   python:module:callable  fn(result: dict, ctx: dict) -> verdict, where a
+#                           verdict is a bool, "accept"/"reject", a
+#                           (verdict, reason) pair, or {"verdict", "reason"}
+#
+# The policy is handed the whole result (as_dict), including sanitizer,
+# category and delta_relevance, and never has to parse sanitizer_excerpt.
+
+POLICY_SCHEMA = "policy-verdict/v1"
+ACCEPT, REJECT = "accept", "reject"
+DEFAULT_POLICY = "builtin:any-confirmed"
+
+MEMORY_SANITIZERS = ("address", "memory")
+NOT_MEMORY_SAFETY = ("oom", "timeout", "generic-crash", "abort", "assertion-failure",
+                     "signed-integer-overflow", "integer-overflow", "segfault")
+
+
+class PolicyError(ValueError):
+    pass
+
+
+def _any_confirmed(result: Mapping, ctx: Mapping):
+    return ACCEPT, "confirmed"
+
+
+def _memory_safety(result: Mapping, ctx: Mapping):
+    cat, san = result.get("category") or "", result.get("sanitizer") or ""
+    if san == "leak" or "leak" in cat:
+        return REJECT, "a leak is not a memory-safety violation"
+    if cat.startswith("ubsan") or san == "undefined":
+        return REJECT, f"{cat or 'undefined behaviour'} is not a memory-safety error"
+    if cat in NOT_MEMORY_SAFETY:
+        return REJECT, f"{cat} is not a memory-safety error"
+    if san not in MEMORY_SANITIZERS:
+        return REJECT, f"reported by {san or 'no sanitizer'}, not ASan/MSan"
+    return ACCEPT, f"{cat} reported by {san}"
+
+
+BUILTIN_POLICIES = {"builtin:any-confirmed": _any_confirmed,
+                    "builtin:memory-safety": _memory_safety}
+
+
+def resolve_policy(name: str):
+    name = (name or DEFAULT_POLICY).strip()
+    if name in BUILTIN_POLICIES:
+        return BUILTIN_POLICIES[name]
+    if name.startswith("python:"):
+        from cc_fuzzer_core.crash.verifiers import VerifierError, _python_verifier
+        try:
+            return _python_verifier(name[len("python:"):])
+        except VerifierError as e:
+            raise PolicyError(str(e)) from None
+    raise PolicyError(f"unknown submission policy {name!r}: expected "
+                      f"{', '.join(BUILTIN_POLICIES)} or python:module:callable")
+
+
+def _normalize(out) -> tuple:
+    if isinstance(out, bool):
+        return (ACCEPT if out else REJECT), ""
+    if isinstance(out, str):
+        v, reason = out, ""
+    elif isinstance(out, (tuple, list)) and len(out) == 2:
+        v, reason = out
+    elif isinstance(out, Mapping):
+        v, reason = out.get("verdict"), out.get("reason", "")
+    else:
+        raise PolicyError(f"a policy returned {type(out).__name__}, not a verdict")
+    if v not in (ACCEPT, REJECT):
+        raise PolicyError(f"a policy verdict must be {ACCEPT!r} or {REJECT!r}, got {v!r}")
+    return v, str(reason or "")
+
+
+def judge(result: TriageResult, *, config: Mapping | None = None, policy: str = "",
+          seen: Mapping | None = None) -> dict:
+    """The policy-verdict/v1 for one triage result."""
+    block = (config or {}).get("submission") or {}
+    if not isinstance(block, Mapping):
+        raise PolicyError("submission must be an object")
+    name = policy or block.get("policy") or DEFAULT_POLICY
+    fn = resolve_policy(name)
+
+    def out(v, reason):
+        return {"schema": POLICY_SCHEMA, "policy": name, "verdict": v, "reason": reason}
+
+    if result.status != CONFIRMED:
+        return out(REJECT, f"not confirmed ({result.status})")
+    cap = block.get("max_variants_per_stack_hash")
+    n = int((seen or {}).get(result.stack_hash, 0) or 0)
+    if cap is not None and n >= int(cap):
+        return out(REJECT, f"{n} variant(s) of {result.stack_hash} already submitted "
+                           f"(max_variants_per_stack_hash={cap})")
+    v, reason = _normalize(fn(result.as_dict(), {"config": dict(block), "seen": n,
+                                                 "policy": name}))
+    return out(v, reason)
+
+
 # ---------------------------------------------------------------------------
 # the patch seam
 # ---------------------------------------------------------------------------
 
 def check_patch(record: Mapping, patch_file: str, pov, *, project_root,
                 config: Mapping | None = None, harness: str = "",
-                stack_hash: str = "") -> _patch.PatchVerdict:
+                stack_hash: str = "",
+                sensitivity: Mapping | None = None) -> _patch.PatchVerdict:
     """Does this patch stop the PoV without breaking the program?
 
     `pov` is one path or a list: every variant of the bug the patch is meant
     to fix. With `patch.pov` / `patch.pov_after` configured, the PoV runs
     through the host's runner (e.g. `libCRS run-pov --rebuild-id {build}`)
-    instead of the local binary.
+    instead of the local binary. `sensitivity` (a triage result's) feeds the
+    built-in neighbours gate.
 
     Thin on purpose: the gates and their order live in cc_fuzzer_core.patch,
     and the order is the point (the PoV must crash BEFORE the patch, or
     everything after it measures nothing).
     """
     return _patch.validate(record, patch_file, pov, project_root=project_root,
-                           config=config, harness=harness, stack_hash=stack_hash)
+                           config=config, harness=harness, stack_hash=stack_hash,
+                           sensitivity=sensitivity)
 
 
 # ---------------------------------------------------------------------------
@@ -283,17 +462,19 @@ def _cmd_triage(a):
             else {"verify_binary": a.verify_binary}
         r = triage(record, a.crash, harness=a.harness, config=cfg, campaign=c,
                    finding_id=a.finding_id, do_minimize=not a.no_minimize,
-                   do_sensitivity=not a.no_sensitivity)
+                   do_sensitivity=not a.no_sensitivity, policy=a.policy,
+                   delta_range=a.delta or None)
     except Exception as e:  # noqa: BLE001 - the CLI reports, it does not raise
         print(f"error: {type(e).__name__}: {e}", file=sys.stderr)
         return 2
     print(json.dumps(r.as_dict(), indent=2) if a.json else
           f"{r.status}: {r.reason}\n  pov {r.pov} ({r.original_size} -> {r.size} bytes)\n"
           f"  bug {r.stack_hash} {r.category} [{r.evidence_grade} via {r.evidence_source}]\n"
-          f"  submittable: {r.submittable}"
+          f"  submittable: {r.submittable}; policy {r.policy_verdict.get('verdict')}"
+          f" ({r.policy_verdict.get('reason')})"
           + (f"\n  bytes {r.sensitivity['mask']}  (# load-bearing, ~ constrained, . free)"
              if r.sensitivity else ""))
-    return 0 if r.submittable else 1
+    return 0 if r.should_submit else 1
 
 
 def register_cli(subparsers):
@@ -307,6 +488,9 @@ def register_cli(subparsers):
     v.add_argument("--finding-id", default="", help="also write the finding marker")
     v.add_argument("--no-minimize", action="store_true")
     v.add_argument("--no-sensitivity", action="store_true")
+    v.add_argument("--delta", default="", help="diff file or git range: report delta relevance")
+    v.add_argument("--policy", default="", help="submission policy (default: config, "
+                                                 "then builtin:any-confirmed)")
     v.add_argument("--config")
     v.add_argument("--json", action="store_true")
     v.set_defaults(func=_cmd_triage)

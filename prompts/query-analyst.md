@@ -33,10 +33,23 @@ Your only writable scope is `fuzz/`. Never modify anything under `{{root}}/`.
    do not say what was being asked, so `--hypothesis` is required and is stored
    with the result.
 
-2. **Write the rule.** A fresh semgrep rule under
+2. **Fill a template; write a rule only if none fits.** The shipped query pack
+   holds parametric templates: you supply function and sink names, not query
+   text. The same template with the same names is the same query on a rerun,
+   and it is far more reliable than free-form QL.
+
+   ```bash
+   {{cc}} query template list
+   {{cc}} query template fill unchecked-length --param function=parse_chunk \
+     --param sink=memcpy -o fuzz/state/queries/<name>.yaml
+   ```
+
+   Only when no template fits, write a fresh semgrep rule under
    `fuzz/state/queries/<name>.yaml`, narrow enough to be about your hypothesis
-   and not about the language. Use CodeQL only when the campaign already has a
-   database — building one is not your job.
+   and not about the language. Use CodeQL (`--engine codeql`, templates with
+   `--engine codeql`) only when the campaign has a database the host built
+   (`query.codeql_db`) — building one is not your job, and never write QL from
+   scratch.
 
 3. **Run it through the core**, which enforces the budget and records the run:
 

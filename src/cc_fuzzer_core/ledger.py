@@ -36,7 +36,17 @@ usage_from_transcript(path) sums a JSONL transcript's assistant-message usage
 the same usage). It knows the transcript shape, not the host: the host adapter
 only hands over a path.
 
-CLI: cc-fuzzer ledger append|spend|show|reconcile [--json]
+Scopes and the guard: a row may carry a `scope` ("find", "patch", ...) so one
+campaign holds several independent caps; spend(scope=...) counts only that
+scope's rows. guard(campaign, scope=, cap_usd=, reserve=) raises
+errors.CapReached once spend reaches cap_usd * (1 - reserve) -- the reserve is
+held back so the last planned call still fits. The guard is ADVISORY: when a
+gateway owns the budget (a LiteLLM max_budget key), local totals drift from
+the provider's accounting, so set it to trip before the provider does, not
+instead of it. The provider's own refusal is errors.BudgetExhausted, recorded
+here as a `budget_exhausted` event so the log shows where spend stopped.
+
+CLI: cc-fuzzer ledger append|spend|show|reconcile|guard [--json]
 """
 from __future__ import annotations
 
@@ -102,7 +112,8 @@ def agent_of(row: dict) -> str:
     return row.get("agent_called") or row.get("agent") or ""
 
 
-def _fields(agent: str, usage: Usage, source: str, call_id: str | None, transcript: str | None) -> dict:
+def _fields(agent: str, usage: Usage, source: str, call_id: str | None, transcript: str | None,
+            scope: str | None = None) -> dict:
     d = {"agent_called": agent, "tokens_in": int(usage.tokens_in), "tokens_out": int(usage.tokens_out)}
     if usage.cache_read:
         d["cache_read"] = int(usage.cache_read)
@@ -115,6 +126,8 @@ def _fields(agent: str, usage: Usage, source: str, call_id: str | None, transcri
         d["call_id"] = call_id
     if transcript:
         d["transcript"] = str(transcript)
+    if scope:
+        d["scope"] = scope
     return d
 
 
@@ -129,7 +142,8 @@ def _best(rows):
 
 
 def append(campaign, *, agent: str, usage: Usage, source: str, call_id: str | None = None,
-           transcript: str | None = None, now: float | None = None) -> Appended:
+           transcript: str | None = None, now: float | None = None,
+           scope: str | None = None) -> Appended:
     """Record one agent call. `campaign` is a Campaign or a state dir.
     Host sources must name the call (call_id); an orchestrator row need not.
     A call_id already recorded with at least this many total tokens is a
@@ -150,7 +164,8 @@ def append(campaign, *, agent: str, usage: Usage, source: str, call_id: str | No
                 if usage.total <= Usage.of_row(best).total:
                     return Appended(best, False)
                 tick = same[0].get("tick")
-        row = log.append(EVENT, _fields(agent, usage, source, call_id, transcript), now=now, tick=tick)
+        row = log.append(EVENT, _fields(agent, usage, source, call_id, transcript, scope),
+                         now=now, tick=tick)
         return Appended(row, True)
 
 
@@ -258,10 +273,12 @@ class Spend:
         }
 
 
-def spend(campaign, *, since_ts: int = 0, model_map=None, rows=None) -> Spend:
+def spend(campaign, *, since_ts: int = 0, model_map=None, rows=None,
+          scope: str | None = None) -> Spend:
     """Priced spend over the counted agent_call rows with ts >= since_ts.
     `campaign` is a Campaign or a state dir; `model_map` defaults to
-    models.load(state dir); `rows` (the parsed log) skips re-reading it."""
+    models.load(state dir); `rows` (the parsed log) skips re-reading it.
+    `scope` counts only rows tagged with that scope (None: every row)."""
     from cc_fuzzer_core import models
     sd = _state_dir(campaign)
     mm = model_map if model_map is not None else models.load(sd)
@@ -273,6 +290,8 @@ def spend(campaign, *, since_ts: int = 0, model_map=None, rows=None) -> Spend:
         except (TypeError, ValueError):
             ts = 0
         if ts < since_ts:
+            continue
+        if scope is not None and (r.get("scope") or "") != scope:
             continue
         if status == REPLACED:
             sp.replaced += 1
@@ -409,7 +428,84 @@ def reconcile(campaign, *, now: float | None = None) -> list[Reconciled]:
 
 
 # ---------------------------------------------------------------------------
-# CLI: cc-fuzzer ledger append | spend | show | reconcile
+# the advisory guard, and the provider's refusal
+# ---------------------------------------------------------------------------
+
+EXHAUSTED_EVENT = "budget_exhausted"
+
+
+@dataclass(frozen=True)
+class Guard:
+    scope: str
+    spent: float
+    cap: float
+    reserve: float
+
+    @property
+    def limit(self) -> float:
+        return self.cap * (1.0 - self.reserve)
+
+    @property
+    def allowed(self) -> bool:
+        return self.spent < self.limit
+
+    @property
+    def remaining(self) -> float:
+        return max(0.0, self.limit - self.spent)
+
+    def as_dict(self) -> dict:
+        return {"scope": self.scope, "spent_usd": round(self.spent, 6),
+                "cap_usd": self.cap, "reserve": self.reserve,
+                "limit_usd": round(self.limit, 6), "remaining_usd": round(self.remaining, 6),
+                "allowed": self.allowed}
+
+
+def check(campaign, *, cap_usd: float, reserve: float = 0.0, scope: str | None = None,
+          since_ts: int = 0) -> Guard:
+    """Where spend stands against a cap, without raising."""
+    try:
+        cap = float(cap_usd)
+        res = float(reserve)
+    except (TypeError, ValueError):
+        raise LedgerError("cap and reserve must be numbers") from None
+    if cap <= 0:
+        raise LedgerError("cap must be positive")
+    if not 0.0 <= res < 1.0:
+        raise LedgerError("reserve is a fraction in [0, 1)")
+    sp = spend(campaign, since_ts=since_ts, scope=scope)
+    return Guard(scope or "", sp.usd, cap, res)
+
+
+def guard(campaign, *, cap_usd: float, reserve: float = 0.0, scope: str | None = None,
+          since_ts: int = 0) -> Guard:
+    """Raise errors.CapReached once spend reaches cap_usd * (1 - reserve).
+
+    Advisory: trip before the provider does, never instead of it.
+    """
+    from cc_fuzzer_core.errors import CapReached
+    g = check(campaign, cap_usd=cap_usd, reserve=reserve, scope=scope, since_ts=since_ts)
+    if not g.allowed:
+        where = f"scope {g.scope!r} " if g.scope else ""
+        raise CapReached(
+            f"spend {g.spent:.4f} USD reached the {where}limit {g.limit:.4f} "
+            f"(cap {g.cap} minus reserve {g.reserve:.0%})",
+            scope=g.scope, spent=g.spent, limit=g.limit)
+    return g
+
+
+def record_exhausted(campaign, *, agent: str, reason: str, scope: str | None = None,
+                     now: float | None = None) -> dict:
+    """Write the provider's refusal into the log. Not an agent_call: it cost
+    nothing, and spend must not count it."""
+    fields = {"agent_called": agent, "reason": str(reason)[:500]}
+    if scope:
+        fields["scope"] = scope
+    with events.locked(_state_dir(campaign)) as log:
+        return log.append(EXHAUSTED_EVENT, fields, now=now)
+
+
+# ---------------------------------------------------------------------------
+# CLI: cc-fuzzer ledger append | spend | show | reconcile | guard
 # ---------------------------------------------------------------------------
 
 def _campaign():
@@ -520,6 +616,25 @@ def _cmd_show(a):
     return 0
 
 
+def _cmd_guard(a):
+    c, code = _campaign()
+    if c is None:
+        return code or 2
+    from cc_fuzzer_core import models
+    try:
+        g = check(c, cap_usd=a.cap, reserve=a.reserve, scope=a.scope, since_ts=a.since)
+    except (LedgerError, models.ModelsError) as e:
+        sys.stderr.write(f"ledger: {e}\n")
+        return 2
+    if a.json:
+        print(json.dumps(g.as_dict(), indent=2))
+    else:
+        print(f"{'allowed' if g.allowed else 'NOT allowed'}: {_money(g.spent)} of "
+              f"{_money(g.limit)} (cap {_money(g.cap)}, reserve {g.reserve:.0%})"
+              + (f" scope {g.scope}" if g.scope else ""))
+    return 0 if g.allowed else 1
+
+
 def register_cli(subparsers):
     from cc_fuzzer_core.cli import add_subsystem
 
@@ -546,6 +661,14 @@ def register_cli(subparsers):
     v.add_argument("--counted", action="store_true", help="only the rows spend counts")
     v.add_argument("--json", action="store_true")
     v.set_defaults(func=_cmd_show)
+    v = verbs.add_parser("guard", help="exit 0 while spend is under cap minus reserve "
+                                       "(gate contract: any non-zero = not allowed)")
+    v.add_argument("--cap", type=float, required=True, help="cap in USD")
+    v.add_argument("--reserve", type=float, default=0.0, help="fraction held back, e.g. 0.1")
+    v.add_argument("--scope", default=None)
+    v.add_argument("--since", type=int, default=0)
+    v.add_argument("--json", action="store_true")
+    v.set_defaults(func=_cmd_guard)
     v = verbs.add_parser("reconcile", help="re-read host-hook transcripts; append a replacing row where usage grew")
     v.add_argument("--json", action="store_true")
     v.set_defaults(func=_cmd_reconcile)

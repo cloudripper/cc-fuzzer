@@ -11,6 +11,11 @@ Range auto-pick: main..HEAD when main exists and HEAD isn't main, else
 master..HEAD likewise, else HEAD~30..HEAD. `<base>..<tip>` and
 `<base>...<tip>` are accepted; both ends must resolve.
 
+relevance(frames, targets) says whether a crash's frames land in what a diff
+changed -- reported for triage (crs.triage(delta_range=...)), never used to
+filter: a crash far from the diff may still be its fault through data flow,
+so the decision belongs to the submission policy.
+
 git resolves through cc_fuzzer_core.tools.which.
 """
 from __future__ import annotations
@@ -30,6 +35,8 @@ from cc_fuzzer_core.paths import Campaign, CampaignError, campaign as _campaign
 SCHEMA = "delta-targets/v1"
 _DIFF_FILE_RE = re.compile(r"^diff --git a/(.+) b/(.+)$")
 _HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@(.*)$")
+_PLUS_FILE_RE = re.compile(r"^\+\+\+ (?:b/)?(.+?)(?:\t.*)?$")
+RELEVANCE_SCHEMA = "delta-relevance/v1"
 
 
 class DeltaError(RuntimeError):
@@ -64,6 +71,12 @@ def parse_diff(text: str) -> list[dict]:
         if line.startswith("deleted file"):
             kind = "deleted"
             continue
+        m = _PLUS_FILE_RE.match(line)
+        if m:
+            # A plain unified diff (no `diff --git` header) names the file here.
+            if m.group(1) != "/dev/null":
+                current_file = m.group(1)
+            continue
         m = _HUNK_RE.match(line)
         if m and current_file:
             start = int(m.group(1))
@@ -73,6 +86,79 @@ def parse_diff(text: str) -> list[dict]:
             targets.append({"file": current_file, "function_context": m.group(3).strip() or None,
                             "lines_changed": [start, end], "kind": kind})
     return targets
+
+
+def targets_of(delta, *, project_root=None) -> list[dict]:
+    """Targets from a diff FILE, diff text, or (with project_root) a git range."""
+    if isinstance(delta, (list, tuple)):
+        return list(delta)
+    text = None
+    p = Path(str(delta))
+    if "\n" not in str(delta) and p.is_file():
+        text = p.read_text(errors="replace")
+    elif "\n" in str(delta):
+        text = str(delta)
+    if text is not None:
+        return parse_diff(text)
+    if project_root is None:
+        raise DeltaError(f"{delta!r} is not a diff file, and a git range needs a project root")
+    r = _git(Path(project_root), "diff", "--unified=0", str(delta))
+    if r.returncode != 0:
+        raise DeltaError(f"git diff {delta} failed: "
+                         f"{r.stderr.decode(errors='replace').strip()[:200]}")
+    return parse_diff(r.stdout.decode(errors="replace"))
+
+
+_FRAME_LOC_RE = re.compile(r"^(?P<fn>.*?) @ (?P<file>.+?)(?::(?P<line>\d+))?$")
+_IDENT_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_:~]*)\s*\(")
+
+
+def _same_file(frame_file: str, diff_file: str) -> bool:
+    """A frame's path is usually absolute (/src/proj/lib/x.c) and a diff's
+    relative (lib/x.c): match on whole trailing path components."""
+    f = frame_file.replace("\\", "/").split("/")
+    d = [c for c in diff_file.replace("\\", "/").split("/") if c not in ("", ".")]
+    return bool(d) and len(f) >= len(d) and f[-len(d):] == d
+
+
+def _function_of(context) -> str:
+    m = _IDENT_RE.search(context or "")
+    return m.group(1).split("::")[-1] if m else ""
+
+
+def relevance(frames, targets) -> dict:
+    """delta-relevance/v1 for a crash's frames ("fn @ file:line", top first).
+
+      frames_in_diff          frames whose line falls inside a changed hunk
+      functions_in_diff       frames whose function a hunk names as its context
+      nearest_frame_distance  lines from the closest frame in a changed file to
+                              a changed hunk (0 = inside); None if no frame is
+                              in a changed file
+      touches_diff            any frame inside a hunk or in a changed function
+    """
+    in_diff, in_func, nearest = [], [], None
+    for fr in frames or ():
+        m = _FRAME_LOC_RE.match(fr or "")
+        if not m:
+            continue
+        fn, file, line = m.group("fn"), m.group("file"), m.group("line")
+        for t in targets or ():
+            if not _same_file(file, t.get("file", "")):
+                continue
+            if fn and fn == _function_of(t.get("function_context")) and fr not in in_func:
+                in_func.append(fr)
+            if line is None:
+                continue
+            lo, hi = t.get("lines_changed") or (0, 0)
+            n = int(line)
+            d = 0 if lo <= n <= hi else min(abs(n - lo), abs(n - hi))
+            nearest = d if nearest is None else min(nearest, d)
+            if d == 0 and fr not in in_diff:
+                in_diff.append(fr)
+    return {"schema": RELEVANCE_SCHEMA, "touches_diff": bool(in_diff or in_func),
+            "frames_in_diff": in_diff, "functions_in_diff": in_func,
+            "nearest_frame_distance": nearest,
+            "files_changed": len({t.get("file") for t in targets or ()})}
 
 
 def _git(root: Path, *args) -> subprocess.CompletedProcess:

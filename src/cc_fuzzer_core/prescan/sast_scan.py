@@ -510,23 +510,47 @@ def run_codeql(target_root: Path, db_path: Optional[Path], query_suite: str,
     return run, findings
 
 
-def _parse_sarif(sarif_path: Path, target_root: Path) -> List[dict]:
+def _sarif_path(uri: str, target_root: Path) -> str:
+    """A SARIF artifact URI as a path relative to target_root when it lies
+    under it (file:// URIs resolved), else as given."""
+    from urllib.parse import unquote, urlparse
+    u = uri or ""
+    if u.startswith("file:"):
+        u = unquote(urlparse(u).path)
+    p = Path(u)
+    if not p.is_absolute():
+        return str(p)
     try:
-        doc = json.loads(sarif_path.read_text())
+        return str(p.resolve().relative_to(Path(target_root).resolve()))
     except Exception:
-        return []
+        return u
+
+
+def normalize_sarif(sarif, target_root) -> List[dict]:
+    """SARIF 2.1.0 (a path, a JSON string, or a parsed dict) -> the core's
+    finding dicts: {tool, rule_id, severity, cwe, path, line, end_line,
+    message}. Results without a location are dropped. Public: a framework that
+    builds its own CodeQL database hands its SARIF here."""
+    if isinstance(sarif, dict):
+        doc = sarif
+    else:
+        try:
+            text = sarif if isinstance(sarif, str) and sarif.lstrip().startswith("{") \
+                else Path(sarif).read_text()
+            doc = json.loads(text)
+        except Exception:
+            return []
     findings: List[dict] = []
     for run in doc.get("runs") or []:
+        driver = (run.get("tool") or {}).get("driver") or {}
+        tool = (driver.get("name") or "codeql").strip().lower() or "codeql"
         # rule -> cwe / default severity lookup
         rule_meta: Dict[str, dict] = {}
-        driver = (run.get("tool") or {}).get("driver") or {}
         for rule in driver.get("rules") or []:
             rid = rule.get("id") or ""
             tags = ((rule.get("properties") or {}).get("tags") or [])
-            cwes = [t.replace("external/cwe/", "").upper().replace("CWE-", "CWE-")
-                    for t in tags if "cwe" in t.lower()]
             # normalize "external/cwe/cwe-367" -> "CWE-367"
-            cwes = [("CWE-" + c.split("-")[-1]) for c in cwes if c]
+            cwes = [("CWE-" + t.split("-")[-1]) for t in tags if "cwe" in t.lower()]
             rule_meta[rid] = {
                 "cwe": cwes,
                 "severity": _SARIF_LEVEL.get(
@@ -534,7 +558,7 @@ def _parse_sarif(sarif_path: Path, target_root: Path) -> List[dict]:
                     "medium"),
             }
         for res in run.get("results") or []:
-            rid = res.get("ruleId") or "codeql.unknown"
+            rid = res.get("ruleId") or f"{tool}.unknown"
             level = res.get("level")
             sev = _SARIF_LEVEL.get(level, rule_meta.get(rid, {}).get("severity", "medium"))
             locs = res.get("locations") or []
@@ -545,21 +569,70 @@ def _parse_sarif(sarif_path: Path, target_root: Path) -> List[dict]:
             region = phys.get("region") or {}
             start = region.get("startLine") or 0
             end = region.get("endLine") or start
-            try:
-                path = str(Path(uri).resolve().relative_to(target_root))
-            except Exception:
-                path = uri
             findings.append({
-                "tool": "codeql",
+                "tool": tool,
                 "rule_id": rid,
                 "severity": sev,
                 "cwe": rule_meta.get(rid, {}).get("cwe", []),
-                "path": path,
+                "path": _sarif_path(uri, target_root),
                 "line": int(start),
                 "end_line": int(end),
                 "message": ((res.get("message") or {}).get("text") or "").strip()[:500],
             })
     return findings
+
+
+def _parse_sarif(sarif_path: Path, target_root: Path) -> List[dict]:
+    return normalize_sarif(sarif_path, target_root)
+
+
+# severity -> SARIF level, the inverse of _SARIF_LEVEL (critical folds into error)
+_LEVEL_OF = {"critical": "error", "high": "error", "medium": "warning", "low": "note",
+             "info": "none"}
+
+
+def export_sarif(findings, *, tool_name: str = "cc-fuzzer", tool_version: str = "",
+                 information_uri: str = "https://github.com/cloudripper/cc-fuzzer") -> dict:
+    """The core's findings (normalize_sarif's shape, or query hits with
+    file/line/message/rule_id) as one SARIF 2.1.0 run, so candidates can leave
+    the core in the format frameworks standardise on. Rules are deduplicated;
+    a CWE list becomes external/cwe tags. normalize_sarif(export_sarif(f))
+    returns f for normalized findings."""
+    if not tool_version:
+        try:
+            from cc_fuzzer_core import __version__ as tool_version  # noqa: F811
+        except Exception:
+            tool_version = ""
+    rules: Dict[str, dict] = {}
+    results: List[dict] = []
+    for f in findings or []:
+        rid = str(f.get("rule_id") or f.get("check_id") or f"{tool_name}.finding")
+        sev = str(f.get("severity") or "medium").lower()
+        cwes = [str(c) for c in (f.get("cwe") or [])]
+        if rid not in rules:
+            rules[rid] = {"id": rid,
+                          "defaultConfiguration": {"level": _LEVEL_OF.get(sev, "warning")},
+                          "properties": {"tags": [f"external/cwe/cwe-{c.split('-')[-1]}"
+                                                  for c in cwes]}}
+        path = str(f.get("path") or f.get("file") or "")
+        line = int(f.get("line") or f.get("start_line") or 0)
+        region = {"startLine": max(line, 1)}
+        if f.get("end_line"):
+            region["endLine"] = int(f["end_line"])
+        results.append({
+            "ruleId": rid,
+            "level": _LEVEL_OF.get(sev, "warning"),
+            "message": {"text": str(f.get("message") or rid)},
+            "locations": [{"physicalLocation": {"artifactLocation": {"uri": path},
+                                                "region": region}}],
+        })
+    driver = {"name": tool_name, "informationUri": information_uri,
+              "rules": list(rules.values())}
+    if tool_version:
+        driver["version"] = str(tool_version)
+    return {"$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+            "version": "2.1.0",
+            "runs": [{"tool": {"driver": driver}, "results": results}]}
 
 
 # ---------------------------------------------------------------------------

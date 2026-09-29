@@ -76,13 +76,63 @@ r = crs.triage({"harness_binary": "/out/parser"}, crash, harness="parser", confi
 r.replay_grade, r.evidence_grade, r.evidence_source  # "weak", "strong", "oracle"
 ```
 
+**Which binary is the verify binary.** The OSS-Fuzz builder builds `verify`
+with `SANITIZER=address` (it must detect at least what the fuzzing binary
+detects; a UBSan-only binary turns real overflows into `not_a_crash`). If your
+framework already ships a better replay target, name it instead of building
+one:
+
+```json
+{"build": {"verify_variant_source": "debug"}}
+```
+
+The record's `debug_binary` then becomes the verify binary and the verify
+variant is not built (`spec()["provided"]`). A framework debug build still
+links the fuzzer driver, so it grades `weak` (set
+`build.verify_variant_link_mode: "standalone-main"` if yours does not); that is
+the case an authoritative oracle exists to upgrade.
+
 Only a confirmation upgrades; a rejection or an inconclusive answer adds
 nothing, and a `strong` replay is never downgraded. `poc-realism` cannot be
 declared authoritative: it checks an agent's work, it is not an oracle. The
 finding marker records `evidence_source` too, so the upgrade is auditable.
 
+**True is not the same as worth submitting.** `submittable` says the finding
+is true. Whether it is worth submitting depends on your scoring oracle, so it
+is a policy hook, and **`r.should_submit`** is both:
+
+```python
+cfg["submission"] = {"policy": "builtin:memory-safety",     # or python:mod:fn
+                     "max_variants_per_stack_hash": 2}
+r = crs.triage(record, crash, harness="parser", config=cfg, seen=already_submitted)
+r.policy_verdict   # {"schema": "policy-verdict/v1", "verdict": "accept"|"reject", "reason", "policy"}
+```
+
+`builtin:any-confirmed` (default) accepts every confirmed finding;
+`builtin:memory-safety` accepts ASan/MSan memory errors and rejects `ubsan-*`,
+`oom`, `timeout`, leaks and `generic-crash`. A custom policy gets the whole
+result dict (including `sanitizer`, `category`, `delta_relevance`) and returns
+a bool, `"accept"`/`"reject"`, a `(verdict, reason)` pair, or a dict. The core
+keeps no submission state: pass `seen` ({stack_hash: count}) to enforce
+`max_variants_per_stack_hash`.
+
+**Delta mode.** Pass the diff and triage reports whether the crash lands in
+it; it never filters on it (a crash far from the diff can still be its fault
+through data flow, so that call belongs to the policy):
+
+```python
+r = crs.triage(record, crash, harness="parser", config=cfg, delta_range="/work/ref.diff")
+r.delta_relevance   # {"touches_diff", "frames_in_diff", "functions_in_diff",
+                    #  "nearest_frame_distance", "files_changed"}
+```
+
+`delta_range` is a diff file (git or plain unified), diff text, or a git
+range when you pass a campaign. An unreadable one is reported as `error`,
+not raised.
+
 For a downstream consumer (a patcher in another container) the result also
-carries `pov_sha256` and `original_sha256` to key records on, `frames` (top
+carries `pov_sha256` and `original_sha256` to key records on, `sanitizer`
+(which detector reported it), `frames` (top
 first, up to 12) and `sanitizer_excerpt` (the report from its header through
 `SUMMARY:`, bounded to 60 lines / 6000 chars), so nothing has to be re-run to
 describe the bug.
@@ -210,6 +260,51 @@ Anything that is not an answer (no JSON, a timeout) is `inconclusive`, never a
 pass. Placeholders are `{patch}`, `{pov}`, `{harness}`, `{build}`; any other
 is an error rather than an empty string.
 
+**Steps that did not run.** "Not configured", "ran and passed" and "ran with
+nothing to do" are different facts (libCRS `apply-patch-test` succeeds, by
+contract, when the project has no test script). A policy per step decides
+what each is worth:
+
+```json
+{"patch": {"steps": {"build": "required", "test": "preferred"}}}
+```
+
+| policy | step did not run |
+|---|---|
+| `required` | gate fails: `inconclusive` |
+| `preferred` | gate passes; listed in `v.unverified_steps` |
+| `optional` | gate passes silently (default for every step) |
+
+A command reports which happened with a last stdout line
+`{"schema": "step-result/v1", "ok": true, "ran": false, "reason": "no test script"}`
+(optionally `"value"` for the build step's `{build}`). Plain exit codes keep
+working.
+
+**Extra gates.** More ordered checks after `tests`, against the patched build,
+with the same command contract (and the same policies, default `required`).
+A failure is its own verdict, `extra_gate_failed`:
+
+```json
+{"patch": {"extra_gates": [
+  {"name": "robust", "command": "command:scripts/robust-fuzz.sh {build} {pov} 420",
+   "policy": "preferred"},
+  {"name": "neighbours", "neighbours": true}]}}
+```
+
+Every gate gets `{stack_hash}` besides the usual placeholders, and the
+environment `CC_FUZZER_{BUILD,POV,POVS,STACK_HASH,TOUCHED_FUNCTIONS,HARNESS,PATCH}`
+(touched functions come from the diff's hunk headers, `patch scope`).
+
+- `scripts/robust-fuzz.sh` (`cc-fuzzer patch robust-fuzz`) is the reference
+  gate. It fuzzes the patched libFuzzer build from the PoV and a corpus for N
+  seconds, and fails on a crash that is the original bug or sits in a
+  function the patch touched. Crashes elsewhere are reported and pass.
+- `{"neighbours": true}` replays single-byte variants of the PoV at every
+  byte the sensitivity map marked `#` or `~` and at the neighbour offsets.
+  It catches a patch narrower than the bug (one that rejects the exact bad
+  value but not the range around it). Pass the triage result's map:
+  `crs.check_patch(..., sensitivity=r.sensitivity)`.
+
 `cc-fuzzer patch scope fix.diff` reports what the diff touches and flags a
 patch that only deletes code — the shape of "fixed" by removing the path that
 reaches the bug.
@@ -228,6 +323,24 @@ crs.delta_targets(campaign, range_) # what a diff touches
 imply one.** Generating seeds, harnesses and mutators is a model's job.
 cc-fuzzer supplies the *prompts* for that (§6) plus the deterministic safety
 and harvesting above; you supply the model call.
+
+### 5.1 Queries and SARIF
+
+CodeQL runs only against a database **you** built (most frameworks build one as
+a target-build step); the core never builds one:
+
+```json
+{"query": {"engines": ["codeql", "semgrep"], "codeql_db": "/out/codeql/db"}}
+```
+
+Queries come from a shipped pack of parametric templates (`rules/query-pack`):
+the agent fills in function and sink names instead of writing QL, and the same
+names give the same query on a rerun (`cc-fuzzer query template list|fill`).
+
+SARIF goes both ways: `sast_scan.normalize_sarif(path_or_doc, root)` turns any
+SARIF 2.1.0 into the core's finding dicts, and `sast_scan.export_sarif(findings)`
+emits SARIF 2.1.0 so candidates can leave the core in the format frameworks
+standardise on.
 
 ## 6. Prompts
 
@@ -375,6 +488,71 @@ ledger.append(c, agent="crash-triager",
 ```
 
 `call_id` makes it idempotent — the same call reported twice counts once.
+
+**When the provider says the money is gone.** If a gateway owns the budget (a
+LiteLLM key with `max_budget`), exhaustion arrives as an API error mid-run.
+`loop.step` turns it into `errors.BudgetExhausted`, writes a
+`budget_exhausted` event, and never retries it. Wrap your own model calls the
+same way:
+
+```python
+from cc_fuzzer_core import errors
+try:
+    reply = errors.call(my_model_call, prompt, attempts=3)   # retries transient errors only
+except errors.BudgetError:
+    fall_through_to_deterministic_work()   # fuzz, replay, minimize, validate
+```
+
+**Catch it; do not exit.** The rest of the run still has fuzzing, replay,
+minimization and patch validation to do, and none of them need a model.
+
+**Scopes and an advisory guard.** Tag rows with a scope so one campaign holds
+several caps, and check a cap with a reserve held back so the last planned
+call still fits:
+
+```python
+ledger.append(c, agent=..., usage=..., source="driver", call_id=..., scope="find")
+ledger.guard(c, scope="find", cap_usd=50.0, reserve=0.1)   # raises CapReached at 45.0
+```
+
+```bash
+cc-fuzzer ledger guard --scope find --cap 50 --reserve 0.1   # gate contract: non-zero = not allowed
+```
+
+Local totals drift from the provider's accounting (pricing tables, cache
+billing, retries you never saw), so the guard should trip **before** the
+provider does, not **instead** of it.
+
+## 10.1 Export schemas
+
+What crosses a container boundary is versioned, and its shape is pinned by
+goldens (`tests/golden/exports/`): a change to the shape is a new version.
+
+| schema | from | notable fields |
+|---|---|---|
+| `triage-export/v1` | `TriageResult.as_dict()` | status, should_submit, policy_verdict, stack_hash, category, sanitizer, frames, sanitizer_excerpt, pov_sha256, original_sha256, evidence_grade/source, sensitivity, delta_relevance, determinism |
+| `patch-export/v1` | `PatchVerdict.as_dict()` | verdict (= status), steps (with `ran`, `policy`), unverified_steps, povs (before/after), scope (with concerns, functions), build, determinism |
+| `query-run/v1` | `query.run` | unchanged |
+
+Nested documents carry their own versions: `policy-verdict/v1`,
+`input-sensitivity/v1`, `delta-relevance/v1`, `determinism/v1`,
+`crash-replay/v1`, `minimized-input/v1`.
+
+## 11.1 Determinism
+
+The numbers that decide a result are configuration, and every result
+(`r.determinism`, `v.determinism`) echoes the values it was produced with:
+
+```json
+{"determinism": {"replay_attempts": 3, "replay_timeout_s": 30,
+                 "minimize_max_probes": 400, "minimize_max_rounds": 40,
+                 "sensitivity_max_probes": 1024, "fuzzer_seed": 1337}}
+```
+
+An explicit argument wins over config, config over the defaults. The fuzzer
+seed reaches extra gates as `CC_FUZZER_FUZZER_SEED` (the reference fuzz gate
+passes it to libFuzzer as `-seed`). Reproducible runs also need **pinned model
+IDs** in `data/models.json`: a dated model ID, not an alias that moves.
 
 ## 12. Smoke test your integration
 

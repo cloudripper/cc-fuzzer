@@ -153,6 +153,248 @@ class RunnerContractTest(unittest.TestCase):
             patch.validate({}, str(self.d / "p.diff"), [], project_root=self.d)
 
 
+def _sh(d: Path, name: str, body: str) -> str:
+    p = d / name
+    p.write_text("#!/bin/sh\n" + body + "\n")
+    p.chmod(0o755)
+    return str(p)
+
+
+class StepPolicyTest(unittest.TestCase):
+    """Not configured, ran and passed, and ran with nothing to do are three
+    different facts; the policy decides what each is worth."""
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.addCleanup(self.td.cleanup)
+        self.d = Path(self.td.name)
+        self.skip = _sh(self.d, "skip.sh", "echo '{\"schema\":\"step-result/v1\","
+                        "\"ok\":true,\"ran\":false,\"reason\":\"no test script\"}'")
+        self.passes = _sh(self.d, "ok.sh", "echo fine")
+        self.fails = _sh(self.d, "bad.sh", "echo nope >&2; exit 1")
+
+    def test_step_policy_matrix(self):
+        cases = {
+            # (situation, policy): (ok, ran)
+            ("unconfigured", patch.REQUIRED): (False, False),
+            ("unconfigured", patch.PREFERRED): (True, False),
+            ("unconfigured", patch.OPTIONAL): (True, False),
+            ("ran:false", patch.REQUIRED): (False, False),
+            ("ran:false", patch.PREFERRED): (True, False),
+            ("ran:false", patch.OPTIONAL): (True, False),
+            ("passes", patch.REQUIRED): (True, True),
+            ("fails", patch.OPTIONAL): (False, True),
+        }
+        argv = {"unconfigured": [], "ran:false": [self.skip], "passes": [self.passes],
+                "fails": [self.fails]}
+        for (situation, policy), want in cases.items():
+            with self.subTest(situation=situation, policy=policy):
+                st = patch.run_step("tests", argv[situation], cwd=self.d, timeout=10,
+                                    policy=policy)
+                self.assertEqual((st.ok, st.ran), want)
+                self.assertEqual(st.policy, policy)
+
+    def test_the_runner_reason_is_kept(self):
+        st = patch.run_step("tests", [self.skip], cwd=self.d, timeout=10,
+                            policy=patch.PREFERRED)
+        self.assertEqual(st.detail, "no test script")
+
+    def test_ok_with_a_failing_exit_is_not_ok(self):
+        liar = _sh(self.d, "liar.sh", "echo '{\"schema\":\"step-result/v1\",\"ok\":true}'; exit 3")
+        self.assertFalse(patch.run_step("build", [liar], cwd=self.d, timeout=10).ok)
+
+    def test_a_step_result_can_carry_the_build_value(self):
+        b = _sh(self.d, "b.sh", "echo compiling; echo '{\"schema\":\"step-result/v1\","
+                "\"ok\":true,\"value\":\"rb-9\"}'")
+        self.assertEqual(patch.run_step("build", [b], cwd=self.d, timeout=10).value, "rb-9")
+
+    def test_an_unknown_policy_is_an_error(self):
+        with self.assertRaises(patch.PatchError):
+            patch.policies({"steps": {"test": "sometimes"}})
+
+    def _validate(self, test_cmd, steps):
+        (self.d / "p.diff").write_text("--- a/x.c\n+++ b/x.c\n@@\n-a\n+b\n")
+        (self.d / "a.bin").write_bytes(b"x")
+        cfg = {"patch": {"test": test_cmd, "steps": steps}}
+        return patch.validate({}, str(self.d / "p.diff"), str(self.d / "a.bin"),
+                              project_root=self.d, config=cfg,
+                              replay_fn=lambda p, ph, b: patch.PovRun(ph == "before", "h"))
+
+    def test_unverified_steps(self):
+        """A preferred step that did not run passes, and says so."""
+        v = self._validate(f"command:{self.skip}", {"test": "preferred"})
+        self.assertEqual(v.status, patch.FIXES, v.reason)
+        self.assertEqual(v.unverified_steps, ("tests",))
+        self.assertIn("not run: tests", v.reason)
+        self.assertEqual(v.as_dict()["unverified_steps"], ["tests"])
+
+    def test_a_required_step_that_did_not_run_is_inconclusive(self):
+        for cmd in ("", f"command:{self.skip}"):
+            with self.subTest(cmd=cmd):
+                v = self._validate(cmd, {"test": "required"})
+                self.assertEqual(v.status, patch.INCONCLUSIVE)
+                self.assertFalse(v.validated)
+
+    def test_the_default_policy_is_todays_behaviour(self):
+        v = self._validate("", {})
+        self.assertEqual(v.status, patch.FIXES)
+        self.assertEqual(v.unverified_steps, ())
+
+
+class ExtraGatesTest(unittest.TestCase):
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.addCleanup(self.td.cleanup)
+        self.d = Path(self.td.name)
+        (self.d / "p.diff").write_text(
+            "--- a/x.c\n+++ b/x.c\n@@ -3,1 +3,2 @@ int parse_len(const uint8_t *b)\n-a\n+b\n+c\n")
+        self.pov = self.d / "pov.bin"
+        self.pov.write_bytes(b"PX\x09Wzzzz")
+        self.log = self.d / "order.log"
+
+    def _gate(self, name, body):
+        return _sh(self.d, f"{name}.sh", f"echo {name} >> {self.log}\n{body}")
+
+    def _validate(self, gates, after=None, sensitivity=None, test=True):
+        cfg = {"patch": {"extra_gates": gates,
+                         "revert": f"command:{self._gate('revert', '')}"}}
+        if test:
+            cfg["patch"]["test"] = f"command:{self._gate('tests', '')}"
+        after = after or (lambda data: patch.PovRun(False))
+
+        def fn(p, phase, build):
+            if phase == "before":
+                return patch.PovRun(True, "h1")
+            return after(Path(p).read_bytes())
+        return patch.validate({}, str(self.d / "p.diff"), str(self.pov), project_root=self.d,
+                              config=cfg, replay_fn=fn, sensitivity=sensitivity)
+
+    def test_extra_gates_order(self):
+        """After tests, in order, before the revert; a failure is its own verdict."""
+        a = self._gate("a", 'echo "$CC_FUZZER_STACK_HASH $CC_FUZZER_TOUCHED_FUNCTIONS" >> ' + str(self.log))
+        b = self._gate("b", "exit 1")
+        v = self._validate([{"name": "a", "command": f"command:{a}"},
+                            {"name": "b", "command": f"command:{b}"}])
+        self.assertEqual(v.status, patch.GATE_FAILED)
+        self.assertIn("gate b failed", v.reason)
+        self.assertEqual(self.log.read_text().split("\n")[:5],
+                         ["tests", "a", "h1 parse_len", "b", "revert"])
+        self.assertEqual([st.name for st in v.steps][-3:], ["gate:a", "gate:b", "revert"])
+
+    def test_all_gates_pass(self):
+        a = self._gate("a", "true")
+        v = self._validate([{"name": "a", "command": f"command:{a}"}])
+        self.assertEqual(v.status, patch.FIXES, v.reason)
+
+    def test_a_preferred_gate_that_did_not_run_is_listed(self):
+        a = self._gate("a", "echo '{\"schema\":\"step-result/v1\",\"ok\":true,\"ran\":false}'")
+        v = self._validate([{"name": "a", "command": f"command:{a}", "policy": "preferred"}])
+        self.assertEqual(v.status, patch.FIXES)
+        self.assertEqual(v.unverified_steps, ("gate:a",))
+
+    def test_bad_gate_config_is_an_error(self):
+        for gates in ([{"command": "x"}], [{"name": "a"}],
+                      [{"name": "a", "command": "x", "neighbours": True}],
+                      [{"name": "a", "command": "x"}, {"name": "a", "command": "y"}],
+                      [{"name": "a", "command": "x", "policy": "maybe"}]):
+            with self.subTest(gates=gates), self.assertRaises(patch.PatchError):
+                patch.extra_gates({"extra_gates": gates})
+
+    SENS = {"mask": "##~#....", "neighbours": [{"stack_hash": "h2", "offsets": [3]}]}
+
+    def test_neighbours_catches_a_patch_narrower_than_the_bug(self):
+        """The patch rejects length 9 exactly; length 0xF6 still overflows."""
+        def narrow(data):
+            bug = data[:2] == b"PX" and data[3:4] == b"W" and data[2] > 8 and data[2] != 9
+            return patch.PovRun(bug, "h1")
+        v = self._validate([{"name": "neighbours", "neighbours": True}], after=narrow,
+                           sensitivity=self.SENS)
+        self.assertEqual(v.status, patch.GATE_FAILED)
+        self.assertIn("2^0xff", v.reason)
+
+    def test_neighbours_passes_a_real_fix_and_reports_crashes_elsewhere(self):
+        def fixed(data):
+            return patch.PovRun(data[3:4] == b"V", "h2")   # the neighbouring bug remains
+        v = self._validate([{"name": "neighbours", "neighbours": True}], after=fixed,
+                           sensitivity=self.SENS)
+        self.assertEqual(v.status, patch.FIXES, v.reason)
+        gate = [st for st in v.steps if st.name == "gate:neighbours"][0]
+        self.assertIn("crash elsewhere", gate.detail)
+
+    def test_neighbours_without_a_map_follows_its_policy(self):
+        v = self._validate([{"name": "neighbours", "neighbours": True}])
+        self.assertEqual(v.status, patch.INCONCLUSIVE)
+        v = self._validate([{"name": "neighbours", "neighbours": True, "policy": "preferred"}])
+        self.assertEqual((v.status, v.unverified_steps), (patch.FIXES, ("gate:neighbours",)))
+
+    def test_scope_reports_touched_functions(self):
+        self.assertEqual(patch.scope_of((self.d / "p.diff").read_text()).functions,
+                         ("parse_len",))
+
+
+class RobustFuzzTest(unittest.TestCase):
+    """The reference gate, against a stub that behaves like a libFuzzer binary:
+    with -artifact_prefix it writes a crash artifact; given a file it replays
+    it and prints a sanitizer report."""
+
+    STUB = r"""#!/bin/sh
+for a in "$@"; do case "$a" in -artifact_prefix=*) pre="${a#-artifact_prefix=}";; esac; done
+if [ -n "${pre:-}" ]; then printf '%s' "$ART" > "${pre}crash-1"; exit 1; fi
+if grep -q ORIG "$1"; then fn=parse_len; elif grep -q OTHER "$1"; then fn=legacy_codec; else exit 0; fi
+echo "==1==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x1" >&2
+echo "    #0 0x1 in $fn /src/x.c:5:3" >&2
+echo "SUMMARY: AddressSanitizer: heap-buffer-overflow /src/x.c:5:3 in $fn" >&2
+exit 1
+"""
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.addCleanup(self.td.cleanup)
+        self.d = Path(self.td.name)
+        self.fuzzer = self.d / "fuzzer"
+        self.fuzzer.write_text(self.STUB)
+        self.fuzzer.chmod(0o755)
+        self.pov = self.d / "pov"
+        self.pov.write_bytes(b"x")
+        from cc_fuzzer_core.crash import replay
+        report = ("    #0 0x1 in parse_len /src/x.c:5:3\n")
+        self.orig = replay.stack_hash(report, category="heap-buffer-overflow")
+
+    def _run(self, art, **kw):
+        os.environ["ART"] = art
+        self.addCleanup(os.environ.pop, "ART", None)
+        return patch.robust_fuzz(str(self.fuzzer), str(self.pov), 1, **kw)
+
+    def test_the_original_bug_fails_the_gate(self):
+        r = self._run("ORIG", stack_hash=self.orig)
+        self.assertFalse(r["ok"])
+        self.assertIn("original bug", r["reason"])
+
+    def test_a_crash_in_a_touched_function_fails_the_gate(self):
+        r = self._run("ORIG", stack_hash="other", touched=["parse_len"])
+        self.assertFalse(r["ok"])
+        self.assertIn("parse_len", r["reason"])
+
+    def test_a_crash_elsewhere_passes_and_is_reported(self):
+        r = self._run("OTHER", stack_hash=self.orig, touched=["parse_len"])
+        self.assertTrue(r["ok"], r["reason"])
+        self.assertIn("outside the patch", r["reason"])
+        self.assertEqual(r["schema"], "step-result/v1")
+
+    def test_a_missing_binary_fails(self):
+        self.assertFalse(patch.robust_fuzz(str(self.d / "nope"), str(self.pov), 1)["ok"])
+
+    def test_the_script_is_a_gate(self):
+        """scripts/robust-fuzz.sh prints step-result/v1 and follows the exit contract."""
+        import subprocess
+        script = Path(__file__).resolve().parents[1] / "scripts" / "robust-fuzz.sh"
+        env = {**os.environ, "ART": "ORIG", "CC_FUZZER_STACK_HASH": self.orig}
+        p = subprocess.run([str(script), str(self.fuzzer), str(self.pov), "1"],
+                           capture_output=True, text=True, env=env)
+        self.assertEqual(p.returncode, 1, p.stderr)
+        self.assertEqual(json.loads(p.stdout.strip().splitlines()[-1])["ok"], False)
+
+
 class PovCommandTest(unittest.TestCase):
     """The pov-run/v1 contract a host runner answers with."""
 

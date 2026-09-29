@@ -1,0 +1,93 @@
+{
+  "build": "rb-7",
+  "determinism": {
+    "fuzzer_seed": 1337,
+    "minimize_max_probes": 400,
+    "minimize_max_rounds": 40,
+    "replay_attempts": 3,
+    "replay_timeout_s": 30,
+    "schema": "determinism/v1",
+    "sensitivity_max_probes": 1024
+  },
+  "pov": "/work/pov.min",
+  "povs": [
+    {
+      "after": "no-crash",
+      "after_hash": "",
+      "before": "crash",
+      "detail": "",
+      "pov": "/work/pov.min",
+      "stack_hash": "c481acca1f401bf7"
+    }
+  ],
+  "reason": "PoV no longer reproduces and the tests still pass",
+  "schema": "patch-export/v1",
+  "scope": {
+    "added": 2,
+    "concerns": [],
+    "files": 1,
+    "functions": [
+      "write_chunk"
+    ],
+    "lines": 2,
+    "paths": [
+      "src/framed.c"
+    ],
+    "removed": 0
+  },
+  "seconds": 0.0,
+  "stack_hash": "c481acca1f401bf7",
+  "status": "fixes",
+  "steps": [
+    {
+      "detail": "",
+      "ok": true,
+      "policy": "",
+      "ran": true,
+      "seconds": 0.0,
+      "step": "before",
+      "value": ""
+    },
+    {
+      "detail": "",
+      "ok": true,
+      "policy": "required",
+      "ran": true,
+      "seconds": 0.0,
+      "step": "build",
+      "value": "rb-7"
+    },
+    {
+      "detail": "",
+      "ok": true,
+      "policy": "",
+      "ran": true,
+      "seconds": 0.0,
+      "step": "after",
+      "value": ""
+    },
+    {
+      "detail": "no test script",
+      "ok": true,
+      "policy": "preferred",
+      "ran": false,
+      "seconds": 0.0,
+      "step": "tests",
+      "value": ""
+    },
+    {
+      "detail": "8 variants, none reproduce the bug",
+      "ok": true,
+      "policy": "required",
+      "ran": true,
+      "seconds": 0.0,
+      "step": "gate:neighbours",
+      "value": ""
+    }
+  ],
+  "unverified_steps": [
+    "tests"
+  ],
+  "validated": true,
+  "verdict": "fixes"
+}

@@ -131,6 +131,41 @@ class SpecTest(unittest.TestCase):
             self.assertIsInstance(v["sanitizers"], list)
 
 
+class VerifySourceTest(unittest.TestCase):
+    """build.verify_variant_source: use a framework's build as the verify
+    binary instead of building one."""
+    CFG = {"build": {"verify_variant_source": "debug"}}
+    REC = {"harness_binary": "/out/parser", "debug_binary": "/out/debug/parser"}
+
+    def test_verify_variant_source(self):
+        rec = variants.with_verify_source(self.REC, self.CFG)
+        sel = variants.select(rec, variants.A_REPLAY, harness="parser")
+        self.assertEqual(sel.binary, "/out/debug/parser")
+        self.assertEqual(sel.variant, "verify")
+
+    def test_a_source_linking_the_fuzzer_driver_grades_weak(self):
+        """A framework debug build is a fuzzer build; weak is correct, and is
+        what an authoritative oracle exists to upgrade."""
+        rec = variants.with_verify_source(self.REC, self.CFG)
+        self.assertEqual(variants.select(rec, variants.A_VERIFY).evidence_grade, variants.WEAK)
+        cfg = {"build": {"verify_variant_source": "debug",
+                         "verify_variant_link_mode": "standalone-main"}}
+        rec = variants.with_verify_source(self.REC, cfg)
+        self.assertEqual(variants.select(rec, variants.A_VERIFY).evidence_grade, variants.STRONG)
+
+    def test_the_source_is_not_built(self):
+        s = variants.spec(self.CFG, "parser")
+        self.assertNotIn("verify", [v["name"] for v in s["variants"]])
+        self.assertEqual(s["provided"], {"verify": "debug"})
+
+    def test_a_missing_source_binary_is_an_error_not_a_fallback(self):
+        with self.assertRaises(variants.SelectionError):
+            variants.with_verify_source({"harness_binary": "/out/p"}, self.CFG)
+
+    def test_no_source_leaves_the_record_alone(self):
+        self.assertEqual(variants.with_verify_source(self.REC, {}), self.REC)
+
+
 class BackendEnumTest(unittest.TestCase):
     def test_backends_include_the_new_builders(self):
         self.assertEqual(sorted(enums.BUILD_BACKEND),

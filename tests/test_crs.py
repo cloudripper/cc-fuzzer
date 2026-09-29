@@ -219,6 +219,14 @@ class TriageTest(unittest.TestCase):
                        config=self._oracle(), do_minimize=False)
         self.assertEqual(r.pov_sha256, r.original_sha256)
 
+    def test_triage_reports_the_sanitizer_and_a_policy_verdict(self):
+        r = crs.triage(self.record, str(self.crash), harness="parser",
+                       config={**self._oracle(),
+                               "submission": {"policy": "builtin:memory-safety"}})
+        self.assertEqual(r.sanitizer, "address")
+        self.assertEqual(r.policy_verdict["verdict"], crs.ACCEPT)
+        self.assertTrue(r.should_submit)
+
     def test_the_result_serialises(self):
         d = crs.triage(self.record, str(self.crash), harness="parser",
                        config=self._oracle()).as_dict()
@@ -276,6 +284,95 @@ class PatchSeamTest(unittest.TestCase):
                                 stack_hash=t.stack_hash)
             self.assertEqual(v.status, patch.FIXES, v.reason)
             self.assertTrue(v.validated)
+
+
+def _result(**kw):
+    base = dict(status=crs.CONFIRMED, stack_hash="h1", evidence_grade=variants.STRONG)
+    base.update(kw)
+    return crs.TriageResult(**base)
+
+
+class PolicyTest(unittest.TestCase):
+    MS = {"submission": {"policy": "builtin:memory-safety"}}
+
+    def test_policy_memory_safety(self):
+        rejected = [dict(category="signed-integer-overflow", sanitizer="undefined"),
+                    dict(category="ubsan-shift", sanitizer="undefined"),
+                    dict(category="oom", sanitizer="libfuzzer"),
+                    dict(category="timeout", sanitizer="libfuzzer"),
+                    dict(category="detected", sanitizer="leak"),
+                    dict(category="generic-crash", sanitizer="")]
+        for kw in rejected:
+            with self.subTest(**kw):
+                self.assertEqual(crs.judge(_result(**kw), config=self.MS)["verdict"], crs.REJECT)
+        for cat in ("heap-buffer-overflow", "heap-use-after-free", "stack-buffer-overflow"):
+            with self.subTest(cat=cat):
+                v = crs.judge(_result(category=cat, sanitizer="address"), config=self.MS)
+                self.assertEqual(v["verdict"], crs.ACCEPT)
+                self.assertEqual(v["schema"], "policy-verdict/v1")
+
+    def test_the_default_accepts_any_confirmed_and_rejects_the_rest(self):
+        self.assertEqual(crs.judge(_result(category="oom"))["verdict"], crs.ACCEPT)
+        self.assertEqual(crs.judge(_result(status=crs.REJECTED))["verdict"], crs.REJECT)
+
+    def test_the_argument_overrides_config(self):
+        v = crs.judge(_result(category="oom"), config=self.MS, policy="builtin:any-confirmed")
+        self.assertEqual(v["verdict"], crs.ACCEPT)
+
+    def test_max_variants_per_stack_hash(self):
+        cfg = {"submission": {"max_variants_per_stack_hash": 2}}
+        self.assertEqual(crs.judge(_result(), config=cfg, seen={"h1": 1})["verdict"], crs.ACCEPT)
+        v = crs.judge(_result(), config=cfg, seen={"h1": 2})
+        self.assertEqual(v["verdict"], crs.REJECT)
+        self.assertIn("already submitted", v["reason"])
+
+    def test_a_custom_python_policy(self):
+        import sys
+        import types
+        mod = types.ModuleType("my_policy_mod")
+        mod.decide = lambda result, ctx: (crs.REJECT, "top frame in vendored code") \
+            if "vendor" in result["top_frame"] else True
+        sys.modules["my_policy_mod"] = mod
+        self.addCleanup(sys.modules.pop, "my_policy_mod")
+        cfg = {"submission": {"policy": "python:my_policy_mod:decide"}}
+        self.assertEqual(crs.judge(_result(top_frame="f @ vendor/z.c:1"), config=cfg)["verdict"],
+                         crs.REJECT)
+        self.assertEqual(crs.judge(_result(top_frame="f @ src/a.c:1"), config=cfg)["verdict"],
+                         crs.ACCEPT)
+
+    def test_a_bad_policy_is_an_error(self):
+        with self.assertRaises(crs.PolicyError):
+            crs.judge(_result(), policy="builtin:nonsense")
+        import sys
+        import types
+        mod = types.ModuleType("bad_policy_mod")
+        mod.decide = lambda result, ctx: "maybe"
+        sys.modules["bad_policy_mod"] = mod
+        self.addCleanup(sys.modules.pop, "bad_policy_mod")
+        with self.assertRaises(crs.PolicyError):
+            crs.judge(_result(), policy="python:bad_policy_mod:decide")
+
+    def test_should_submit_needs_both(self):
+        r = _result(category="oom", sanitizer="libfuzzer")
+        from dataclasses import replace
+        r = replace(r, policy_verdict=crs.judge(r, config=self.MS))
+        self.assertTrue(r.submittable)
+        self.assertFalse(r.should_submit)
+
+
+class SanitizerOfTest(unittest.TestCase):
+    def test_first_detector_named_wins(self):
+        from cc_fuzzer_core.crash import replay
+        leak = ("==1==ERROR: LeakSanitizer: detected memory leaks\n"
+                "SUMMARY: AddressSanitizer: 24 byte(s) leaked in 1 allocation(s).")
+        self.assertEqual(replay.sanitizer_of(leak), "leak")
+        self.assertEqual(replay.sanitizer_of("a.c:3:5: runtime error: signed integer overflow"),
+                         "undefined")
+        self.assertEqual(replay.sanitizer_of("==2==ERROR: AddressSanitizer: heap-use-after-free"),
+                         "address")
+        self.assertEqual(replay.sanitizer_of("==3== ERROR: libFuzzer: timeout after 25 seconds"),
+                         "libfuzzer")
+        self.assertEqual(replay.sanitizer_of("Segmentation fault"), "")
 
 
 class ExcerptTest(unittest.TestCase):

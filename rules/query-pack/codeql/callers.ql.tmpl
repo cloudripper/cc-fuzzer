@@ -1,0 +1,11 @@
+/**
+ * @name Callers of {{function}}
+ * @kind problem
+ * @id cc-fuzzer/qp-callers
+ * @problem.severity recommendation
+ */
+import cpp
+
+from FunctionCall call
+where call.getTarget().getName() = "{{function}}"
+select call, "call to {{function}} from " + call.getEnclosingFunction().getName()

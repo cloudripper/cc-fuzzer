@@ -1,0 +1,6 @@
+rules:
+  - id: qp-callers-{{function}}
+    pattern: {{function}}(...)
+    message: "call to {{function}}"
+    languages: [c, cpp]
+    severity: INFO

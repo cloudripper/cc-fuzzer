@@ -1,0 +1,67 @@
+{
+  "binary": "/out/framed_verify",
+  "category": "heap-buffer-overflow",
+  "delta_relevance": {
+    "files_changed": 1,
+    "frames_in_diff": [
+      "write_chunk @ /src/framed.c:25"
+    ],
+    "functions_in_diff": [],
+    "nearest_frame_distance": 0,
+    "schema": "delta-relevance/v1",
+    "touches_diff": true
+  },
+  "determinism": {
+    "fuzzer_seed": 1337,
+    "minimize_max_probes": 400,
+    "minimize_max_rounds": 40,
+    "replay_attempts": 3,
+    "replay_timeout_s": 30,
+    "schema": "determinism/v1",
+    "sensitivity_max_probes": 1024
+  },
+  "directory": "",
+  "evidence_grade": "strong",
+  "evidence_source": "replay",
+  "frames": [
+    "write_chunk @ /src/framed.c:25",
+    "main @ /src/framed.c:40"
+  ],
+  "marker": "",
+  "minimized": {
+    "schema": "minimized-input/v1",
+    "size": 4
+  },
+  "original_pov": "/work/pov",
+  "original_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "original_size": 2004,
+  "policy_verdict": {
+    "policy": "builtin:any-confirmed",
+    "reason": "confirmed",
+    "schema": "policy-verdict/v1",
+    "verdict": "accept"
+  },
+  "pov": "/work/pov.min",
+  "pov_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "reason": "oracle reproduced it",
+  "replay": {
+    "schema": "crash-replay/v1",
+    "verdict": "crash"
+  },
+  "replay_grade": "strong",
+  "sanitizer": "address",
+  "sanitizer_excerpt": "==1==ERROR: AddressSanitizer: heap-buffer-overflow\nSUMMARY: AddressSanitizer: heap-buffer-overflow",
+  "schema": "triage-export/v1",
+  "sensitivity": {
+    "mask": "##~#",
+    "schema": "input-sensitivity/v1"
+  },
+  "should_submit": true,
+  "size": 4,
+  "stack_hash": "c481acca1f401bf7",
+  "status": "confirmed",
+  "submittable": true,
+  "top_frame": "write_chunk @ /src/framed.c:25",
+  "variant": "verify",
+  "verdict_step": "command:/opt/oracle"
+}

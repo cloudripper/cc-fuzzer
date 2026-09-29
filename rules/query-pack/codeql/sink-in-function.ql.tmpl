@@ -1,0 +1,14 @@
+/**
+ * @name {{sink}} called in {{function}}
+ * @kind problem
+ * @id cc-fuzzer/qp-sink-in-function
+ * @problem.severity warning
+ */
+import cpp
+
+from FunctionCall call, Function f
+where
+  f.getName() = "{{function}}" and
+  call.getEnclosingFunction() = f and
+  call.getTarget().getName() = "{{sink}}"
+select call, "{{sink}} called in {{function}}"

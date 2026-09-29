@@ -184,6 +184,78 @@ class RunTest(unittest.TestCase):
         self.assertTrue(query.exhausted(self.c, {"query": {"enabled": False}}))
 
 
+class CodeqlHostDbTest(unittest.TestCase):
+    """The core only RUNS CodeQL queries, against a database the host built."""
+    setUp = RunTest.setUp
+    _run = RunTest._run
+
+    def _db(self):
+        db = self.project / "codeql-db"
+        db.mkdir(exist_ok=True)
+        return str(db)
+
+    def test_codeql_hits_stub_db(self):
+        """SARIF from the stub codeql, normalized and capped."""
+        r = self._run(engine="codeql", config={"query": {"codeql_db": self._db()}})
+        self.assertEqual(r.status, "ok", r.reason)
+        self.assertEqual([(h["file"], h["line"]) for h in r.hits],
+                         [("parser.c", 33), ("parser.c", 32)])
+        self.assertEqual(r.hits[0]["rule_id"], "cpp/double-free")
+        capped = self._run(engine="codeql",
+                           config={"query": {"codeql_db": self._db(), "max_hits": 1}})
+        self.assertEqual(len(capped.hits), 1)
+        self.assertTrue(capped.capped)
+
+    def test_no_database_is_unavailable(self):
+        self.assertEqual(self._run(engine="codeql").status, "unavailable")
+        r = self._run(engine="codeql", config={"query": {"codeql_db": "/nonexistent/db"}})
+        self.assertEqual(r.status, "unavailable")
+
+    def test_a_failing_analyze_is_an_error_result(self):
+        os.environ["STUB_CODEQL_MODE"] = "fail"
+        self.addCleanup(os.environ.pop, "STUB_CODEQL_MODE", None)
+        r = self._run(engine="codeql", config={"query": {"codeql_db": self._db()}})
+        self.assertTrue(r.status.startswith("error"), r.status)
+
+
+class QueryPackTest(unittest.TestCase):
+    def test_the_pack_lists_its_templates(self):
+        names = {(t["engine"], t["name"]): t["params"] for t in query.templates()}
+        self.assertEqual(names[("semgrep", "unchecked-length")], ["function", "sink"])
+        self.assertEqual(names[("codeql", "callers")], ["function"])
+
+    def test_fill_is_deterministic_and_complete(self):
+        a = query.fill("unchecked-length", function="parse_chunk", sink="memcpy")
+        self.assertEqual(a, query.fill("unchecked-length", function="parse_chunk", sink="memcpy"))
+        self.assertIn("parse_chunk(...)", a)
+        self.assertNotIn("{{", a)
+        q = query.fill("sink-in-function", engine="codeql", function="ns::parse", sink="memcpy")
+        self.assertIn('f.getName() = "ns::parse"', q)
+
+    def test_values_must_be_identifiers(self):
+        for bad in ('x") or 1=1 or ("', "a b", "", "memcpy(", "1abc"):
+            with self.subTest(bad=bad), self.assertRaises(query.QueryError):
+                query.fill("callers", function=bad)
+
+    def test_params_must_match(self):
+        with self.assertRaises(query.QueryError):
+            query.fill("unchecked-length", function="f")
+        with self.assertRaises(query.QueryError):
+            query.fill("callers", function="f", sink="g")
+        with self.assertRaises(query.QueryError):
+            query.fill("no-such-template", function="f")
+
+    def test_cli_fill_writes_a_rule(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td) / "q.yaml"
+            r = subprocess.run(core("query", "template", "fill", "callers", "--param",
+                                    "function=parse_chunk", "-o", str(out)),
+                               capture_output=True, text=True,
+                               env={**os.environ, "PYTHONPATH": str(REPO / "src")})
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("parse_chunk(...)", out.read_text())
+
+
 class CliTest(unittest.TestCase):
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()

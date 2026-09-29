@@ -94,6 +94,7 @@ class Replay:
     runs: tuple = field(default=())
     frames: tuple = field(default=())   # up to REPORT_FRAMES, top first
     excerpt: str = ""                   # the sanitizer report, bounded
+    sanitizer: str = ""                 # which detector reported it (sanitizer_of)
 
     @property
     def deterministic(self) -> bool:
@@ -117,6 +118,7 @@ class Replay:
             "runs": [r.as_dict() for r in self.runs],
             "frames": list(self.frames),
             "excerpt": self.excerpt,
+            "sanitizer": self.sanitizer,
         }
 
 
@@ -158,6 +160,26 @@ def excerpt(text: str, *, max_lines: int = EXCERPT_MAX_LINES,
                 break
     out = "\n".join(body[:max_lines])
     return out[:max_chars]
+
+
+# The detector that reported a crash, by the first name in the report.
+_SANITIZERS = (("AddressSanitizer", "address"), ("MemorySanitizer", "memory"),
+               ("LeakSanitizer", "leak"), ("ThreadSanitizer", "thread"),
+               ("UndefinedBehaviorSanitizer", "undefined"), (": runtime error: ", "undefined"),
+               ("libFuzzer: timeout", "libfuzzer"), ("libFuzzer: out-of-memory", "libfuzzer"),
+               ("libFuzzer: deadly signal", "libfuzzer"))
+
+
+def sanitizer_of(text: str) -> str:
+    """"address" | "memory" | "leak" | "thread" | "undefined" | "libfuzzer" | ""
+    -- whichever detector's name appears FIRST (a leak report ends with an
+    AddressSanitizer SUMMARY line; its header names LeakSanitizer)."""
+    best, pos = "", None
+    for needle, name in _SANITIZERS:
+        i = (text or "").find(needle)
+        if i >= 0 and (pos is None or i < pos):
+            best, pos = name, i
+    return best
 
 
 def stack_hash(text: str, *, category: str = "") -> str:
@@ -228,6 +250,7 @@ def replay(record, reproducer: str, *, harness: str = "", attempts: int = ATTEMP
         summary_line=cl.summary_line if cl else "",
         frames=tuple(frames(out, limit=REPORT_FRAMES)) if cl else (),
         excerpt=excerpt(out) if cl else "",
+        sanitizer=sanitizer_of(out) if cl else "",
         reason=reason if sel.evidence_grade == _v.STRONG else f"{reason}; {sel.reason}",
         runs=tuple(runs),
     )

@@ -6,10 +6,18 @@ $OUT. So the spec does not become cflags here, it becomes those variables.
 
 Mapping (roadmap §6):
     fuzz      SANITIZER=address     FUZZING_ENGINE=libfuzzer
-    verify    SANITIZER=undefined   FUZZING_ENGINE=none
+    verify    SANITIZER=address     FUZZING_ENGINE=none
     coverage  SANITIZER=coverage    FUZZING_ENGINE=libfuzzer
     cmplog    FUZZING_ENGINE=afl    AFL_LLVM_CMPLOG=1
     symcc     unsupported -- reported as such, never silently skipped
+
+$SANITIZER takes one value, so it is derived from the variant's sanitizers,
+strongest memory detector first (address > memory > undefined). The verify
+binary must detect at least what the fuzzing binary detects: a UBSan-only
+verify binary cannot reproduce an overflow or a use-after-free, and triage
+would call a real memory bug `not_a_crash`. Override per variant:
+
+    {"build": {"variants": {"verify": {"sanitizer": "undefined"}}}}
 
 `unsupported` is deliberately distinct from `skipped`: skipped means the
 campaign turned the variant off, unsupported means it asked and this image
@@ -26,8 +34,21 @@ from cc_fuzzer_core.builders import toolchain
 
 OUT_ENV = "OUT"
 
-SANITIZER = {_v.FUZZ: "address", _v.VERIFY: "undefined", _v.COVERAGE: "coverage",
+SANITIZER = {_v.FUZZ: "address", _v.VERIFY: "address", _v.COVERAGE: "coverage",
              _v.CMPLOG: "address"}
+# $SANITIZER values in preference order when a variant asks for several.
+PREFERENCE = ("address", "memory", "undefined")
+
+
+def sanitizer(variant: Mapping) -> str:
+    purpose = variant["purpose"]
+    if purpose == _v.COVERAGE:
+        return SANITIZER[purpose]
+    asked = list(variant.get("sanitizers") or [])
+    for s in PREFERENCE:
+        if s in asked:
+            return s
+    return SANITIZER[purpose]
 ENGINE = {_v.FUZZ: "libfuzzer", _v.VERIFY: "none", _v.COVERAGE: "libfuzzer",
           _v.CMPLOG: "afl"}
 
@@ -47,7 +68,7 @@ def step(variant: Mapping, **kw) -> dict:
                 "reason": "OSS-Fuzz images do not carry SymCC",
                 "binary_field": variant["binary_field"],
                 "binary_suffix": variant["binary_suffix"]}
-    env = {"SANITIZER": SANITIZER[purpose], "FUZZING_ENGINE": ENGINE[purpose]}
+    env = {"SANITIZER": sanitizer(variant), "FUZZING_ENGINE": ENGINE[purpose]}
     if purpose == _v.CMPLOG:
         env["AFL_LLVM_CMPLOG"] = "1"
     return {

@@ -147,11 +147,23 @@ class OssFuzzBuilderTest(unittest.TestCase):
         self.assertEqual(steps["fuzzer"]["env"],
                          {"SANITIZER": "address", "FUZZING_ENGINE": "libfuzzer"})
         self.assertEqual(steps["verify"]["env"],
-                         {"SANITIZER": "undefined", "FUZZING_ENGINE": "none"})
+                         {"SANITIZER": "address", "FUZZING_ENGINE": "none"})
         self.assertEqual(steps["coverage"]["env"],
                          {"SANITIZER": "coverage", "FUZZING_ENGINE": "libfuzzer"})
         self.assertEqual(steps["cmplog"]["env"]["FUZZING_ENGINE"], "afl")
         self.assertEqual(steps["cmplog"]["env"]["AFL_LLVM_CMPLOG"], "1")
+
+    def test_ossfuzz_verify_sanitizer(self):
+        """A UBSan-only verify binary cannot reproduce an overflow: triage would
+        call a real memory bug not_a_crash. Default address; config wins."""
+        def verify_env(cfg):
+            steps = builders.plan(variants.spec(cfg, "p"), "oss-fuzz", harness="p")["steps"]
+            return {s["variant"]: s for s in steps}["verify"]["env"]["SANITIZER"]
+        self.assertEqual(verify_env({}), "address")
+        self.assertEqual(verify_env({"build": {"variants": {"verify": {"sanitizer": "undefined"}}}}),
+                         "undefined")
+        self.assertEqual(verify_env({"variants": {"verify": {"sanitizers": ["undefined", "memory"]}}}),
+                         "memory")
 
     def test_symcc_is_unsupported_not_skipped(self):
         """`skipped` means the campaign turned it off; `unsupported` means it

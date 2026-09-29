@@ -46,6 +46,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping, Protocol
 
+from cc_fuzzer_core import errors as _errors
 from cc_fuzzer_core import ledger as _ledger
 from cc_fuzzer_core import models as _models
 
@@ -401,8 +402,21 @@ def step(c, runner: AgentRunner | None = None, *, now=None,
 
     agent = "fuzz-orchestrator"
     model = _models.resolve(agent, config)
-    result = runner.run(agent, {"state": pre["state"], "digest": digest},
-                        model=model, budget=(digest or {}).get("budget"))
+    try:
+        result = runner.run(agent, {"state": pre["state"], "digest": digest},
+                            model=model, budget=(digest or {}).get("budget"))
+    except Exception as e:  # noqa: BLE001 - only a budget refusal is handled here
+        exhausted = _errors.as_budget_exhausted(e)
+        if exhausted is None:
+            raise
+        # Never retried: the gateway will say the same thing again. Write down
+        # where spend stopped, then let the host fall through to deterministic
+        # work.
+        try:
+            _ledger.record_exhausted(c, agent=agent, reason=exhausted.cause or str(e))
+        except Exception:  # noqa: BLE001 - accounting must not mask the refusal
+            pass
+        raise exhausted from e
     _record(c, agent, result, source=source, events=events)
 
     decided = parse_directive(getattr(result, "text", "") or "")
