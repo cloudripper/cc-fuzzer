@@ -352,6 +352,25 @@ class PolicyTest(unittest.TestCase):
         with self.assertRaises(crs.PolicyError):
             crs.judge(_result(), policy="python:bad_policy_mod:decide")
 
+    def test_a_host_policy_composes_a_builtin_through_the_public_api(self):
+        """A CRS policy wraps a builtin with crs.policy(), never the private helper."""
+        ms = crs.policy("builtin:memory-safety")
+        self.assertEqual(ms(_result(category="oom", sanitizer="libfuzzer"))[0], crs.REJECT)
+        self.assertEqual(ms(_result(category="heap-buffer-overflow", sanitizer="address")),
+                         (crs.ACCEPT, "heap-buffer-overflow reported by address"))
+        self.assertEqual(crs.policy()(_result().as_dict())[0], crs.ACCEPT, "the default")
+        with self.assertRaises(crs.PolicyError):
+            crs.policy("builtin:nonsense")
+
+    def test_normalize_is_public(self):
+        self.assertEqual(crs.normalize(True), (crs.ACCEPT, ""))
+        self.assertEqual(crs.normalize(crs.REJECT), (crs.REJECT, ""))
+        self.assertEqual(crs.normalize((crs.REJECT, "why")), (crs.REJECT, "why"))
+        self.assertEqual(crs.normalize({"verdict": crs.ACCEPT, "reason": "r"}), (crs.ACCEPT, "r"))
+        for bad in ("maybe", 3, (crs.ACCEPT,)):
+            with self.subTest(bad=bad), self.assertRaises(crs.PolicyError):
+                crs.normalize(bad)
+
     def test_should_submit_needs_both(self):
         r = _result(category="oom", sanitizer="libfuzzer")
         from dataclasses import replace

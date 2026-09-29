@@ -122,6 +122,18 @@ a bool, `"accept"`/`"reject"`, a `(verdict, reason)` pair, or a dict. The core
 keeps no submission state: pass `seen` ({stack_hash: count}) to enforce
 `max_variants_per_stack_hash`.
 
+A host policy that builds on a builtin composes it through the public API:
+`crs.policy(name)` returns the named policy as `(result, ctx) -> (verdict,
+reason)`, already normalized, and `crs.normalize(answer)` turns any of the
+answer shapes above into that pair (a `PolicyError` for anything else).
+
+```python
+ms = crs.policy("builtin:memory-safety")
+def decide(result, ctx):
+    verdict, reason = ms(result, ctx)
+    return (crs.REJECT, "vendored code") if "vendor/" in result["top_frame"] else (verdict, reason)
+```
+
 **Delta mode.** Pass the diff and triage reports whether the crash lands in
 it; it never filters on it (a crash far from the diff can still be its fault
 through data flow, so that call belongs to the policy):
@@ -515,7 +527,11 @@ cc-fuzzer gate classify-write --command "cp crash-1 /artifacts/povs/" --config c
 ```
 
 Entries are path suffixes, matched on whole components (`/artifacts/povs-old`
-is not `/artifacts/povs`).
+is not `/artifacts/povs`). An allowed command is matched as a command, not as
+text: the command must be one simple command whose argv starts with the
+allowed words (the program by basename, `bash`/`sh` in front of a script
+allowed), with no `;`, `&&`, `||`, `&`, `|`, newline, backticks, `$(` or
+redirection. `crs-promote-pov x; cp y /artifacts/povs/` is refused.
 
 ## 11. Budgets and accounting
 
@@ -635,17 +651,26 @@ the core already reads:
 ```bash
 CC_FUZZER_FEATURES=+cull_intake cc-fuzzer intake cull proj.sarif --import
 cc-fuzzer cull queue          # reached tiers first; none-found held back
+cc-fuzzer cull queue --delta  # and nearest the diff first within each tier
 cc-fuzzer cull cards          # what a seed-generator / mutator / poc-builder sees
+cc-fuzzer cull hints --dict fuzz/harnesses/parser.dict   # cull's input_hints (evidence 1.8.0)
 ```
+
+`--delta` orders each tier by cull's `diff_proximity` (in-diff,
+changed-function, diff-flow, near-change, changed-file, then none; position
+breaks ties) without moving a candidate between tiers, and admits a held
+`none-found` candidate whose label is in-diff, changed-function or diff-flow.
 
 Tolerant reader: an invalid SARIF is an error, never an empty intake, but a
 field an older cull did not ship is derived and marked `*_source: "local"`
 (`candidate_id` with cull's own formula, `confidence` from
 `cull.confidence_map`, `reach_tier` from cull's reachability label). With a
 `cull` block in the config, `query.codeql_direct` defaults to false: the
-CodeQL lever runs only through `query.codeql_engine` (`cull query`, once cull
-ships engine mode), never agent-written QL. The line-coverage export for
-cull's rerank waits for cull to define the format.
+CodeQL lever runs only through `query.codeql_engine` (`cull query`, which
+`cc-fuzzer cull engine` configures when the installed cull has it), never
+agent-written QL. `fuzz/state/cull/feedback.jsonl` is what `cull rerank
+--feedback` reads. The line-coverage export for cull's rerank waits for cull
+to define the format.
 
 What the integration is still waiting on from cull, and what each update
 switches on: [cull-upstream.md](cull-upstream.md).
