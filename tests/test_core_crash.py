@@ -74,6 +74,15 @@ class TestClassifyApi(unittest.TestCase):
         self.assertEqual(r.category, "heap-use-after-free")
         self.assertRegex(r.top_frame, r"^\w+ @ \S+:\d+$")
 
+    def test_a_frame_without_a_column_keeps_its_line(self):
+        """gcc's ASan prints file:line; only file:line:column loses a suffix."""
+        for loc, want in (("/src/parse.c:13", "/src/parse.c:13"),
+                          ("/src/parse.c:13:7", "/src/parse.c:13"),
+                          ("/src/parse.c", "/src/parse.c")):
+            with self.subTest(loc=loc):
+                self.assertEqual(cl.top_frame([f"    #0 0x4f5a in parse_chunk {loc}"]),
+                                 f"parse_chunk @ {want}")
+
     def test_infra_frames_skipped(self):
         text = ("==1==ERROR: AddressSanitizer: SEGV on unknown address\n"
                 "    #0 0x1 in __asan_memcpy compiler-rt/asan.cc:1:2\n"

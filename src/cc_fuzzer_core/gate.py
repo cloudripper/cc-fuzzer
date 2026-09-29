@@ -174,7 +174,8 @@ def protected(config=None) -> tuple:
                   "allow_commands": ["crs-promote-pov"]}}
 
     `allow_commands` ADD to the promote path's own commands: a command that
-    contains one of them is the sanctioned writer and may write there.
+    IS one of them (see allowed_command()) is the sanctioned writer and may
+    write there.
     """
     block = (config or {}).get("gate") or {}
     if not isinstance(block, Mapping):
@@ -187,6 +188,65 @@ def protected(config=None) -> tuple:
     if isinstance(allow, str):
         allow = (allow,)
     return dirs or (FINDINGS_DIR,), PROMOTE_COMMANDS + tuple(a for a in allow if isinstance(a, str) and a)
+
+
+# Shell syntax that runs a second command or writes somewhere of its own.
+_SHELL_OPS = frozenset(";&|<>()")
+_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+_INTERPRETERS = ("bash", "sh")
+
+
+def _argv(command: str):
+    """The argv of ONE simple command, or None when `command` is anything
+    else: a list (`;`, `&&`, `||`, `&`, a newline), a pipe, a redirection,
+    a subshell, a command substitution, or text shlex cannot split."""
+    command = command.replace("\\\n", " ").strip()
+    if not command or "\n" in command or "`" in command or "$(" in command:
+        return None
+    try:
+        lex = shlex.shlex(command, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        toks = list(lex)
+    except ValueError:
+        return None
+    if any(t and set(t) <= _SHELL_OPS for t in toks):
+        return None
+    while toks and _ASSIGN.match(toks[0]):
+        toks = toks[1:]
+    return toks
+
+
+def _starts_with(argv: list, spec: list) -> bool:
+    if not spec or len(argv) < len(spec):
+        return False
+    head = argv[0] if "/" in spec[0] else os.path.basename(argv[0])
+    return head == spec[0] and argv[1:len(spec)] == spec[1:]
+
+
+def allowed_command(command: str, allow) -> bool:
+    """Is `command` exactly one invocation of an allowed command?
+
+    Matched as a command, not as text: `crs-promote-pov x; cp y /artifacts/`
+    CONTAINS the allowed command and would write where only it may. So the
+    command must split (shlex) into a single simple command, with no list,
+    pipe, redirection or substitution, whose argv starts with the allowed
+    command's words. The program is compared by basename unless the allowed
+    command names a path, and `bash`/`sh` in front of a script is the script.
+    """
+    argv = _argv(command)
+    if not argv:
+        return False
+    for a in allow:
+        try:
+            spec = shlex.split(a)
+        except ValueError:
+            continue
+        if _starts_with(argv, spec):
+            return True
+        if (os.path.basename(argv[0]) in _INTERPRETERS and len(argv) > 1
+                and not argv[1].startswith("-") and _starts_with(argv[1:], spec)):
+            return True
+    return False
 
 
 def check_finding_dir(path) -> Verdict:
@@ -252,7 +312,7 @@ def classify_finding_write(command: str, *, tool: str = "Bash",
 
     if not command:
         return Verdict(ALLOW)
-    if any(a in command for a in allow):
+    if allowed_command(command, allow):
         return Verdict(ALLOW, "the promote path may write findings")
     hits = _touches(command, dirs)
     if not hits or not _WRITE_RE.search(command):
