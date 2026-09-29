@@ -9,7 +9,8 @@ From evidence 1.7.0 cull decides reach_tier, confidence, sink_class, access,
 call_chain, why and position itself (`properties["cull/v1"]`), and a
 1.7.0 intake has no local derivation at all. Its `reach_tier: null` ("no
 entry point in the database") and `call_chain: null` ("no path") are
-answers, read as `unknown` and `[]`, never as gaps.
+answers, read as `unknown` and `[]`, never as gaps. Evidence 1.8.0 adds
+`input_hints` (read by hints.py, from each hint's `hex`).
 
 Inside a known major version, a field an older cull did not ship DEGRADES:
 
@@ -41,7 +42,7 @@ EVIDENCE_MAJOR = 1
 SINCE = {"diff_proximity": (1, 1), "flow_steps": (1, 2), "alert": (1, 4),
          "null": (1, 5), "integer": (1, 5), "candidate_id": (1, 6),
          "why": (1, 7), "reach_tier": (1, 7), "call_chain": (1, 7),
-         "sink_class": (1, 7), "access": (1, 7)}
+         "sink_class": (1, 7), "access": (1, 7), "input_hints": (1, 8)}
 
 TIERS = ("harness", "indirect", "unknown", "none-found")
 UNKNOWN = "unknown"
