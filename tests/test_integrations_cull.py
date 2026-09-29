@@ -1,9 +1,10 @@
 """The optional cull integration (cc_fuzzer_core.integrations.cull).
 
 The fixture, tests/fixtures/cull/bug-candidates.sarif, was rendered by cull's
-own writer (`cull.report.render_sarif_bug_candidates`, cull 0.1.0, evidence
-1.6.0) and passes cull's `check_bug_candidates`, so these tests read what
-cull actually emits, not a guess at it.
+own writer (`cull.report.render_sarif_bug_candidates`, cull 0.3.0, evidence
+1.8.0; regenerate with tests/fixtures/cull/make_fixture.py) and passes cull's
+`check_bug_candidates`, so these tests read what cull actually emits, not a
+guess at it. bug-candidates-1.6.sarif keeps the local fallbacks exercised.
 """
 from __future__ import annotations
 
@@ -23,7 +24,7 @@ from cc_fuzzer_core.integrations.cull import (cards, crmap, feedback, hints, int
 from cc_fuzzer_core.paths import campaign as _campaign
 from tests.support.golden import FIXTURES, REPO
 
-SARIF = REPO / "tests" / "fixtures" / "cull" / "bug-candidates.sarif"          # evidence 1.7.0
+SARIF = REPO / "tests" / "fixtures" / "cull" / "bug-candidates.sarif"          # evidence 1.8.0
 OLD_SARIF = REPO / "tests" / "fixtures" / "cull" / "bug-candidates-1.6.sarif"  # the fallbacks
 GOLDEN = REPO / "tests" / "golden" / "cull" / "code-review-v1.json"
 
@@ -123,6 +124,21 @@ class IntakeTest(unittest.TestCase):
         self.assertTrue(intake.intake(doc)["provenance"]["degraded"])
         with self.assertRaises(intake.IntakeError):
             intake.intake(doc, config={"cull": {"accept_degraded": False}})
+
+    def test_the_bag_is_culls_eight_keys(self):
+        doc = json.loads(SARIF.read_text())
+        for r in doc["runs"][0]["results"]:
+            self.assertEqual(r["properties"]["evidence"]["version"], "1.8.0")
+            self.assertEqual(set(r["properties"]["cull/v1"]),
+                             {"candidate_id", "position", "reach_tier", "confidence",
+                              "sink_class", "access", "call_chain", "input_hints"})
+
+    def test_a_1_7_record_misses_only_input_hints(self):
+        doc = json.loads(SARIF.read_text())
+        for r in doc["runs"][0]["results"]:
+            r["properties"]["evidence"]["version"] = "1.7.0"
+            r["properties"]["evidence"].pop("input_hints", None)
+        self.assertEqual(intake.intake(doc)["degraded_fields"], ["evidence.input_hints"])
 
     def test_evidence_1_7_needs_no_local_derivation(self):
         """cull's acceptance check: every field decided by cull."""
@@ -232,6 +248,53 @@ class QueueTest(unittest.TestCase):
     def test_none_found_after_the_reached_tiers_are_exhausted(self):
         r = queue.order(self.C, done=["h1", "h2", "i1", "u1"])
         self.assertEqual(self.ids(r), ["n1"])
+
+    def test_delta_orders_by_diff_proximity_within_each_tier(self):
+        C = [{"candidate_id": "h_none", "reach_tier": "harness", "position": 1},
+             {"candidate_id": "h_file", "reach_tier": "harness", "position": 2,
+              "diff_proximity": {"label": "changed-file", "hops": None}},
+             {"candidate_id": "h_near", "reach_tier": "harness", "position": 3,
+              "diff_proximity": {"label": "near-change", "hops": 1}},
+             {"candidate_id": "h_flow", "reach_tier": "harness", "position": 4,
+              "diff_proximity": {"label": "diff-flow", "hops": None}},
+             {"candidate_id": "h_fn", "reach_tier": "harness", "position": 5,
+              "diff_proximity": {"label": "changed-function", "hops": None}},
+             {"candidate_id": "h_in2", "reach_tier": "harness", "position": 7,
+              "diff_proximity": {"label": "in-diff", "hops": None}},
+             {"candidate_id": "h_in1", "reach_tier": "harness", "position": 6,
+              "diff_proximity": {"label": "in-diff", "hops": None}},
+             {"candidate_id": "i_in", "reach_tier": "indirect", "position": 8,
+              "diff_proximity": {"label": "in-diff", "hops": None}},
+             {"candidate_id": "i_none", "reach_tier": "indirect", "position": 9}]
+        self.assertEqual(self.ids(queue.order(C, delta=True)),
+                         ["h_in1", "h_in2", "h_fn", "h_flow", "h_near", "h_file", "h_none",
+                          "i_in", "i_none"])
+        self.assertEqual(self.ids(queue.order(C)),
+                         ["h_none", "h_file", "h_near", "h_flow", "h_fn", "h_in1", "h_in2",
+                          "i_in", "i_none"], "without delta: position only")
+
+    def test_delta_admits_a_none_found_candidate_in_the_diff(self):
+        C = self.C + [
+            {"candidate_id": "n_in", "reach_tier": "none-found", "position": 9,
+             "diff_proximity": {"label": "in-diff", "hops": None}},
+            {"candidate_id": "n_flow", "reach_tier": "none-found", "position": 8,
+             "diff_proximity": {"label": "diff-flow", "hops": None}},
+            {"candidate_id": "n_near", "reach_tier": "none-found", "position": 7,
+             "diff_proximity": {"label": "near-change", "hops": 1}}]
+        r = queue.order(C, delta=True)
+        self.assertEqual(self.ids(r), ["h1", "h2", "i1", "u1", "n_in", "n_flow"])
+        self.assertEqual([c["candidate_id"] for c in r["held"]], ["n_near", "n1"])
+        self.assertIn("near the change admitted", r["reason"])
+        self.assertNotIn("n_in", self.ids(queue.order(C)), "only in delta mode")
+
+    def test_delta_on_the_fixture_never_moves_a_tier(self):
+        cands = intake.intake(SARIF)["candidates"]
+        tiers = lambda r: [c["reach_tier"] for c in r["queue"]]      # noqa: E731
+        plain, delta = queue.order(cands), queue.order(cands, delta=True)
+        self.assertEqual(tiers(plain)[:3], tiers(delta)[:3])
+        self.assertEqual([c["function"] for c in delta["queue"]],
+                         ["drop_node", "parse_chunk", "read_header", "fmt_path", "lookup"])
+        self.assertEqual([c["function"] for c in delta["held"]], ["copy_name"])
 
     def test_none_found_while_the_budget_is_above_the_floor(self):
         self.assertEqual(self.ids(queue.order(self.C, budget_remaining=0.5))[-1], "n1")
@@ -398,6 +461,32 @@ class QueryEngineTest(unittest.TestCase):
         self.assertFalse(query.budget(explicit).codeql_direct)
         self.assertTrue(query.budget({}).codeql_direct, "no cull: unchanged")
 
+    @unittest.skipUnless(shutil.which("cull"), "cull is not installed")
+    def test_the_engine_runs_the_real_cull_query(self):
+        """`cull engine` finds cull's engine mode, and query.run reads the
+        cull-query/v1 that the real `cull query` writes."""
+        from cc_fuzzer_core.integrations.cull import cli
+        self.assertTrue(cli.engine_available())
+        with tempfile.TemporaryDirectory() as td:
+            proj = Path(td) / "campaign"
+            shutil.copytree(FIXTURES / "campaign-warm", proj)
+            cwd = os.getcwd()
+            os.chdir(proj)
+            try:
+                c = _campaign()
+                cfg = {"cull": {}, "query": {"engines": ["codeql"], "codeql_db": str(proj / "nodb"),
+                                             "codeql_engine": cli.ENGINE_COMMAND}}
+                r = query.run(c, engine="codeql", rule="oob-write",
+                              params={"function": "parse", "sink": "memcpy"},
+                              hypothesis="can input make parse write past its buffer?", config=cfg)
+                bad = query.run(c, engine="codeql", rule="oob-write", params={"bogus": "x"},
+                                hypothesis="h", config=cfg)
+            finally:
+                os.chdir(cwd)
+        self.assertEqual(r.status, "unavailable", "no database: cull says so, nothing runs")
+        self.assertEqual(r.as_dict()["params"], {"function": "parse", "sink": "memcpy"})
+        self.assertEqual(bad.status, "error", "an unknown parameter is cull's error")
+
     def test_the_engine_command_is_run_and_recorded(self):
         with tempfile.TemporaryDirectory() as td:
             proj = Path(td) / "campaign"
@@ -439,10 +528,44 @@ class HintsTest(unittest.TestCase):
             if ln and not ln.startswith("#"):
                 self.assertTrue(hints.valid(ln), ln)
 
-    def test_no_hints_is_a_no_op(self):
+    def test_a_binary_hint_is_built_from_its_hex(self):
+        """cull escapes a binary value already (`\\x89PNG`); the token comes
+        from `hex`, so it is never escaped twice."""
+        hint = {"value": "\\x89PNG", "encoding": "escaped", "hex": "89504e47"}
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / "h.dict"
-            self.assertEqual(hints.merge(intake.intake(SARIF)["candidates"], p)["added"], 0)
+            r = hints.merge([{"input_hints": [hint]}], p)
+            text = p.read_text()
+        self.assertEqual(r["added"], 1)
+        self.assertIn('="\\x89PNG"', text)
+        self.assertNotIn("\\\\x", text)
+
+    def test_an_escaped_hint_without_hex_is_dropped(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "h.dict"
+            r = hints.merge([{"input_hints": [{"value": "\\x89PNG", "encoding": "escaped"},
+                                              {"value": "IHDR", "encoding": "text"},
+                                              {"value": "x", "hex": "zz"}]}], p)
+        self.assertEqual(r["added"], 1)
+        self.assertEqual(len(r["invalid"]), 2)
+
+    def test_the_fixtures_hints_are_merged_exactly(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "h.dict"
+            r = hints.merge(intake.intake(SARIF)["candidates"], p)
+            lines = [ln for ln in p.read_text().splitlines() if ln and not ln.startswith("#")]
+        self.assertEqual(r["added"], 4)
+        self.assertEqual(sorted(ln.split("=", 1)[1] for ln in lines),
+                         sorted(['"IHDR"', '"GNP\\x89"', '"\\x89PNG"', '"a\\"b\\\\c"']))
+        for ln in lines:
+            self.assertTrue(hints.valid(ln), ln)
+            self.assertNotIn("\\\\x", ln)
+
+    def test_no_hints_is_a_no_op(self):
+        """A cull before evidence 1.8.0 ships no input_hints."""
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "h.dict"
+            self.assertEqual(hints.merge(intake.intake(OLD_SARIF)["candidates"], p)["added"], 0)
             self.assertFalse(p.exists())
 
 

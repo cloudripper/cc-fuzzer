@@ -13,6 +13,14 @@ the least likely bug in the list. So:
 
 `budget_remaining` is a fraction in [0, 1]; None means "not tracked", which
 admits none-found only after the reached tiers.
+
+Delta mode (`delta=True`) asks what the diff introduced. Inside each tier
+the candidates nearest the change come first, by `diff_proximity`: in-diff,
+changed-function, diff-flow, near-change, changed-file, then none; position
+breaks ties. No candidate moves between tiers. A held none-found candidate
+is admitted anyway when its label is in-diff, changed-function or diff-flow:
+the call graph that found no path misses edges, and the diff says the code
+changed right there.
 """
 from __future__ import annotations
 
@@ -21,16 +29,36 @@ from typing import Iterable, Mapping
 from cc_fuzzer_core.integrations.cull import settings
 
 REACHED = ("harness", "indirect", "unknown")
+# diff_proximity labels, nearest the change first (cull.scoping's bands)
+PROXIMITY = ("in-diff", "changed-function", "diff-flow", "near-change", "changed-file")
+# a none-found candidate this near the change is admitted in delta mode
+DELTA_ADMIT = ("in-diff", "changed-function", "diff-flow")
+
+
+def proximity(c: Mapping) -> str | None:
+    """A candidate's diff_proximity label ({label, hops} or a bare label)."""
+    p = c.get("diff_proximity")
+    label = p.get("label") if isinstance(p, Mapping) else p
+    return label if label in PROXIMITY else None
+
+
+def _band(c: Mapping) -> int:
+    label = proximity(c)
+    return PROXIMITY.index(label) if label else len(PROXIMITY)
 
 
 def order(candidates: Iterable[Mapping], *, done: Iterable[str] = (),
-          budget_remaining: float | None = None, config: Mapping | None = None) -> dict:
+          budget_remaining: float | None = None, config: Mapping | None = None,
+          delta: bool = False) -> dict:
     """{"queue": [...], "held": [...], "reason": str} -- held are the
     none-found candidates not admitted yet."""
     floor = float(settings(config)["none_found_budget_floor"])
     done = set(done)
     cands = [c for c in candidates if c.get("candidate_id") not in done]
-    by_rank = lambda c: (c.get("position") or 10**9)          # noqa: E731
+    if delta:
+        by_rank = lambda c: (_band(c), c.get("position") or 10**9)   # noqa: E731
+    else:
+        by_rank = lambda c: (c.get("position") or 10**9)             # noqa: E731
     reached = []
     for tier in REACHED:
         reached += sorted((c for c in cands if c.get("reach_tier") == tier), key=by_rank)
@@ -46,6 +74,12 @@ def order(candidates: Iterable[Mapping], *, done: Iterable[str] = (),
                + ("" if budget_remaining is None else
                   f"; budget remaining {budget_remaining:.2f} < floor {floor:.2f}"))
         admit = False
-    return {"queue": reached + (none_found if admit else []),
-            "held": [] if admit else none_found,
-            "reason": ("none-found admitted: " if admit else "none-found held: ") + why}
+    if admit:
+        return {"queue": reached + none_found, "held": [],
+                "reason": "none-found admitted: " + why}
+    near = [c for c in none_found if delta and proximity(c) in DELTA_ADMIT]
+    held = [c for c in none_found if not (delta and proximity(c) in DELTA_ADMIT)]
+    if near:
+        why += f"; {len(near)} near the change admitted (delta)"
+    return {"queue": reached + near, "held": held,
+            "reason": "none-found held: " + why}

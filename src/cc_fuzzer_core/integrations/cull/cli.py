@@ -1,8 +1,8 @@
 """CLI for the cull integration.
 
     cc-fuzzer intake cull <sarif> [--diff D] [--import]    (needs cull_intake)
-    cc-fuzzer cull queue [--done ID ...] [--budget-remaining F]
-    cc-fuzzer cull cards [--top-k N]
+    cc-fuzzer cull queue [--done ID ...] [--budget-remaining F] [--delta]
+    cc-fuzzer cull cards [--top-k N] [--delta]
     cc-fuzzer cull feedback triage <triage-export.json>     (needs cull_feedback)
     cc-fuzzer cull feedback refute <id> (--sink-execs N | --dispatch-id D)
     cc-fuzzer cull hints --dict <harness.dict>
@@ -95,15 +95,17 @@ def _cmd_queue(a):
     from cc_fuzzer_core.integrations.cull import queue
     c = _campaign()
     r = queue.order(_intake_or_die(c)["candidates"], done=a.done,
-                    budget_remaining=a.budget_remaining, config=_config(a, c))
+                    budget_remaining=a.budget_remaining, config=_config(a, c),
+                    delta=a.delta)
     if a.json:
         print(json.dumps({"queue": [q["candidate_id"] for q in r["queue"]],
                           "held": [q["candidate_id"] for q in r["held"]],
                           "reason": r["reason"]}, indent=2))
     else:
         for q in r["queue"]:
+            near = f" [{queue.proximity(q)}]" if a.delta and queue.proximity(q) else ""
             print(f"{q['candidate_id']}  {q['reach_tier']:<10} #{q['position']:<4} "
-                  f"{q['function']} ({q['path']}:{q['line']})")
+                  f"{q['function']} ({q['path']}:{q['line']}){near}")
         print(r["reason"])
     return 0
 
@@ -112,7 +114,7 @@ def _cmd_cards(a):
     from cc_fuzzer_core.integrations.cull import cards, queue
     c = _campaign()
     cfg = _config(a, c)
-    q = queue.order(_intake_or_die(c)["candidates"], config=cfg)["queue"]
+    q = queue.order(_intake_or_die(c)["candidates"], config=cfg, delta=a.delta)["queue"]
     sys.stdout.write(cards.render(q, config=cfg, top_k=a.top_k)["text"])
     return 0
 
@@ -154,7 +156,8 @@ def _cmd_diff(a):
 
 
 def engine_available() -> bool:
-    """cull's query engine mode is a later wave: look before configuring it."""
+    """Does the installed cull have engine mode (`cull query`, cull 0.3.0)?
+    An older cull does not: look before configuring it."""
     import subprocess
     exe = shutil.which("cull")
     if not exe:
@@ -176,7 +179,7 @@ def _cmd_engine(a):
                       "query": {"engines": ["semgrep", "codeql"],
                                 "codeql_engine": ENGINE_COMMAND} if ok else
                       {"engines": ["semgrep"], "codeql_direct": False},
-                      "note": "" if ok else "this cull has no `query` engine mode yet; "
+                      "note": "" if ok else "no cull with a `query` engine mode (cull >= 0.3.0) on PATH; "
                               "codeql stays unavailable rather than running agent-written QL"},
                      indent=2))
     return 0 if ok else 1
@@ -198,11 +201,14 @@ def register(subparsers):
     v = verbs.add_parser("queue", help="the model's candidate order (reached tiers first)")
     v.add_argument("--done", action="append", default=[], metavar="ID")
     v.add_argument("--budget-remaining", type=float, default=None, metavar="FRACTION")
+    v.add_argument("--delta", action="store_true",
+                   help="nearest the diff first within each tier; admit none-found in the diff")
     v.add_argument("--config")
     v.add_argument("--json", action="store_true")
     v.set_defaults(func=_cmd_queue)
     v = verbs.add_parser("cards", help="token-bounded candidate cards for a prompt")
     v.add_argument("--top-k", type=int, default=None)
+    v.add_argument("--delta", action="store_true", help="order as `cull queue --delta`")
     v.add_argument("--config")
     v.set_defaults(func=_cmd_cards)
     v = verbs.add_parser("feedback", help="write cull-feedback/v1 (needs cull_feedback)")

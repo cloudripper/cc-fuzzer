@@ -136,16 +136,20 @@
        "confidence": "high",
        "sink_class": "global-buffer-overflow",
        "access": "write",
-       "call_chain": null
+       "call_chain": null,
+       "input_hints": []
       },
       "verdict": "REPORT",
       "tier": "proven",
       "triageRank": null,
       "reachability": null,
-      "diffProximity": null,
+      "diffProximity": {
+       "label": "near-change",
+       "hops": 1
+      },
       "evidence": {
        "schema": "cull.evidence",
-       "version": "1.7.0",
+       "version": "1.8.0",
        "candidate_id": "c7c54d035287dccd",
        "family": "CWE-787",
        "verdict": "REPORT",
@@ -166,7 +170,11 @@
        "call_chain": null,
        "sink_class": "global-buffer-overflow",
        "access": "write",
-       "diff_proximity": null,
+       "input_hints": [],
+       "diff_proximity": {
+        "label": "near-change",
+        "hops": 1
+       },
        "flow_steps": [],
        "refusal": [],
        "guards": [
@@ -254,16 +262,20 @@
        "call_chain": [
         "LLVMFuzzerTestOneInput",
         "drop_node"
-       ]
+       ],
+       "input_hints": []
       },
       "verdict": "UNDETERMINED",
       "tier": "freed-on-some-path",
       "triageRank": null,
       "reachability": "harness",
-      "diffProximity": null,
+      "diffProximity": {
+       "label": "changed-function",
+       "hops": null
+      },
       "evidence": {
        "schema": "cull.evidence",
-       "version": "1.7.0",
+       "version": "1.8.0",
        "candidate_id": "f74b0cf1e5c4fc4b",
        "family": "CWE-416",
        "verdict": "UNDETERMINED",
@@ -287,7 +299,11 @@
        ],
        "sink_class": "heap-use-after-free",
        "access": null,
-       "diff_proximity": null,
+       "input_hints": [],
+       "diff_proximity": {
+        "label": "changed-function",
+        "hops": null
+       },
        "flow_steps": [],
        "refusal": [],
        "guards": [
@@ -354,7 +370,8 @@
        "confidence": "low",
        "sink_class": null,
        "access": null,
-       "call_chain": null
+       "call_chain": null,
+       "input_hints": null
       },
       "verdict": "UNDETERMINED",
       "tier": null,
@@ -363,7 +380,7 @@
       "diffProximity": null,
       "evidence": {
        "schema": "cull.evidence",
-       "version": "1.7.0",
+       "version": "1.8.0",
        "candidate_id": "c739f73934140373",
        "family": "CWE-22",
        "verdict": "UNDETERMINED",
@@ -384,6 +401,7 @@
        "call_chain": null,
        "sink_class": null,
        "access": null,
+       "input_hints": null,
        "diff_proximity": null,
        "flow_steps": [],
        "refusal": [],
@@ -482,16 +500,29 @@
         "LLVMFuzzerTestOneInput",
         "dispatch",
         "read_header"
+       ],
+       "input_hints": [
+        {
+         "value": "a\"b\\c",
+         "encoding": "text",
+         "hex": "6122625c63",
+         "kind": "text",
+         "why": "string compared at src/parse.c:55 in read_header()",
+         "tainted": false
+        }
        ]
       },
       "verdict": "UNDETERMINED",
       "tier": "unbounded-extent",
       "triageRank": null,
       "reachability": "entry-point",
-      "diffProximity": null,
+      "diffProximity": {
+       "label": "in-diff",
+       "hops": null
+      },
       "evidence": {
        "schema": "cull.evidence",
-       "version": "1.7.0",
+       "version": "1.8.0",
        "candidate_id": "d677e96cf66152cf",
        "family": "CWE-125",
        "verdict": "UNDETERMINED",
@@ -516,7 +547,20 @@
        ],
        "sink_class": "heap-buffer-overflow",
        "access": "read",
-       "diff_proximity": null,
+       "input_hints": [
+        {
+         "value": "a\"b\\c",
+         "encoding": "text",
+         "hex": "6122625c63",
+         "kind": "text",
+         "why": "string compared at src/parse.c:55 in read_header()",
+         "tainted": false
+        }
+       ],
+       "diff_proximity": {
+        "label": "in-diff",
+        "hops": null
+       },
        "flow_steps": [],
        "refusal": [],
        "guards": [
@@ -605,16 +649,45 @@
         "LLVMFuzzerTestOneInput",
         "parse",
         "parse_chunk"
+       ],
+       "input_hints": [
+        {
+         "value": "IHDR",
+         "encoding": "text",
+         "hex": "49484452",
+         "kind": "text",
+         "why": "string compared at src/parse.c:88 in parse(), input reaches the compared value",
+         "tainted": true
+        },
+        {
+         "value": "GNP\\x89",
+         "encoding": "escaped",
+         "hex": "474e5089",
+         "kind": "int",
+         "why": "constant compared at src/parse.c:90 in parse(), input reaches the compared value",
+         "tainted": true
+        },
+        {
+         "value": "\\x89PNG",
+         "encoding": "escaped",
+         "hex": "89504e47",
+         "kind": "int",
+         "why": "constant compared at src/parse.c:90 in parse(), input reaches the compared value",
+         "tainted": true
+        }
        ]
       },
       "verdict": "UNDETERMINED",
       "tier": "wrap-prone",
       "triageRank": null,
       "reachability": "input",
-      "diffProximity": null,
+      "diffProximity": {
+       "label": "changed-file",
+       "hops": null
+      },
       "evidence": {
        "schema": "cull.evidence",
-       "version": "1.7.0",
+       "version": "1.8.0",
        "candidate_id": "133f151e2cb72d29",
        "family": "CWE-787",
        "verdict": "UNDETERMINED",
@@ -639,7 +712,36 @@
        ],
        "sink_class": "stack-buffer-overflow",
        "access": "write",
-       "diff_proximity": null,
+       "input_hints": [
+        {
+         "value": "IHDR",
+         "encoding": "text",
+         "hex": "49484452",
+         "kind": "text",
+         "why": "string compared at src/parse.c:88 in parse(), input reaches the compared value",
+         "tainted": true
+        },
+        {
+         "value": "GNP\\x89",
+         "encoding": "escaped",
+         "hex": "474e5089",
+         "kind": "int",
+         "why": "constant compared at src/parse.c:90 in parse(), input reaches the compared value",
+         "tainted": true
+        },
+        {
+         "value": "\\x89PNG",
+         "encoding": "escaped",
+         "hex": "89504e47",
+         "kind": "int",
+         "why": "constant compared at src/parse.c:90 in parse(), input reaches the compared value",
+         "tainted": true
+        }
+       ],
+       "diff_proximity": {
+        "label": "changed-file",
+        "hops": null
+       },
        "flow_steps": [
         {
          "reachability": "input",
@@ -789,16 +891,20 @@
        "confidence": "low",
        "sink_class": "segv",
        "access": null,
-       "call_chain": null
+       "call_chain": null,
+       "input_hints": []
       },
       "verdict": "UNDETERMINED",
       "tier": "null-on-some-path",
       "triageRank": null,
       "reachability": null,
-      "diffProximity": null,
+      "diffProximity": {
+       "label": "diff-flow",
+       "hops": null
+      },
       "evidence": {
        "schema": "cull.evidence",
-       "version": "1.7.0",
+       "version": "1.8.0",
        "candidate_id": "1aaa3b3dc0580f93",
        "family": "CWE-476",
        "verdict": "UNDETERMINED",
@@ -819,7 +925,11 @@
        "call_chain": null,
        "sink_class": "segv",
        "access": null,
-       "diff_proximity": null,
+       "input_hints": [],
+       "diff_proximity": {
+        "label": "diff-flow",
+        "hops": null
+       },
        "flow_steps": [],
        "refusal": [],
        "guards": [
@@ -852,7 +962,7 @@
    "properties": {
     "evidenceSchema": {
      "name": "cull.evidence",
-     "version": "1.7.0"
+     "version": "1.8.0"
     },
     "provenFitsOmitted": 0,
     "budget": null,
@@ -874,18 +984,17 @@
      "codeql_version": "2.25.6",
      "pack_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
      "db_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-     "diff_sha256": null,
+     "diff_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
      "entry": [
       "LLVMFuzzerTestOneInput"
      ],
      "classes": [
-      "CWE-787",
-      "CWE-125",
-      "CWE-416",
-      "CWE-476"
+      "memory-safety",
+      "null",
+      "integer-memory"
      ],
-     "evidence_version": "1.7.0",
-     "escalate": false,
+     "evidence_version": "1.8.0",
+     "escalate": 0,
      "dropped": 3,
      "degraded": false,
      "score_version": 1,
@@ -895,7 +1004,7 @@
       "none-found": 2,
       "null": 1
      },
-     "stage_timeout": 1800,
+     "stage_timeout": 1800.0,
      "seconds": 12.5
     }
    }

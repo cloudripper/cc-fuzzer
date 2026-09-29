@@ -25,7 +25,7 @@ computed with cull's own formula, a missing confidence is derived from the
 rank and reachability, a missing reach tier maps from cull's reachability
 label (or is `unknown`), and every derivation is marked `*_source: "local"`.
 
-CLI: `cc-fuzzer intake cull <sarif>`, `cc-fuzzer cull queue|cards|feedback|hints|diff`.
+CLI: `cc-fuzzer intake cull <sarif>`, `cc-fuzzer cull queue|cards|feedback|hints|diff|engine`.
 """
 from __future__ import annotations
 
