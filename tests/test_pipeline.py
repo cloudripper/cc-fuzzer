@@ -390,6 +390,30 @@ class ConfigurableProtectedDirTest(unittest.TestCase):
     def test_the_sanctioned_writer_is_allowed(self):
         self.assertTrue(gate.classify_finding_write(
             "crs-promote-pov --to /artifacts/povs/x", config=self.CFG).allowed)
+        for cmd in ("/opt/crs/bin/crs-promote-pov --to /artifacts/povs/x",
+                    "CRS_RUN=1 crs-promote-pov --to /artifacts/povs/x",
+                    "${CLAUDE_PLUGIN_ROOT}/bin/cc-fuzzer findings promote f1 \\\n  --driver d",
+                    "bash scripts/findings.sh promote f1 --driver d"):
+            with self.subTest(cmd=cmd):
+                self.assertTrue(gate.classify_finding_write(cmd, config=self.CFG).allowed)
+
+    def test_an_allowed_command_is_matched_as_a_command_not_a_substring(self):
+        """Containing the sanctioned writer is not being it: anything chained,
+        piped, redirected or substituted after it writes on its own."""
+        for cmd in ("crs-promote-pov x; cp y /artifacts/povs/",
+                    "crs-promote-pov x && cp y /artifacts/povs/z",
+                    "crs-promote-pov x || cp y /artifacts/povs/z",
+                    "crs-promote-pov x | tee /artifacts/povs/z",
+                    "crs-promote-pov x > /artifacts/povs/z",
+                    "crs-promote-pov x & cp y /artifacts/povs/z",
+                    "crs-promote-pov `cp y /artifacts/povs/z`",
+                    "crs-promote-pov $(cp y /artifacts/povs/z)",
+                    "crs-promote-pov x\ncp y /artifacts/povs/z",
+                    "echo crs-promote-pov; cp y /artifacts/povs/z",
+                    "cp y /artifacts/povs/z # crs-promote-pov",
+                    "cc-fuzzer findings promote f1; mkdir fuzz/findings/f2"):
+            with self.subTest(cmd=cmd):
+                self.assertFalse(gate.classify_finding_write(cmd, config=self.CFG).allowed)
 
     def test_a_neighbouring_name_is_not_a_match(self):
         self.assertTrue(gate.classify_finding_write("cp a /artifacts/povs-old/x",

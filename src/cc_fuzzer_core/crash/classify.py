@@ -33,7 +33,10 @@ _ASSERT_RE = re.compile(r"Assertion .* failed|g_assertion_message|__assert_fail"
 _OOM_RE = re.compile(r"out of memory|MemoryError|allocator_may_return_null|requested allocation size .* exceeds")
 _TIMEOUT_RE = re.compile(r"ERROR: libFuzzer: timeout|DEADLYSIGNAL")
 _FRAME_RE = re.compile(r"^\s*(#[0-9]+\s+(0x[0-9a-f]+\s+)?in\s+|in\s+)", re.ASCII)
-_COLUMN_RE = re.compile(r":[0-9]+$")
+# file:line:column -> file:line. Only with TWO numeric suffixes: gcc's ASan
+# prints file:line with no column, and stripping one suffix there lost the line.
+_COLUMN_RE = re.compile(r"(:[0-9]+):[0-9]+$")
+_KEEP_LINE = r"\1"
 
 # Frames from sanitizer / fuzzer infrastructure (matched anywhere in "fn @ loc").
 INFRA_RE = re.compile(r"__sanitizer_|__asan_|__ubsan_|__msan_|__lsan_|compiler-rt|asan_|ubsan_|msan_"
@@ -112,7 +115,7 @@ def top_frame(lines) -> str:
             if f == "in":
                 fn = fields[i + 1] if i + 1 < len(fields) else ""
                 loc = fields[i + 2] if i + 2 < len(fields) else ""
-                frame = f"{fn} @ {_COLUMN_RE.sub('', loc, count=1)}"
+                frame = f"{fn} @ {_COLUMN_RE.sub(_KEEP_LINE, loc, count=1)}"
                 if not INFRA_RE.search(frame):
                     return frame
                 break
