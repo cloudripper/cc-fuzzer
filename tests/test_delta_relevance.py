@@ -32,6 +32,43 @@ PLAIN_DIFF = """--- a/lib/util.c\t2026-01-01
 """
 
 
+LIBCUE_DIFF = """diff --git a/cd.c b/cd.c
+--- a/cd.c
++++ b/cd.c
+@@ -339,7 +339,7 @@ track_get_rem(const Track* track)
+ 
+ void track_set_index(Track *track, int i, long ind)
+ {
+-\tif (i < 0 || i > MAXINDEX) {
++\tif (i > MAXINDEX) {
+ \t\tfprintf(stderr, "too many indexes\\n");
+                 return;
+         }
+"""
+
+
+class HunkFunctionTest(unittest.TestCase):
+    """AIxCC libcue delta: the hunk header names the function BEFORE the hunk
+    (track_get_rem); the removed check is in track_set_index, and the crash
+    at cd.c:347 is two lines past the hunk."""
+
+    def test_changed_lines_are_attributed_to_their_own_function(self):
+        t = delta.parse_diff(LIBCUE_DIFF)
+        self.assertEqual(t[0]["function_context"], "track_get_rem(const Track* track)")
+        self.assertEqual(t[0]["functions"], ["track_set_index"])
+
+    def test_a_crash_just_past_the_hunk_in_the_changed_function_touches_the_diff(self):
+        r = delta.relevance(["track_set_index @ /src/libcue/cd.c:347"],
+                            delta.parse_diff(LIBCUE_DIFF))
+        self.assertTrue(r["touches_diff"], r)
+        self.assertEqual(r["functions_in_diff"], ["track_set_index @ /src/libcue/cd.c:347"])
+
+    def test_an_added_function_counts_as_changed(self):
+        d = ("--- a/x.c\n+++ b/x.c\n@@ -10,0 +11,3 @@ int other(void)\n"
+             "+static int added(int v)\n+{\n+  return v;\n")
+        self.assertEqual(delta.parse_diff(d)[0]["functions"], ["added"])
+
+
 class ParseTest(unittest.TestCase):
     def test_a_plain_unified_diff_names_its_file(self):
         t = delta.parse_diff(PLAIN_DIFF)

@@ -57,10 +57,41 @@ class DeltaResult:
         return len({t["file"] for t in self.targets})
 
 
+# A function definition's first line, as git's default funcname heuristic sees
+# it: an identifier at column 0 (not a preprocessor line, a brace or a
+# declaration ending in ';').
+_DEF_LINE_RE = re.compile(r"^[A-Za-z_$][^;]*\(")
+
+
+def _defined_function(line: str) -> str:
+    body = line[1:] if line[:1] in (" ", "+", "-") else line
+    if not _DEF_LINE_RE.match(body) or body.rstrip().endswith(";"):
+        return ""
+    return _function_of(body)
+
+
 def parse_diff(text: str) -> list[dict]:
-    """Hunks of a `git diff --unified=0` as delta targets."""
+    """Hunks of a `git diff` as delta targets.
+
+    `function_context` is git's hunk header, which names the function BEFORE
+    the hunk: when a change sits at the top of a function (a removed bounds
+    check, the usual shape of an injected bug) the header names the previous
+    one. `functions` lists the functions the changed lines really are in,
+    following definitions that appear inside the hunk's own context lines."""
     targets, current_file, kind = [], None, "modified"
+    current = None
     for line in text.split("\n"):
+        if current is not None and line[:1] in (" ", "+", "-") \
+                and not line.startswith(("+++", "---")):
+            fn = _defined_function(line)
+            if fn:
+                current["_fn"] = fn
+            if line[:1] in ("+", "-") and current.get("_fn") \
+                    and current["_fn"] not in current["functions"]:
+                current["functions"].append(current["_fn"])
+            continue
+        if current is not None and line.startswith("\\"):
+            continue                  # "\ No newline at end of file"
         m = _DIFF_FILE_RE.match(line)
         if m:
             current_file, kind = m.group(2), "modified"
@@ -83,8 +114,15 @@ def parse_diff(text: str) -> list[dict]:
             count = int(m.group(2)) if m.group(2) is not None else 1
             # count == 0 is a pure deletion at line N: report it at N.
             end = start + max(count - 1, 0) if count > 0 else start
-            targets.append({"file": current_file, "function_context": m.group(3).strip() or None,
-                            "lines_changed": [start, end], "kind": kind})
+            ctx = m.group(3).strip() or None
+            current = {"file": current_file, "function_context": ctx,
+                       "lines_changed": [start, end], "kind": kind,
+                       "functions": [], "_fn": _function_of(ctx)}
+            targets.append(current)
+            continue
+        current = None
+    for t in targets:
+        t.pop("_fn", None)
     return targets
 
 
@@ -163,8 +201,8 @@ def relevance(frames, targets) -> dict:
         for t in targets or ():
             if not _same_file(file, t.get("file", "")):
                 continue
-            if _same_function(fn, _function_of(t.get("function_context"))) \
-                    and fr not in in_func:
+            changed = [_function_of(t.get("function_context"))] + list(t.get("functions") or [])
+            if any(_same_function(fn, c) for c in changed if c) and fr not in in_func:
                 in_func.append(fr)
             if line is None:
                 continue

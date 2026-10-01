@@ -127,7 +127,7 @@ fa441c29d2bf62b519fdfaaf53cc5f2c  src/cc_fuzzer_core/crash/verifiers/__init__.py
 f1774217b1b8c3afd3e5b8f7ced2b6eb  src/cc_fuzzer_core/crash/verifiers/realism.py
 88b9091d24a7b868f869ea2819c1d5b7  src/cc_fuzzer_core/crs.py
 5a7be1f37b34d774d4ea9f5664051169  src/cc_fuzzer_core/data/models.json
-cb6a4405d42fa7a068af9e5576d9f9d8  src/cc_fuzzer_core/delta.py
+26ed2e11b43333ba95f4869b27039877  src/cc_fuzzer_core/delta.py
 2282bc83bcf1d654910b34d37d68302f  src/cc_fuzzer_core/determinism.py
 8fabcb44c591fee602b0f0c33c9d618a  src/cc_fuzzer_core/enums.py
 890a68e5778a28fc7c593f7bd506099e  src/cc_fuzzer_core/errors.py
