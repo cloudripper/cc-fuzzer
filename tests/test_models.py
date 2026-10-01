@@ -62,6 +62,16 @@ class TestPackagedMapping(unittest.TestCase):
             self.assertAlmostEqual(ri, i, places=12)
             self.assertAlmostEqual(ro, o, places=12)
 
+    def test_price_key_ignores_case(self):
+        m = models.ModelMap(tiers=dict(self.m.tiers), agents=dict(self.m.agents),
+                          pricing={**self.m.pricing, "glm": (1.4e-6, 4.4e-6),
+                                   "glm-5.3-flash": (0.15e-6, 0.5e-6)},
+                          default_tier=self.m.default_tier)
+        self.assertEqual(m.price_key("zai-org/GLM-5.3"), "glm")
+        self.assertEqual(m.price_key("z-ai/glm-5.3-flash"), "glm-5.3-flash")   # longest wins
+        self.assertEqual(m.price_key("Claude-Opus-4-1"), "opus")
+        self.assertAlmostEqual(m.cost(1_000_000, 0, model="zai-org/GLM-5.3"), 1.4)
+
     def test_deep_tier_is_the_old_opus_set(self):
         self.assertEqual(self.m.agents_in_tier(models.DEEP), {
             "planner-consult", "poc-builder", "campaign-planner",

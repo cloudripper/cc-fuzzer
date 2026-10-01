@@ -90,13 +90,15 @@ class ModelMap:
 
     def price_key(self, model: str | None) -> str | None:
         """The pricing entry a model id is charged under: an exact key, else
-        the longest key the id contains ("claude-opus-4-1" -> "opus"); None
-        when nothing matches."""
+        the longest key the id contains, ignoring case ("claude-opus-4-1" ->
+        "opus", "zai-org/GLM-5.3" -> "glm"); None when nothing matches.
+        Gateways report ids in whatever case their routes use."""
         if not model:
             return None
         if model in self.pricing:
             return model
-        hits = [k for k in self.pricing if k and k in model]
+        low = model.lower()
+        hits = [k for k in self.pricing if k and k.lower() in low]
         return max(hits, key=len) if hits else None
 
     def cache_rate(self, model: str) -> tuple[float, float]:
