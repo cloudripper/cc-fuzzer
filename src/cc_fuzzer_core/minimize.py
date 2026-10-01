@@ -33,6 +33,7 @@ CLI: `cc-fuzzer minimize run <file> [--harness NAME] [-o OUT] [--json]`, and
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -107,6 +108,11 @@ class _Probe:
         self.binary, self.want = binary, want_hash
         self.timeout, self.workdir = timeout, workdir
         self.max_probes, self.count = max_probes, 0
+        self._same: set = set()     # digests of candidates that showed the same bug
+
+    def verified(self, data: bytes) -> bool:
+        """This exact candidate was run and reproduced the same bug."""
+        return hashlib.sha256(data).digest() in self._same
 
     @property
     def exhausted(self) -> bool:
@@ -131,6 +137,8 @@ class _Probe:
         if not cl.is_crash:
             return NONE, "", ""
         h = _replay.stack_hash(out, category=cl.category)
+        if h == self.want:
+            self._same.add(hashlib.sha256(data).digest())
         return (SAME if h == self.want else OTHER), h, cl.category
 
     def __call__(self, data: bytes) -> bool:
@@ -211,9 +219,13 @@ def minimize(record, reproducer: str, *, harness: str = "", stack_hash: str = ""
         elif rounds >= max_rounds:
             limit = f"round budget ({max_rounds}) reached"
 
-        if reduced != data and not probe(reduced):
-            # Ran out mid-step. Shipping a smaller input nobody checked is the
-            # one outcome worse than not minimizing at all.
+        # ddmin only keeps candidates the probe answered SAME for, so
+        # `reduced` is normally verified already. Re-running it would fail
+        # once the budget is spent (an unrun probe is not SAME) and throw the
+        # verified progress away: a 334-byte PNG stayed 334 bytes.
+        if reduced != data and not (probe.verified(reduced) or probe(reduced)):
+            # Not verified and no budget to check it. Shipping a smaller input
+            # nobody checked is the one outcome worse than not minimizing.
             reduced = data
             note = ((limit + "; ") if limit else "") + \
                 "search ended on an unverified candidate, so the original was kept"
