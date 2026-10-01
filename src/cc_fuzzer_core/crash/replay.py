@@ -50,9 +50,12 @@ EXCERPT_MAX_LINES = 60
 EXCERPT_MAX_CHARS = 6000
 
 # Every attempt runs with these, so two attempts cannot differ because of the
-# environment they inherited.
+# environment they inherited. handle_sigill=1 as in OSS-Fuzz's runner: a trap
+# (ud2) is reported as "AddressSanitizer: ILL", the signature a benchmark's
+# oracle expects (AIxCC faad2's cpv_1); without it libFuzzer's fallback handler
+# printed only "deadly signal" and the crash read as not_a_crash.
 ASAN_OPTIONS = ("symbolize=1:abort_on_error=1:halt_on_error=1"
-                ":print_stacktrace=1:detect_leaks=1")
+                ":print_stacktrace=1:detect_leaks=1:handle_sigill=1")
 UBSAN_OPTIONS = "halt_on_error=1:print_stacktrace=1:abort_on_error=1"
 
 # verdicts

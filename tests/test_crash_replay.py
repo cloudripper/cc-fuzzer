@@ -249,3 +249,45 @@ class LoaderErrorTest(unittest.TestCase):
             pov = Path(td) / "pov"
             pov.write_bytes(b"x")
             self.assertEqual(r.run_once(str(b), str(pov))[0], 127)
+
+
+class TrapTest(unittest.TestCase):
+    """A trap (ud2, SIGILL) under ASan: OSS-Fuzz's runner reports it as
+    "AddressSanitizer: ILL", the signature AIxCC's faad2 cpv_1 is judged by.
+    Replay used to omit handle_sigill, so libFuzzer's fallback printed only
+    "deadly signal" and the crash was classified not_a_crash."""
+
+    def test_replay_lets_asan_handle_sigill(self):
+        from cc_fuzzer_core.crash import replay as r
+        self.assertIn("handle_sigill=1", r.ASAN_OPTIONS)
+
+    def test_libfuzzer_deadly_signal_is_a_crash(self):
+        from cc_fuzzer_core.crash import classify
+        text = ("==7== ERROR: libFuzzer: deadly signal\n"
+                "    #0 0x1 in pow2_fix /src/faad2/libfaad/x.c:9:3\n"
+                "SUMMARY: libFuzzer: deadly signal\n")
+        c = classify.classify(text, 77)
+        self.assertTrue(c.is_crash)
+        self.assertEqual(c.category, "deadly-signal")
+
+    @unittest.skipUnless(shutil.which("clang"), "needs clang")
+    def test_a_trapping_harness_replays_as_asan_ill(self):
+        from cc_fuzzer_core.crash import classify, replay as r
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "h.c"
+            src.write_text(
+                "#include <stdint.h>\n#include <stddef.h>\n"
+                "int LLVMFuzzerTestOneInput(const uint8_t *d, size_t n) {\n"
+                "  if (n && d[0] == 'T') __builtin_trap();\n  return 0;\n}\n")
+            b = Path(td) / "h"
+            cc = subprocess.run(["clang", "-g", "-O1", "-fsanitize=address,fuzzer",
+                                 str(src), "-o", str(b)], capture_output=True, text=True)
+            if cc.returncode != 0:
+                self.skipTest(f"clang cannot build a libFuzzer harness: {cc.stderr[-200:]}")
+            pov = Path(td) / "pov"
+            pov.write_bytes(b"T")
+            rc, out = r.run_once(str(b), str(pov))
+            c = classify.classify(out, rc)
+            self.assertTrue(c.is_crash, out[-500:])
+            self.assertIn("AddressSanitizer: ILL", out)
+            self.assertEqual(c.category, "ILL")

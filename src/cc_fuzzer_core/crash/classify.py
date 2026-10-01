@@ -32,6 +32,8 @@ _PLAIN_RE = re.compile(r"^(Segmentation fault|Abort trap|Aborted|Bus error)")
 _ASSERT_RE = re.compile(r"Assertion .* failed|g_assertion_message|__assert_fail")
 _OOM_RE = re.compile(r"out of memory|MemoryError|allocator_may_return_null|requested allocation size .* exceeds")
 _TIMEOUT_RE = re.compile(r"ERROR: libFuzzer: timeout|DEADLYSIGNAL")
+# libFuzzer's own handler, when no sanitizer reported the signal
+_DEADLY_RE = re.compile(r"(SUMMARY|ERROR): libFuzzer: deadly signal")
 _FRAME_RE = re.compile(r"^\s*(#[0-9]+\s+(0x[0-9a-f]+\s+)?in\s+|in\s+)", re.ASCII)
 # file:line:column -> file:line. Only with TWO numeric suffixes: gcc's ASan
 # prints file:line with no column, and stripping one suffix there lost the line.
@@ -176,6 +178,14 @@ def classify(text: str, exit_code: str | int | None = None) -> Classification:
         if line is not None:
             is_crash, summary = True, line
             category = "timeout" if "timeout" in line else "generic-crash"
+
+    if not is_crash:
+        # last, so every earlier rule keeps its verdict: only output that was
+        # read as no crash at all (libFuzzer's handler, no sanitizer report,
+        # exit 77) changes
+        line = _first(lines, _DEADLY_RE)
+        if line is not None:
+            is_crash, summary, category = True, line, "deadly-signal"
 
     if not is_crash and ec in _EXIT_CODES:
         is_crash = True
