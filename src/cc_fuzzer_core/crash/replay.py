@@ -204,9 +204,17 @@ def run_once(binary: str, reproducer: str, *, timeout: int = TIMEOUT_S, env=None
     run_env["UBSAN_OPTIONS"] = UBSAN_OPTIONS
     try:
         p = subprocess.run([binary, reproducer], capture_output=True, timeout=timeout,
-                           env=run_env)
-    except subprocess.TimeoutExpired:
-        return 124, f"TIMEOUT after {timeout}s"
+                           env=run_env, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired as e:
+        # The target can print a complete sanitizer report and then hang in its
+        # crash handler instead of aborting (an ASan self-re-exec deadlock seen
+        # when the binary is run directly on some kernels/containers). Discarding
+        # the output here made a real crash read as not_a_crash. Keep whatever was
+        # captured before the kill so classify() can still see the report; a
+        # genuine no-output timeout still classifies as not-a-crash.
+        partial = (e.stdout or b"") + (e.stderr or b"")
+        text = partial.decode("utf-8", "surrogateescape")
+        return 124, text if text.strip() else f"TIMEOUT after {timeout}s"
     except OSError as e:
         raise ReplayError(f"cannot run {binary}: {e}") from None
     out = (p.stdout or b"") + (p.stderr or b"")
