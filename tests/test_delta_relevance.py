@@ -53,20 +53,21 @@ class HunkFunctionTest(unittest.TestCase):
     at cd.c:347 is two lines past the hunk."""
 
     def test_changed_lines_are_attributed_to_their_own_function(self):
-        t = delta.parse_diff(LIBCUE_DIFF)
+        t = delta.parse_diff(LIBCUE_DIFF, with_functions=True)
         self.assertEqual(t[0]["function_context"], "track_get_rem(const Track* track)")
         self.assertEqual(t[0]["functions"], ["track_set_index"])
 
     def test_a_crash_just_past_the_hunk_in_the_changed_function_touches_the_diff(self):
         r = delta.relevance(["track_set_index @ /src/libcue/cd.c:347"],
-                            delta.parse_diff(LIBCUE_DIFF))
+                            delta.targets_of(LIBCUE_DIFF))
         self.assertTrue(r["touches_diff"], r)
         self.assertEqual(r["functions_in_diff"], ["track_set_index @ /src/libcue/cd.c:347"])
 
     def test_an_added_function_counts_as_changed(self):
         d = ("--- a/x.c\n+++ b/x.c\n@@ -10,0 +11,3 @@ int other(void)\n"
              "+static int added(int v)\n+{\n+  return v;\n")
-        self.assertEqual(delta.parse_diff(d)[0]["functions"], ["added"])
+        self.assertEqual(delta.parse_diff(d, with_functions=True)[0]["functions"], ["added"])
+        self.assertNotIn("functions", delta.parse_diff(d)[0])      # the snapshot schema
 
 
 class ParseTest(unittest.TestCase):

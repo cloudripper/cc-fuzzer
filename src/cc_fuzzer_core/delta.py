@@ -70,14 +70,16 @@ def _defined_function(line: str) -> str:
     return _function_of(body)
 
 
-def parse_diff(text: str) -> list[dict]:
+def parse_diff(text: str, *, with_functions: bool = False) -> list[dict]:
     """Hunks of a `git diff` as delta targets.
 
     `function_context` is git's hunk header, which names the function BEFORE
     the hunk: when a change sits at the top of a function (a removed bounds
     check, the usual shape of an injected bug) the header names the previous
-    one. `functions` lists the functions the changed lines really are in,
-    following definitions that appear inside the hunk's own context lines."""
+    one. with_functions adds `functions`: the functions the changed lines
+    really are in, following definitions that appear inside the hunk's own
+    context lines (relevance() uses it; the delta-targets/v1 snapshot keeps
+    find-delta-targets.sh's four fields)."""
     targets, current_file, kind = [], None, "modified"
     current = None
     for line in text.split("\n"):
@@ -123,6 +125,8 @@ def parse_diff(text: str) -> list[dict]:
         current = None
     for t in targets:
         t.pop("_fn", None)
+        if not with_functions:
+            t.pop("functions", None)
     return targets
 
 
@@ -137,14 +141,14 @@ def targets_of(delta, *, project_root=None) -> list[dict]:
     elif "\n" in str(delta):
         text = str(delta)
     if text is not None:
-        return parse_diff(text)
+        return parse_diff(text, with_functions=True)
     if project_root is None:
         raise DeltaError(f"{delta!r} is not a diff file, and a git range needs a project root")
     r = _git(Path(project_root), "diff", "--unified=0", str(delta))
     if r.returncode != 0:
         raise DeltaError(f"git diff {delta} failed: "
                          f"{r.stderr.decode(errors='replace').strip()[:200]}")
-    return parse_diff(r.stdout.decode(errors="replace"))
+    return parse_diff(r.stdout.decode(errors="replace"), with_functions=True)
 
 
 _FRAME_LOC_RE = re.compile(r"^(?P<fn>.*?) @ (?P<file>.+?)(?::(?P<line>\d+))?$")
