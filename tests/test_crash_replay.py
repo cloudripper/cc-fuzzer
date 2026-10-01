@@ -216,3 +216,36 @@ class RealBinaryTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LoaderErrorTest(unittest.TestCase):
+    """A binary that cannot start (a shared library the host lacks) is an
+    error about the environment, never "did not crash"."""
+
+    def test_a_missing_shared_library_raises(self):
+        import tempfile
+        from pathlib import Path
+        from cc_fuzzer_core.crash import replay as r
+        with tempfile.TemporaryDirectory() as td:
+            b = Path(td) / "harness"
+            b.write_text("#!/bin/sh\necho \"$0: error while loading shared libraries: "
+                         "libssl.so.1.1: cannot open shared object file: No such file or "
+                         "directory\" >&2\nexit 127\n")
+            b.chmod(0o755)
+            pov = Path(td) / "pov"
+            pov.write_bytes(b"\xe0")
+            with self.assertRaises(r.ReplayError) as cm:
+                r.run_once(str(b), str(pov))
+            self.assertIn("libssl.so.1.1", str(cm.exception))
+
+    def test_an_ordinary_exit_127_is_still_an_exit_code(self):
+        import tempfile
+        from pathlib import Path
+        from cc_fuzzer_core.crash import replay as r
+        with tempfile.TemporaryDirectory() as td:
+            b = Path(td) / "harness"
+            b.write_text("#!/bin/sh\nexit 127\n")
+            b.chmod(0o755)
+            pov = Path(td) / "pov"
+            pov.write_bytes(b"x")
+            self.assertEqual(r.run_once(str(b), str(pov))[0], 127)

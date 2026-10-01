@@ -196,6 +196,9 @@ def stack_hash(text: str, *, category: str = "") -> str:
 # running
 # ---------------------------------------------------------------------------
 
+_LOADER_ERROR = re.compile(r"error while loading shared libraries: [^\n]*")
+
+
 def run_once(binary: str, reproducer: str, *, timeout: int = TIMEOUT_S, env=None):
     """One attempt. Returns (exit_code, combined output)."""
     import subprocess
@@ -218,7 +221,13 @@ def run_once(binary: str, reproducer: str, *, timeout: int = TIMEOUT_S, env=None
     except OSError as e:
         raise ReplayError(f"cannot run {binary}: {e}") from None
     out = (p.stdout or b"") + (p.stderr or b"")
-    return p.returncode, out.decode("utf-8", "surrogateescape")
+    text = out.decode("utf-8", "surrogateescape")
+    if p.returncode == 127 and _LOADER_ERROR.search(text):
+        # The binary never started (a shared library this host lacks): that
+        # says nothing about the input. Reported as "did not crash" it hid a
+        # runtime image built on the wrong OS for the target (libssl.so.1.1).
+        raise ReplayError(f"{binary} cannot run here: {_LOADER_ERROR.search(text).group(0)}")
+    return p.returncode, text
 
 
 def replay(record, reproducer: str, *, harness: str = "", attempts: int = ATTEMPTS,
