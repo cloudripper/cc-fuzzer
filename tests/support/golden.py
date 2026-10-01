@@ -298,6 +298,13 @@ class Sandbox:
             "CC_FUZZER_TOOL_LLVM_PROFDATA": "",
             # Never let a script under test chmod the checkout read-only.
             "CC_FUZZER_DISABLE_READONLY_LOCK": "1",
+            # No background git maintenance in fixture repos: since git 2.47
+            # `git commit` starts a detached `maintenance run --auto` that can
+            # hold .git/objects/maintenance.lock across the before-snapshot and
+            # drop it during the run, which a golden then records as "deleted".
+            "GIT_CONFIG_COUNT": "2",
+            "GIT_CONFIG_KEY_0": "maintenance.auto", "GIT_CONFIG_VALUE_0": "false",
+            "GIT_CONFIG_KEY_1": "gc.auto", "GIT_CONFIG_VALUE_1": "0",
         })
         if extra:
             for k, v in extra.items():
