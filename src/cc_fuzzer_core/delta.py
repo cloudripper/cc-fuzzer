@@ -126,6 +126,24 @@ def _function_of(context) -> str:
     return m.group(1).split("::")[-1] if m else ""
 
 
+_SYMBOL_PREFIX_RE = re.compile(r"[A-Z][A-Z0-9_]*_")
+
+
+def _same_function(frame_fn: str, context_fn: str) -> bool:
+    """A frame's function is the hunk's, allowing a build-time symbol prefix:
+    projects rename their API with a macro (libpng's PNG_PREFIX, which
+    OSS-Fuzz sets to OSS_FUZZ_), so the binary has OSS_FUZZ_png_handle_iCCP
+    where the source and the diff say png_handle_iCCP. Only an all-caps
+    prefix ending in "_" counts, so `foo_bar` never matches a changed `bar`."""
+    if not frame_fn or not context_fn:
+        return False
+    fn = frame_fn.split("(", 1)[0].strip().split("::")[-1]
+    if fn == context_fn:
+        return True
+    head = fn[: -len(context_fn)] if fn.endswith(context_fn) else ""
+    return bool(head) and _SYMBOL_PREFIX_RE.fullmatch(head) is not None
+
+
 def relevance(frames, targets) -> dict:
     """delta-relevance/v1 for a crash's frames ("fn @ file:line", top first).
 
@@ -145,7 +163,8 @@ def relevance(frames, targets) -> dict:
         for t in targets or ():
             if not _same_file(file, t.get("file", "")):
                 continue
-            if fn and fn == _function_of(t.get("function_context")) and fr not in in_func:
+            if _same_function(fn, _function_of(t.get("function_context"))) \
+                    and fr not in in_func:
                 in_func.append(fr)
             if line is None:
                 continue

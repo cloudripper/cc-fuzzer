@@ -64,6 +64,14 @@ class RelevanceTest(unittest.TestCase):
         self.assertTrue(r["touches_diff"])
         self.assertEqual(r["functions_in_diff"], ["parse_chunk @ /src/proj/src/parser.c:90"])
 
+    def test_a_build_time_symbol_prefix_still_names_the_changed_function(self):
+        """libpng under OSS-Fuzz: PNG_PREFIX=OSS_FUZZ_ renames png_handle_iCCP."""
+        r = delta.relevance(["OSS_FUZZ_parse_chunk @ /src/proj/src/parser.c:90"], self.T)
+        self.assertTrue(r["touches_diff"])
+        for fn in ("myparse_chunk", "Xparse_chunk", "oss_fuzz_parse_chunk", "parse_chunk2"):
+            r = delta.relevance([f"{fn} @ /src/proj/src/parser.c:90"], self.T)
+            self.assertFalse(r["touches_diff"], fn)
+
     def test_paths_match_on_whole_components(self):
         r = delta.relevance(["f @ /src/proj/src/myparser.c:25"], self.T)
         self.assertIsNone(r["nearest_frame_distance"], "myparser.c is not parser.c")
