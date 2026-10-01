@@ -81,6 +81,28 @@ class RelevanceTest(unittest.TestCase):
         self.assertEqual((r["touches_diff"], r["nearest_frame_distance"]), (False, None))
 
 
+class AllocationStackTest(unittest.TestCase):
+    """A use-after-free whose diff is in the allocating function: that frame
+    is only in the "previously allocated by" stack, past the 12 report frames."""
+
+    def test_the_allocation_stack_counts_for_relevance(self):
+        from cc_fuzzer_core.crs import TriageResult, _delta_relevance
+        report = "\n".join(
+            ["==1==ERROR: AddressSanitizer: heap-use-after-free on address 0x1"]
+            + [f"    #{i} 0x1 in cleanup_{i} /src/proj/src/other.c:{i + 1}:1" for i in range(14)]
+            + ["previously allocated by thread T0 here:",
+               "    #0 0x1 in malloc (/out/h+0x1)",
+               "    #1 0x1 in parse_chunk /src/proj/src/parser.c:90:3",
+               "SUMMARY: AddressSanitizer: heap-use-after-free"])
+        r = TriageResult(status="confirmed",
+                         frames=tuple(f"cleanup_{i} @ /src/proj/src/other.c:{i + 1}"
+                                      for i in range(12)),
+                         sanitizer_excerpt=report)
+        rel = _delta_relevance(r, GIT_DIFF, None)
+        self.assertTrue(rel["touches_diff"], rel)
+        self.assertEqual(rel["functions_in_diff"], ["parse_chunk @ /src/proj/src/parser.c:90"])
+
+
 @unittest.skipUnless(shutil.which("clang"), "needs clang")
 class TriageTest(unittest.TestCase):
     """SCANNER's report puts parse_chunk at /src/parser.c:25."""
