@@ -288,7 +288,27 @@ def _delta_relevance(r: TriageResult, delta_range, campaign) -> dict:
     except (_delta.DeltaError, OSError) as e:
         # Reporting, not gating: a diff we cannot read says nothing either way.
         return {"schema": _delta.RELEVANCE_SCHEMA, "error": str(e)}
-    return _delta.relevance(r.frames, targets)
+    return _delta.relevance(_relevance_frames(r), targets)
+
+
+#: Frames read from the sanitizer report for delta relevance.
+RELEVANCE_FRAMES = 64
+
+
+def _relevance_frames(r: TriageResult) -> list:
+    """Every frame of the report: the access stack and, for ASan, the "freed
+    by" and "previously allocated by" stacks. r.frames stops at
+    replay.REPORT_FRAMES (12), which on a use-after-free is usually the end of
+    the access and free stacks, and a diff that breaks a lifetime acts where
+    the object is created or freed: on AIxCC's mosquitto delta the removed
+    duplicate check was in dynsec_clients__config_load, frame #3 of the
+    allocation stack, and the crash was judged off-diff."""
+    from cc_fuzzer_core.crash import replay as _replay
+    out = list(r.frames)
+    for f in _replay.frames(r.sanitizer_excerpt or "", limit=RELEVANCE_FRAMES):
+        if f not in out:
+            out.append(f)
+    return out
 
 
 # ---------------------------------------------------------------------------
