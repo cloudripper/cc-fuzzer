@@ -198,6 +198,17 @@ class RealBinaryTest(unittest.TestCase):
                 again = replay.replay(self.scanner, str(out), harness="parser", attempts=1)
                 self.assertEqual(again.stack_hash, r.stack_hash)
 
+    def test_a_truncated_search_keeps_its_verified_progress(self):
+        """Budget spent mid-search: the smallest input the probe confirmed is
+        returned, not the original (a final re-check would need budget)."""
+        for budget in (1, 3, 8):
+            with self.subTest(max_probes=budget):
+                r = minimize.minimize(self.scanner, str(self.big), harness="parser",
+                                      max_probes=budget)
+                self.assertLess(r.size, r.original_size)
+                self.assertIn(b"BOOM", bytes(r.data))
+                self.assertIn("smallest verified input", r.reason)
+
     def test_it_refuses_an_instrumented_binary(self):
         rec = {"cmplog_binary": self.scanner["verify_binary"]}
         from cc_fuzzer_core import variants
@@ -207,3 +218,35 @@ class RealBinaryTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TruncatedSearchTest(unittest.TestCase):
+    """No compiler needed: the replay layer is faked so that any input holding
+    b"BOOM" reproduces the same bug."""
+
+    def test_budget_spent_mid_search_keeps_the_verified_progress(self):
+        from types import SimpleNamespace
+        from unittest import mock
+        from cc_fuzzer_core.crash import classify as classify_mod
+
+        def run_once(binary, path, timeout=None):
+            return (1, "BOOM") if b"BOOM" in Path(path).read_bytes() else (0, "")
+
+        base = SimpleNamespace(verdict="crash", stack_hash="h", binary="b", category="c",
+                               variant="replay", evidence_grade="strong")
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "in.bin"
+            payload = bytearray(b"\xab" * 4096)
+            payload[2000:2004] = b"BOOM"
+            src.write_bytes(bytes(payload))
+            with mock.patch.object(minimize._replay, "replay", return_value=base), \
+                    mock.patch.object(minimize._replay, "run_once", side_effect=run_once), \
+                    mock.patch.object(minimize._replay, "stack_hash", return_value="h"), \
+                    mock.patch.object(classify_mod, "classify",
+                                      side_effect=lambda out, rc: SimpleNamespace(
+                                          is_crash=bool(out), category="c")):
+                for budget in (1, 3, 8):
+                    r = minimize.minimize({}, str(src), max_probes=budget)
+                    self.assertLess(r.size, 4096, budget)
+                    self.assertIn(b"BOOM", r.data)
+                    self.assertIn("smallest verified input", r.reason)
