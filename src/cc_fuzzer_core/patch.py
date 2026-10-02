@@ -652,8 +652,10 @@ def _neighbours_gate(g: Mapping, run_after, pov: str, want: str, sensitivity) ->
                 try:
                     got = run_after(str(v))
                 except Exception as e:  # noqa: BLE001
-                    return Step(name, False, f"could not run a variant: {e}",
-                                time.monotonic() - t0, policy=policy)
+                    # the runner failing says nothing about the patch: the gate
+                    # did not run, and its policy decides (as with no map)
+                    return Step(name, policy != REQUIRED, f"could not run a variant: {e}",
+                                time.monotonic() - t0, ran=False, policy=policy)
                 if got.crashed and (not got.stack_hash or not want or got.stack_hash == want):
                     same.append(f"{o}^0x{m:02x}")
                 elif got.crashed:

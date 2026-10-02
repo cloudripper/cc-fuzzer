@@ -321,6 +321,22 @@ class ExtraGatesTest(unittest.TestCase):
         gate = [st for st in v.steps if st.name == "gate:neighbours"][0]
         self.assertIn("crash elsewhere", gate.detail)
 
+    def test_neighbours_that_cannot_run_a_variant_follows_its_policy(self):
+        """A runner failure (nasm deleting the runner's /dev/null) is not the
+        patch failing the gate: the gate did not run."""
+        pov = self.pov.read_bytes()
+
+        def after(data):
+            if data != pov:
+                raise RuntimeError("run-pov gave no answer")
+            return patch.PovRun(False)
+        v = self._validate([{"name": "neighbours", "neighbours": True, "policy": "preferred"}],
+                           after=after, sensitivity=self.SENS)
+        self.assertEqual((v.status, v.unverified_steps), (patch.FIXES, ("gate:neighbours",)))
+        v = self._validate([{"name": "neighbours", "neighbours": True}], after=after,
+                           sensitivity=self.SENS)
+        self.assertEqual(v.status, patch.INCONCLUSIVE, v.reason)
+
     def test_neighbours_without_a_map_follows_its_policy(self):
         v = self._validate([{"name": "neighbours", "neighbours": True}])
         self.assertEqual(v.status, patch.INCONCLUSIVE)

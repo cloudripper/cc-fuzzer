@@ -149,7 +149,7 @@ e70123cfac2ba971526f765f7179f7f6  src/cc_fuzzer_core/loop.py
 bb55e017ba8a659b9c8eccc1b73bec33  src/cc_fuzzer_core/manifest.py
 694449cba7f7b18a0e0ced0fde544c3c  src/cc_fuzzer_core/minimize.py
 0d9d5a6b363526c4bba2cdc149ee7852  src/cc_fuzzer_core/models.py
-8b96c2fe8305f8c497ba026e73b79345  src/cc_fuzzer_core/patch.py
+b931e2c8432da4d57213268a0bc52357  src/cc_fuzzer_core/patch.py
 e886a95f3444ff5e6fcce0985a0ef253  src/cc_fuzzer_core/paths.py
 a8e96344bbead5cc831262a078e5a489  src/cc_fuzzer_core/prescan/__init__.py
 c3372a3783a7853354357a0f72901ae1  src/cc_fuzzer_core/prescan/code_review_prescan.py
