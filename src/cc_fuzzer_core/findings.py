@@ -56,7 +56,12 @@ VERIFY_TIMEOUT_S = 30
 # detect_leaks, as before).
 ASAN_OPTIONS = "symbolize=1:abort_on_error=1:halt_on_error=1:print_stacktrace=1:detect_leaks=1"
 ASAN_OPTIONS_NO_LEAKS = "symbolize=1:abort_on_error=1:halt_on_error=1:print_stacktrace=1"
-UBSAN_OPTIONS = "halt_on_error=1:print_stacktrace=1:abort_on_error=1"
+# silence_unsigned_overflow=1 as OSS-Fuzz and its scorers run UBSan builds:
+# unsigned wrap-around is not undefined behaviour, and without it a replay
+# stops at the first harmless wrap (then minimizes toward it) instead of
+# the signed overflow the fuzzer found.
+UBSAN_OPTIONS = ("halt_on_error=1:print_stacktrace=1:abort_on_error=1:"
+                 "silence_unsigned_overflow=1")
 DROP_STAGES = ("artifact_filter", "deterministic_replay", "target_realistic_reproducer")
 DROP_PRINCIPLES = ("harness_correctness", "api_contract", "public_api_reachability", "entry_point_currency")
 VERIFIER_SOFT_MAX_LINES = 200

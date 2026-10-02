@@ -56,7 +56,12 @@ EXCERPT_MAX_CHARS = 6000
 # printed only "deadly signal" and the crash read as not_a_crash.
 ASAN_OPTIONS = ("symbolize=1:abort_on_error=1:halt_on_error=1"
                 ":print_stacktrace=1:detect_leaks=1:handle_sigill=1")
-UBSAN_OPTIONS = "halt_on_error=1:print_stacktrace=1:abort_on_error=1"
+# silence_unsigned_overflow=1 as OSS-Fuzz and its scorers run UBSan builds:
+# unsigned wrap-around is not undefined behaviour, and without it a replay
+# stops at the first harmless wrap (then minimizes toward it) instead of
+# the signed overflow the fuzzer found.
+UBSAN_OPTIONS = ("halt_on_error=1:print_stacktrace=1:abort_on_error=1:"
+                 "silence_unsigned_overflow=1")
 
 # verdicts
 CRASH, FLAKY, NO_CRASH = "crash", "flaky", "no-crash"

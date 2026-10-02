@@ -218,6 +218,60 @@ if __name__ == "__main__":
     unittest.main()
 
 
+
+UB_WRAP_THEN_OVERFLOW = r'''
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+volatile uint32_t u = 4000000000u;
+volatile int32_t s = 2147483000;
+int main(int argc, char **argv) {
+  uint32_t wrapped = u + u;          /* unsigned wrap: defined, silenced by OSS-Fuzz */
+  int32_t boom = s + (int32_t)(wrapped & 0xffff) + 1000;   /* signed overflow: UB */
+  printf("%u %d\\n", wrapped, boom);
+  return 0;
+}
+'''
+
+
+def _ubsan_ok() -> bool:
+    if not HAVE_CLANG:
+        return False
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "t.c"
+        p.write_text("int main(void){return 0;}")
+        return subprocess.run(["clang", "-fsanitize=undefined", str(p), "-o", str(Path(td) / "t")],
+                              capture_output=True).returncode == 0
+
+
+@unittest.skipUnless(_ubsan_ok(), "needs clang with UBSan")
+class UbsanReplayTest(unittest.TestCase):
+    """OSS-Fuzz's UBSan builds check unsigned overflow but leave it recoverable,
+    and run with silence_unsigned_overflow=1. Replay must do the same: with
+    halt_on_error=1 alone the first harmless wrap aborts the run, and the
+    signed overflow the fuzzer found is never seen (faad2: a fuzzer crash in
+    cfft.c replayed as an unsigned wrap in common.c, then minimized toward it)."""
+
+    def test_replay_reports_the_signed_overflow_not_the_unsigned_wrap(self):
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td)
+            src = d / "ub.c"
+            src.write_text(UB_WRAP_THEN_OVERFLOW)
+            b = d / "ub_fuzzer_verify"
+            p = subprocess.run(["clang", "-O0", "-g",
+                                "-fsanitize=signed-integer-overflow,unsigned-integer-overflow",
+                                "-fno-sanitize-recover=signed-integer-overflow",
+                                str(src), "-o", str(b)], capture_output=True, text=True)
+            if p.returncode != 0:
+                self.skipTest(f"cannot build the UBSan fixture: {p.stderr[:200]}")
+            r = d / "in.bin"
+            r.write_bytes(b"x")
+            res = R.replay({"verify_binary": str(b)}, str(r), harness="ub")
+            self.assertEqual(res.verdict, R.CRASH)
+            self.assertIn("signed integer overflow", res.summary_line + res.excerpt)
+            self.assertNotIn("unsigned integer overflow", res.excerpt)
+
+
 class LoaderErrorTest(unittest.TestCase):
     """A binary that cannot start (a shared library the host lacks) is an
     error about the environment, never "did not crash"."""
