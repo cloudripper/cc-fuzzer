@@ -42,6 +42,8 @@ packages = ["src/cc_fuzzer_core"]
 "templates" = "cc_fuzzer_core/data/templates"
 "references" = "cc_fuzzer_core/data/references"
 "prompts" = "cc_fuzzer_core/data/prompts"
+# skills a host without the plugin installs too (paths.data("skills", name))
+"skills/delta-sweep" = "cc_fuzzer_core/data/skills/delta-sweep"
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -53,6 +55,7 @@ include = [
   "/templates",
   "/references",
   "/prompts",
+  "/skills/delta-sweep",
   "/README.md",
   "/LICENSE",
 ]

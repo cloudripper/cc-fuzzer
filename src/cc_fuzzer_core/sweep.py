@@ -30,8 +30,7 @@ that rely on a terminator), int-type (an integer declaration or cast, not a
 pointer), free, loop. They pick what to look at; they decide nothing.
 
 CLI: `cc-fuzzer sweep init|show|mark|gate [--file F]`. The file defaults to
-<state>/delta-sweep.json in the campaign; a host without a campaign (a CRS)
-passes --file.
+$CC_FUZZER_SWEEP_FILE, else <state>/delta-sweep.json in the campaign.
 """
 from __future__ import annotations
 
@@ -257,7 +256,14 @@ def gate(doc: dict, *, stop_hook_active: bool = False, max_blocks: int = MAX_BLO
 # file and CLI
 # ---------------------------------------------------------------------------
 
+SWEEP_FILE_ENV = "CC_FUZZER_SWEEP_FILE"
+
+
 def default_file() -> Path:
+    """$CC_FUZZER_SWEEP_FILE (a host without a campaign sets it once), else
+    the campaign's <state>/delta-sweep.json."""
+    if os.environ.get(SWEEP_FILE_ENV):
+        return Path(os.environ[SWEEP_FILE_ENV])
     from cc_fuzzer_core.paths import campaign
     return campaign().state_dir / FILENAME
 
@@ -357,7 +363,7 @@ def register_cli(subparsers):
                               "delta sweep: a verdict for every risky line a diff changed")
 
     def common(v):
-        v.add_argument("--file", help=f"default: <state>/{FILENAME} in the campaign")
+        v.add_argument("--file", help=f"default: ${SWEEP_FILE_ENV}, else <state>/{FILENAME}")
         return v
 
     v = common(verbs.add_parser("init", help="build the checklist from a diff file or git range"))

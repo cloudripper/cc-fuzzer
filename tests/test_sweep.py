@@ -163,6 +163,21 @@ class CliTest(unittest.TestCase):
             hook = self._run("gate", "--hook", "--file", str(f), stdin="{}")
             self.assertEqual((hook.returncode, hook.stdout), (0, ""))
 
+    def test_the_file_can_come_from_the_environment(self):
+        with tempfile.TemporaryDirectory() as d:
+            diff, f = Path(d) / "x.diff", Path(d) / "env-sweep.json"
+            diff.write_text(DIFF)
+            env = {**os.environ, "PYTHONPATH": str(REPO / "src"), S.SWEEP_FILE_ENV: str(f)}
+            r = subprocess.run([sys.executable, "-m", "cc_fuzzer_core", "sweep", "init", str(diff)],
+                               capture_output=True, text=True, env=env, cwd=d)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertTrue(f.is_file())
+
+    def test_the_skill_ships_in_the_wheel(self):
+        text = (REPO / "pyproject.toml").read_text()
+        self.assertIn('"skills/delta-sweep" = "cc_fuzzer_core/data/skills/delta-sweep"', text)
+        self.assertTrue((REPO / "skills" / "delta-sweep" / "SKILL.md").is_file())
+
     def test_hook_without_a_sweep_allows(self):
         with tempfile.TemporaryDirectory() as d:
             r = self._run("gate", "--hook", "--file", str(Path(d) / "none.json"), stdin="{}")
