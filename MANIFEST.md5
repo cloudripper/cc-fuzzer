@@ -63,6 +63,7 @@ fd143692dde7ec039a8eaecb7c02673f  scripts/_lib/fuzz-config.sh
 c3b3a0a535596471fb200b87e299872f  scripts/check-campaign-state.sh
 ba386e699599dafea99922fd85dcc963  scripts/check-seed-safety.sh
 16f0165c3c8151cf77f66f410757b64d  scripts/check-slot-liveness.sh
+7d7ec0ae728903c18d050da5e5686142  scripts/claude-code-contract.py
 42050901a7445fc4e1f95851934935f8  scripts/code-review-run.sh
 ba2c91c8bd488a392fb2a616c6f9d324  scripts/corpus-quarantine.sh
 254c913328d727726cff3d641ddb6d61  scripts/cross-ref-findings.sh
@@ -70,7 +71,7 @@ ba2c91c8bd488a392fb2a616c6f9d324  scripts/corpus-quarantine.sh
 6cc42ad94c0d4c4fa38189aace915f9e  scripts/cve-lookup.py
 2064ec5a38f5f635e1638e1c9c3cb807  scripts/detect-crashes.sh
 ded9c4697f621e5f3380f94944c803fe  scripts/dictionaries.sh
-1efc1e9312d066b85805447c4a5a99bd  scripts/doctor.sh
+0cb55c67c24dd6f5ded42f88e3ac8271  scripts/doctor.sh
 8e692cae3d9f755ef8cf5a7dac1cf4fb  scripts/enforce-readonly.sh
 786c00f3a917c4a6cc60395ab487ffcb  scripts/env-check.sh
 92b4f9dfa74a3185d5214350f2c5266f  scripts/events.sh
@@ -105,7 +106,7 @@ b31fd19c17b10ca9c3604e67289155a0  scripts/validate-state.sh
 a7dc0b04ea7777c8acdae764cd238ec0  scripts/write-harness-built.sh
 0084d9a1bababdc76cb8023aff65a0f0  scripts/yolo-route.sh
 767ab4f0522d6d8e429608cc5cb11717  scripts/yolo-state.sh
-97d9819ceaceeb6936e3bacd85c4504b  src/cc_fuzzer_core/__init__.py
+8ff0299c63570391f7f9946f245aac47  src/cc_fuzzer_core/__init__.py
 81df487b0971d3b41a1613371d67df65  src/cc_fuzzer_core/__main__.py
 fe3b8d694186b83378094e38a6b18f61  src/cc_fuzzer_core/builders/__init__.py
 9cdf97f5b1fa3e48755cabf5868ef95e  src/cc_fuzzer_core/builders/clang.py

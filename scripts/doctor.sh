@@ -144,6 +144,21 @@ fi
 echo ""
 
 #------------------------------------------------------------------------------
+# Check 3d: the Claude Code running this plugin vs the version it was tested on
+# (claude-code.contract.json). Older only warns: nothing is refused.
+#------------------------------------------------------------------------------
+echo "Checking Claude Code version against the tested one..."
+CC_OUT=$(python3 "$PLUGIN_ROOT/scripts/claude-code-contract.py" installed 2>&1)
+case $? in
+  0) ok "$CC_OUT" ;;
+  3) warn "$CC_OUT"
+     echo "       Hooks, agent frontmatter or tools the plugin relies on may behave differently."
+     echo "       Fix: update Claude Code (claude update), or see claude-code.contract.json for what it needs." ;;
+  *) ok "Claude Code version not checked ($CC_OUT)" ;;
+esac
+echo ""
+
+#------------------------------------------------------------------------------
 # Check 3c: agents/*.md <-> prompts/*.md drift (rendered output vs source)
 #------------------------------------------------------------------------------
 echo "Checking agents/ against the prompt sources (prompts/)..."
