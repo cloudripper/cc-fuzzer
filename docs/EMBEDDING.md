@@ -86,6 +86,8 @@ crash of a kind you screened out). Without `screen` every input is replayed
 an input that fired on the fuzzer but not on the screening run is worth one
 unscreened retry if you can spare it.
 
+**Delta: sweep every changed sink.** A delta can plant several flaws, and an agent that chases the first suspicious call skips the rest. `cc-fuzzer sweep init <diff> --file <f>` makes a checklist with one item per changed line that looks like a sink (format calls with no literal format, including the project's own `*f` wrappers the diff shows taking a literal elsewhere; copies; size and pointer arithmetic; indexes; string scans; integer types; frees; loops). `sweep mark` records a verdict, and `crash`/`reached` must name the input that was run. `hooks/sweep-gate.sh --file <f>` is a Stop hook that refuses to end a turn while items are open: at most 3 times, and again only after progress. It's opt-in: install it through your own `--settings` (cc_fuzzer_core.sweep).
+
 **If your oracle is the scoring oracle, say so.** In OSS-CRS every binary is a
 libFuzzer build, so local replay always grades `weak` and nothing would ever
 be submittable. Declare the oracle authoritative and its confirmation upgrades
@@ -780,6 +782,7 @@ source that moved under the harness.
 | **validate a patch** | `crs.check_patch`, `patch` | `patch validate`, `patch scope` |
 | **group PoVs into bugs** | `crs.cluster`, `crs.merge_by_patch` | `crs cluster` |
 | **what to submit first** | `crs.rank` | `crs rank` |
+| **delta sweep checklist** | `sweep` | `sweep init/show/mark/gate` |
 | seed safety | `crs.safe_seeds`, `quarantine` | `quarantine run` |
 | cmplog dictionary | `crs.dictionary`, `cmplog` | `cmplog extract` |
 | delta targets | `crs.delta_targets`, `delta` | `delta find` |

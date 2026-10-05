@@ -39,6 +39,13 @@ class ContractCoversThePlugin(unittest.TestCase):
         self.assertIn("SubagentStop", events)
         self.assertLessEqual(events, REQ["hook_event"], events - REQ["hook_event"])
 
+    def test_opt_in_hooks(self):
+        """Hook scripts not in hooks.json (a host installs them) name their event."""
+        for p in (REPO / "hooks").glob("*.sh"):
+            m = re.search(r"^# (\w+) hook, OPT-IN", p.read_text(), re.M)
+            if m:
+                self.assertIn(m.group(1), REQ["hook_event"], p.name)
+
     def test_hook_output_fields(self):
         used = set()
         for p in [*(REPO / "hooks").glob("*.sh"), *(REPO / "scripts").glob("*.sh")]:

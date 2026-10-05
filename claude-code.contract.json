@@ -4,16 +4,58 @@
   "version": "2.1.285",
   "package": "@anthropic-ai/claude-code-linux-x64",
   "requires": {
-    "hook_event": ["PreToolUse", "PostToolUse", "SessionStart", "SubagentStop"],
-    "hook_input": ["tool_name", "tool_input", "cwd", "source", "transcript_path",
-                   "agent_transcript_path", "agent_id", "agent_type"],
-    "hook_output": ["hookSpecificOutput", "hookEventName", "additionalContext", "permissionDecision",
-                    "permissionDecisionReason", "decision"],
-    "env": ["CLAUDE_PLUGIN_ROOT"],
-    "frontmatter": ["name", "description", "model", "effort", "tools", "argument-hint",
-                    "disable-model-invocation"],
-    "model_alias": ["opus", "sonnet", "haiku"],
-    "tool": ["Bash", "Read", "Write", "Edit", "Grep", "Glob"]
+    "hook_event": [
+      "PreToolUse",
+      "PostToolUse",
+      "SessionStart",
+      "SubagentStop",
+      "Stop"
+    ],
+    "hook_input": [
+      "tool_name",
+      "tool_input",
+      "cwd",
+      "source",
+      "transcript_path",
+      "agent_transcript_path",
+      "agent_id",
+      "agent_type",
+      "stop_hook_active"
+    ],
+    "hook_output": [
+      "hookSpecificOutput",
+      "hookEventName",
+      "additionalContext",
+      "permissionDecision",
+      "permissionDecisionReason",
+      "decision",
+      "reason"
+    ],
+    "env": [
+      "CLAUDE_PLUGIN_ROOT"
+    ],
+    "frontmatter": [
+      "name",
+      "description",
+      "model",
+      "effort",
+      "tools",
+      "argument-hint",
+      "disable-model-invocation"
+    ],
+    "model_alias": [
+      "opus",
+      "sonnet",
+      "haiku"
+    ],
+    "tool": [
+      "Bash",
+      "Read",
+      "Write",
+      "Edit",
+      "Grep",
+      "Glob"
+    ]
   },
   "semantics": {
     "Grep": {
@@ -31,9 +73,16 @@
     "additionalContext": {
       "verified": "2.1.285",
       "meaning": "PostToolUse/SessionStart output added to the model's context (detect-crashes.sh, env-check.sh)."
+    },
+    "stop_hook_active": {
+      "verified": "2.1.285",
+      "meaning": "True while Claude Code is already continuing because a Stop hook blocked. Claude Code advises letting the turn end then, and overrides a hook after CLAUDE_CODE_STOP_HOOK_BLOCK_CAP (default 8) consecutive blocks. hooks/sweep-gate.sh blocks again only after progress, at most 3 times."
     }
   },
   "history": [
-    {"version": "2.1.285", "note": "first contract, 2026-10-05; the ParallaxCRS images pin the same version"}
+    {
+      "version": "2.1.285",
+      "note": "first contract, 2026-10-05; the ParallaxCRS images pin the same version"
+    }
   ]
 }
