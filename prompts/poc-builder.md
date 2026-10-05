@@ -353,6 +353,8 @@ Based on the bug class and triager's evidence, decide what impact you should be 
 | `heap-use-after-free` | A (with controlled object replacement) or B (read/write primitive) |
 | `stack-buffer-overflow` | A on systems without stack canaries; B with canaries; A possible via SEH/exception handlers |
 | `null-deref` | C (pure DoS) unless attacker can control the dereferenced address (then A) |
+| `wild-read` / `wild-access` | B: the address is not null; find which input bytes steer it |
+| `wild-write` | A: a write to a non-null wild address |
 | `assertion-failure` | C (process abort) almost always |
 | `integer-overflow` | A or B when the overflow feeds a subsequent allocation/index; C when it doesn't |
 | `format-string` | A (write-what-where) |

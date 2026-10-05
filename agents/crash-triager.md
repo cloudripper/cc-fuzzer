@@ -165,7 +165,7 @@ Infrastructure to skip when comparing top frames: `libfuzzer*`, `asan_*`, `__asa
 
 | Bug class (from SUMMARY) | Rule |
 |---|---|
-| `heap-buffer-overflow`, `stack-buffer-overflow`, `global-buffer-overflow`, `null-deref` | Top 3 non-infrastructure frames identical across runs (strict). |
+| `heap-buffer-overflow`, `stack-buffer-overflow`, `global-buffer-overflow`, `null-deref`, `wild-read`, `wild-write`, `wild-access`, `format-string` | Top 3 non-infrastructure frames identical across runs (strict). |
 | `heap-use-after-free` | Free-site frame identical across runs AND use-site frame within the same translation unit. ASan reports both stacks (the allocation, the free, and the use); the free stack is the dedup key. The use can vary by line — the free is the bug. |
 | `use-of-uninitialized-value` (MSan) or UBSan uninit reads | Alloc-site frame identical AND read-site frame within the same translation unit. |
 | `stack-overflow` | Top frame identical (recursion entry point). Deeper frames will differ as the stack unwinds at different depths — strict top-3 matching is wrong for this class and will declare every stack overflow non-deterministic. |
@@ -356,7 +356,7 @@ For exact field shapes, see STATE_SCHEMA `### state/findings.jsonl § finding/v2
 ### Step 5 — Severity (CVSSv3.1 + CWE)
 
 - **CVSSv3.1 vector** — compute base score from attack-vector / attack-complexity / privileges-required / user-interaction / scope / CIA-impact components based on bug class and reachability.
-- **CWE id** — pick the most SPECIFIC applicable id. `CWE-787` for OOB write, `CWE-125` for OOB read, `CWE-416` for UAF, `CWE-476` for null-deref, `CWE-190` for integer overflow.
+- **CWE id** — pick the most SPECIFIC applicable id. `CWE-787` for OOB write, `CWE-125` for OOB read, `CWE-416` for UAF, `CWE-476` for null-deref, `CWE-134` for format-string, `CWE-190` for integer overflow.
 - **`cvss_v3_1.source` MUST be `"triager_estimate"`**. The maintainer may revise it; you are not authoritative.
 
 Update `cvss_v3_1` and `cwe_id` via the same in-place edit pattern. If the assessment changes the exploitability category set in Step 4, update that too:

@@ -91,6 +91,37 @@ class TestClassifyApi(unittest.TestCase):
         r = cl.classify(text)
         self.assertEqual((r.category, r.top_frame), ("null-deref", "real_fn @ src/x.c:44"))
 
+    def test_segv_is_split_by_address_and_access(self):
+        def segv(addr, access=None, hint=""):
+            text = f"==1==ERROR: AddressSanitizer: SEGV on unknown address {addr} (pc 0x1 bp 0x2 sp 0x3 T0)\n"
+            if access:
+                text += f"==1==The signal is caused by a {access} memory access.\n"
+            if hint:
+                text += f"==1==Hint: {hint}\n"
+            return cl.classify(text + "    #0 0x1 in f src/x.c:1:2\n").category
+        self.assertEqual(segv("0x000000000000", "READ", "address points to the zero page."), "null-deref")
+        self.assertEqual(segv("0x000000000018", "WRITE"), "null-deref")      # null + a field offset
+        self.assertEqual(segv("0x602000a1b2c8", "WRITE"), "wild-write")
+        self.assertEqual(segv("0x602000a1b2c8", "READ"), "wild-read")
+        self.assertEqual(segv("0x602000a1b2c8", "UNKNOWN"), "wild-access")
+        self.assertEqual(segv("0x602000a1b2c8"), "wild-access")
+        self.assertEqual(cl.classify_file(LOGS / "asan-segv-wild-write.log").category, "wild-write")
+
+    def test_a_segv_inside_printf_is_a_format_string_bug(self):
+        r = cl.classify_file(LOGS / "asan-segv-printf.log")
+        self.assertEqual((r.category, r.top_frame), ("format-string", "log_message @ /src/target/src/log.c:44"))
+        # printf below the top frames is just a caller, not the fault
+        text = ("==1==ERROR: AddressSanitizer: SEGV on unknown address 0x602000a1b2c8\n"
+                "==1==The signal is caused by a READ memory access.\n"
+                "    #0 0x1 in a src/x.c:1:2\n    #1 0x2 in b src/x.c:2:2\n"
+                "    #2 0x3 in c src/x.c:3:2\n    #3 0x4 in snprintf libc.c:9\n")
+        self.assertEqual(cl.classify(text).category, "wild-read")
+
+    def test_new_crash_categories_are_valid_findings(self):
+        from cc_fuzzer_core import enums
+        for cat in ("wild-read", "wild-write", "wild-access", "format-string"):
+            self.assertIn(cat, enums.CATEGORIES_CRASH)
+
     def test_not_a_crash(self):
         r = cl.classify("all good\n")
         self.assertFalse(r.is_crash)

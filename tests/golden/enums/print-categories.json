@@ -17,6 +17,7 @@
     "canonicalization",
     "differential-divergence",
     "flaky",
+    "format-string",
     "global-buffer-overflow",
     "harness-artifact",
     "heap-buffer-overflow",
@@ -32,6 +33,9 @@
     "stack-buffer-overflow",
     "stack-overflow",
     "state-confusion",
-    "timeout"
+    "timeout",
+    "wild-access",
+    "wild-read",
+    "wild-write"
   ]
 }

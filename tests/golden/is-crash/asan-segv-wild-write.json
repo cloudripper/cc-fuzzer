@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/is-crash.sh",
+    "<ROOT>/tests/fixtures/sanitizer-logs/asan-segv-wild-write.log"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {},
+  "stderr": [],
+  "stdout": [
+    "{\"is_crash\":true,\"category\":\"wild-write\",\"summary_line\":\"SUMMARY: AddressSanitizer: SEGV /src/target/src/table.c:31:20 in store_entry\",\"top_frame\":\"store_entry @ /src/target/src/table.c:31\",\"exit_code\":null}"
+  ]
+}

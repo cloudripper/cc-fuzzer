@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "bash",
+    "<ROOT>/scripts/is-crash.sh",
+    "<ROOT>/tests/fixtures/sanitizer-logs/asan-segv-printf.log"
+  ],
+  "created_dirs": [],
+  "deleted": [],
+  "exit_code": 0,
+  "files": {},
+  "stderr": [],
+  "stdout": [
+    "{\"is_crash\":true,\"category\":\"format-string\",\"summary_line\":\"SUMMARY: AddressSanitizer: SEGV stdio-common/vfprintf-internal.c:1688:17 in __vfprintf_internal\",\"top_frame\":\"log_message @ /src/target/src/log.c:44\",\"exit_code\":null}"
+  ]
+}

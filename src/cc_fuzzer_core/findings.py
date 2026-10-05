@@ -977,7 +977,8 @@ RIGHT: findings.sh add "abc123def456" "null-deref" "func\@file.c:42" "medium" "o
 The id is allocated by this script - do NOT pass --id. The argument order is:
   1. stack_hash         (16-hex-char sha256-prefix of the crash stack)
   2. category           (crash: heap-buffer-overflow heap-use-after-free stack-buffer-overflow
-                                  global-buffer-overflow stack-overflow null-deref assertion-failure
+                                  global-buffer-overflow stack-overflow null-deref wild-read wild-write
+                                  wild-access format-string assertion-failure
                                   oom timeout harness-artifact, or ubsan-<kind>;
                           logic: invariant-violation roundtrip-mismatch differential-divergence
                                   parser-differential auth-bypass access-control incorrect-validation

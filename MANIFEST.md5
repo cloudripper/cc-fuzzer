@@ -9,7 +9,7 @@
 # plugin releases (the submodule tracks upstream; the bundled pack may be
 # refreshed out of band), so drift there is expected and must not trip the
 # integrity check. The SAST driver (src/cc_fuzzer_core/prescan/sast_scan.py) IS tracked.
-14d34aecc67562ea3457704efcfbc0e1  STATE_SCHEMA.md
+c753233cb0fe17d3307ef077128440cb  STATE_SCHEMA.md
 8fae3fd33e21efd25b36a89856d5e076  bin/cc-fuzzer
 6b4787d332f9fc179dfa1823ec79050d  dictionaries/INDEX.md
 070c1e76492ecaf0bf37c051628df96c  dictionaries/bidi-controls.dict
@@ -22,12 +22,12 @@ d6e48134299bc68341ef7fbe64f7afd4  dictionaries/utf-edge-cases.dict
 5168e13af558ffa7c7be666f1e9adc65  prompts/code-reviewer.md
 2131afacd893799b08c7b09a41161551  prompts/concolic-executor.md
 db5ba57f70da80b061df7a79d8ed1890  prompts/coverage-analyst.md
-7bdefa283525798475d6ac63ae2b8596  prompts/crash-triager.md
+90c57a138e0087d30dd08a5aa099e8c9  prompts/crash-triager.md
 aa58f8b40773d0f58332ffb9f6cad9ef  prompts/fuzz-orchestrator.md
 18286dda29198877049e714846a7446a  prompts/harness-writer.md
 201f38494627fc0eccdca3587c0d2afe  prompts/mutator.md
 90a2cd8aaa5f156041f97b73efe18738  prompts/planner-consult.md
-a7d649794da4beb45cdc5900f3428030  prompts/poc-builder.md
+187f0345161c5120db2a7809ef94a8f7  prompts/poc-builder.md
 7632a968115f9148ee94fa44f1a2429d  prompts/profiles/host.md
 e981eccd7c38abf685b22adab42b6a99  prompts/profiles/nix.md
 1b200f4d0ce8426151d1a69f16a2785b  prompts/profiles/oss-fuzz.md
@@ -118,7 +118,7 @@ b749542267f72f8d13d502718b1e6a7c  src/cc_fuzzer_core/cmplog.py
 546441c1cfd7f30452d96f205b7b8fca  src/cc_fuzzer_core/config.py
 82b020ef6ef7e983722bb0485f8d4d89  src/cc_fuzzer_core/coverage.py
 d6a572ee24ebae69f3429d849fef7c14  src/cc_fuzzer_core/crash/__init__.py
-d13a322aa202a8f0e107ea1760d4085b  src/cc_fuzzer_core/crash/classify.py
+1ede0f50576c771f8d0a37f9ff1db535  src/cc_fuzzer_core/crash/classify.py
 16996fd420eeee27bbf1fd8ea9906bd2  src/cc_fuzzer_core/crash/detect.py
 e9bd9e7fe7d581e1f87a015f996156d7  src/cc_fuzzer_core/crash/pipeline.py
 53506bca8e007f72b514b7eaabe83f05  src/cc_fuzzer_core/crash/replay.py
@@ -129,11 +129,11 @@ f1774217b1b8c3afd3e5b8f7ced2b6eb  src/cc_fuzzer_core/crash/verifiers/realism.py
 5a7be1f37b34d774d4ea9f5664051169  src/cc_fuzzer_core/data/models.json
 6540cacbc1ae44d7e50e73fe373cd80d  src/cc_fuzzer_core/delta.py
 2282bc83bcf1d654910b34d37d68302f  src/cc_fuzzer_core/determinism.py
-8fabcb44c591fee602b0f0c33c9d618a  src/cc_fuzzer_core/enums.py
+56e1fb2d8cef7250ca4ebac5b1e111f8  src/cc_fuzzer_core/enums.py
 890a68e5778a28fc7c593f7bd506099e  src/cc_fuzzer_core/errors.py
 5fcdb1075b43c3a193d755781fdd3939  src/cc_fuzzer_core/events.py
 cf5e5bc349950a4ddb58e01214a26b46  src/cc_fuzzer_core/features.py
-a03c70ec493ee7b979036aaf548c08f6  src/cc_fuzzer_core/findings.py
+8ae7971da9c62b26555df0e2e7fc3ee1  src/cc_fuzzer_core/findings.py
 805843bd588274cb2c1a17c8bca105e1  src/cc_fuzzer_core/gate.py
 95e52b507528cc8f268c7bcb82eda50d  src/cc_fuzzer_core/integrations/__init__.py
 d23d3599c29acab35b8b4e9473dfa01b  src/cc_fuzzer_core/integrations/cull/__init__.py

@@ -1,0 +1,10 @@
+AddressSanitizer:DEADLYSIGNAL
+=================================================================
+==779==ERROR: AddressSanitizer: SEGV on unknown address 0x7ffd00000041 (pc 0x7f3a1b2c bp 0x7ffc sp 0x7ffc T0)
+==779==The signal is caused by a READ memory access.
+    #0 0x7f3a1b2c in __vfprintf_internal stdio-common/vfprintf-internal.c:1688:17
+    #1 0x4a2c10 in vsnprintf /src/llvm-project/compiler-rt/lib/sanitizer_common/sanitizer_common_interceptors.inc:1660:1
+    #2 0x4f1a2b in log_message /src/target/src/log.c:44:3
+    #3 0x4f2000 in LLVMFuzzerTestOneInput /src/fuzz/log_fuzzer.c:5:5
+AddressSanitizer can not provide additional info.
+SUMMARY: AddressSanitizer: SEGV stdio-common/vfprintf-internal.c:1688:17 in __vfprintf_internal

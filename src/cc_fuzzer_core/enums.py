@@ -37,6 +37,7 @@ import sys
 CATEGORIES_CRASH = frozenset({
     "heap-buffer-overflow", "heap-use-after-free", "stack-buffer-overflow",
     "global-buffer-overflow", "stack-overflow", "null-deref",
+    "wild-read", "wild-write", "wild-access", "format-string",
     "assertion-failure", "oom", "timeout", "flaky", "harness-artifact",
 })
 # Logic classes: oracle-driven findings (oracle_type != crash, carry divergence).

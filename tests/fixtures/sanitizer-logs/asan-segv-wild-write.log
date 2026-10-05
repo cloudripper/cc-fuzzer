@@ -1,0 +1,9 @@
+AddressSanitizer:DEADLYSIGNAL
+=================================================================
+==778==ERROR: AddressSanitizer: SEGV on unknown address 0x602000a1b2c8 (pc 0x4f1a2b bp 0x7ffc sp 0x7ffc T0)
+==778==The signal is caused by a WRITE memory access.
+    #0 0x4f1a2b in store_entry /src/target/src/table.c:31:20
+    #1 0x4f1b10 in load_table /src/target/src/table.c:58:5
+    #2 0x4f2000 in LLVMFuzzerTestOneInput /src/fuzz/table_fuzzer.c:5:5
+AddressSanitizer can not provide additional info.
+SUMMARY: AddressSanitizer: SEGV /src/target/src/table.c:31:20 in store_entry

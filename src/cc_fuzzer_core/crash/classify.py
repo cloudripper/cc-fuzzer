@@ -12,8 +12,15 @@ bash one, first match wins:
   7. libFuzzer timeout / DEADLYSIGNAL
   8. the exit code, when given         (134/139/137/135/132)
 
+An ASan SEGV is split by where it faulted: null-deref (the zero page, or an
+address below NEAR_NULL; also when the report says nothing about the address),
+wild-read / wild-write / wild-access (any other address, by the access kind
+ASan names), and format-string when one of the top frames is a printf-family
+function (a %s / %n walking a bad pointer).
+
 top_frame is the first non-infrastructure "in <function> <file:line>" frame,
-column stripped. (is-crash.sh named its awk variable `func`, a gawk keyword,
+column stripped; for a format-string crash, the first one outside printf.
+(is-crash.sh named its awk variable `func`, a gawk keyword,
 so top_frame used to be empty under gawk; both implementations now fill it.)
 
 Classification.to_json() is is-crash.sh's single output line, byte for byte:
@@ -46,6 +53,14 @@ INFRA_RE = re.compile(r"__sanitizer_|__asan_|__ubsan_|__msan_|__lsan_|compiler-r
 
 _KNOWN_SUMMARY = {"heap-buffer-overflow", "stack-buffer-overflow", "global-buffer-overflow",
                   "heap-use-after-free", "use-of-uninitialized-value", "stack-overflow", "null-deref"}
+
+# An ASan SEGV below this address is a null pointer plus a field offset.
+NEAR_NULL = 0x10000
+_SEGV_ADDR_RE = re.compile(r"SEGV on unknown address (?:0x)?([0-9a-fA-F]+)")
+_SEGV_ACCESS_RE = re.compile(r"The signal is caused by a (READ|WRITE|UNKNOWN) memory access")
+_ZERO_PAGE = "address points to the zero page"
+_PRINTF_RE = re.compile(r"printf")
+_PRINTF_FRAMES = 3   # how deep, from #0, a printf-family frame marks a format-string crash
 
 _UBSAN = (("signed integer overflow", "signed-integer-overflow"),
           ("unsigned integer overflow", "integer-overflow"),
@@ -107,8 +122,37 @@ def _category(line: str, pattern) -> str:
     return m.group(1) if m else line
 
 
-def top_frame(lines) -> str:
-    """First non-infrastructure frame as "function @ file:line" ("" if none)."""
+def _frame_functions(lines, n: int) -> list[str]:
+    """The function names of the first n stack frames, infrastructure included."""
+    out = []
+    for ln in lines:
+        if len(out) >= n:
+            break
+        if _FRAME_RE.search(ln):
+            fields = ln.split()
+            if "in" in fields:
+                i = fields.index("in")
+                out.append(fields[i + 1] if i + 1 < len(fields) else "")
+    return out
+
+
+def segv_category(lines) -> str:
+    """Split an ASan SEGV report (module docstring)."""
+    if any(_PRINTF_RE.search(fn) for fn in _frame_functions(lines, _PRINTF_FRAMES)):
+        return "format-string"
+    text = "\n".join(lines)
+    if _ZERO_PAGE in text:
+        return "null-deref"
+    addr = _SEGV_ADDR_RE.search(text)
+    access = _SEGV_ACCESS_RE.search(text)
+    if addr is None or int(addr.group(1), 16) < NEAR_NULL:
+        return "null-deref"
+    return {"READ": "wild-read", "WRITE": "wild-write"}.get(access.group(1) if access else "", "wild-access")
+
+
+def top_frame(lines, skip=None) -> str:
+    """First non-infrastructure frame as "function @ file:line" ("" if none);
+    frames whose function matches `skip` are passed over too."""
     for ln in lines:
         if not _FRAME_RE.search(ln):
             continue
@@ -118,7 +162,7 @@ def top_frame(lines) -> str:
                 fn = fields[i + 1] if i + 1 < len(fields) else ""
                 loc = fields[i + 2] if i + 2 < len(fields) else ""
                 frame = f"{fn} @ {_COLUMN_RE.sub(_KEEP_LINE, loc, count=1)}"
-                if not INFRA_RE.search(frame):
+                if not INFRA_RE.search(frame) and not (skip and skip.search(fn)):
                     return frame
                 break
     return ""
@@ -136,7 +180,7 @@ def classify(text: str, exit_code: str | int | None = None) -> Classification:
         is_crash, summary = True, line
         category = _category(line, _SUMMARY_CAT_RE)
         if category not in _KNOWN_SUMMARY and re.search(r"SEGV|null", line):
-            category = "null-deref"
+            category = segv_category(lines) if "SEGV" in line else "null-deref"
 
     if not is_crash:
         line = _first(lines, _ASAN_ERR_RE)
@@ -144,7 +188,7 @@ def classify(text: str, exit_code: str | int | None = None) -> Classification:
             is_crash, summary = True, line
             category = _category(line, _ASAN_ERR_CAT_RE)
             if category == "SEGV":
-                category = "null-deref"
+                category = segv_category(lines)
 
     if not is_crash:
         line = _first(lines, re.compile(": runtime error: "))
@@ -191,7 +235,9 @@ def classify(text: str, exit_code: str | int | None = None) -> Classification:
         is_crash = True
         category, summary = _EXIT_CODES[ec]
 
-    return Classification(is_crash, category, summary, top_frame(lines) if is_crash else "", ec)
+    # a format-string crash faults inside printf; the frame worth naming is its caller
+    frame = top_frame(lines, _PRINTF_RE if category == "format-string" else None) if is_crash else ""
+    return Classification(is_crash, category, summary, frame, ec)
 
 
 def classify_file(path, exit_code=None) -> Classification:
