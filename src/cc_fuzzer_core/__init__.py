@@ -12,4 +12,4 @@ each registers its own `cc-fuzzer <subsystem> <verb>` subcommands through
 cc_fuzzer_core.cli.
 """
 
-__version__ = "0.36.1"
+__version__ = "0.36.2"

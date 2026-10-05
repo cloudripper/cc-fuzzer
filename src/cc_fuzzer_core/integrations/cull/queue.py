@@ -5,8 +5,13 @@ cull ranks; it never filters. A candidate whose reachability nothing showed
 spending a model call on it before the reached candidates is spending it on
 the least likely bug in the list. So:
 
-    1. rank order within `harness`, then `indirect`, then `unknown`
-       (`unknown`: a cull that predates reachability; ordered by rank alone)
+    1. the reached candidates (`harness`, `indirect`, `unknown`: a cull that
+       predates reachability) in cull's own rank order. cull's score already
+       weighs whether attacker data reaches each one; sorting by tier first
+       counted that twice and threw away the rest of its evidence. On the
+       qualification runs it moved lcms' CPV from 816th to ~1,600th and
+       sqlite3's from 375th to ~9,000th (tiers of 1,110 and 8,991
+       candidates). The tier only breaks ties.
     2. `none-found` only once the reached tiers are exhausted (every one of
        them is in `done`), or while the budget left is at least
        cull.none_found_budget_floor (default 0.3)
@@ -14,10 +19,10 @@ the least likely bug in the list. So:
 `budget_remaining` is a fraction in [0, 1]; None means "not tracked", which
 admits none-found only after the reached tiers.
 
-Delta mode (`delta=True`) asks what the diff introduced. Inside each tier
-the candidates nearest the change come first, by `diff_proximity`: in-diff,
+Delta mode (`delta=True`) asks what the diff introduced. The reached
+candidates nearest the change come first, by `diff_proximity`: in-diff,
 changed-function, diff-flow, near-change, changed-file, then none; position
-breaks ties. No candidate moves between tiers. A held none-found candidate
+breaks ties, then tier. A held none-found candidate
 is admitted anyway when its label is in-diff, changed-function or diff-flow:
 the call graph that found no path misses edges, and the diff says the code
 changed right there.
@@ -55,13 +60,10 @@ def order(candidates: Iterable[Mapping], *, done: Iterable[str] = (),
     floor = float(settings(config)["none_found_budget_floor"])
     done = set(done)
     cands = [c for c in candidates if c.get("candidate_id") not in done]
-    if delta:
-        by_rank = lambda c: (_band(c), c.get("position") or 10**9)   # noqa: E731
-    else:
-        by_rank = lambda c: (c.get("position") or 10**9)             # noqa: E731
-    reached = []
-    for tier in REACHED:
-        reached += sorted((c for c in cands if c.get("reach_tier") == tier), key=by_rank)
+    def by_rank(c):
+        tier = REACHED.index(c["reach_tier"]) if c.get("reach_tier") in REACHED else len(REACHED)
+        return ((_band(c),) if delta else ()) + (c.get("position") or 10**9, tier)
+    reached = sorted((c for c in cands if c.get("reach_tier") in REACHED), key=by_rank)
     none_found = sorted((c for c in cands if c.get("reach_tier") not in REACHED), key=by_rank)
     if not reached:
         why = "reached tiers exhausted"

@@ -240,16 +240,20 @@ class QueueTest(unittest.TestCase):
     def ids(self, r):
         return [c["candidate_id"] for c in r["queue"]]
 
-    def test_queue_tier_order(self):
+    def test_reached_candidates_in_culls_order(self):
+        """cull's position already weighs reachability; the tier only breaks ties."""
         r = queue.order(self.C)
-        self.assertEqual(self.ids(r), ["h1", "h2", "i1", "u1"])
+        self.assertEqual(self.ids(r), ["i1", "h1", "h2", "u1"])
         self.assertEqual([c["candidate_id"] for c in r["held"]], ["n1"])
+        tie = [{"candidate_id": "i", "reach_tier": "indirect", "position": 1},
+               {"candidate_id": "h", "reach_tier": "harness", "position": 1}]
+        self.assertEqual(self.ids(queue.order(tie)), ["h", "i"])
 
     def test_none_found_after_the_reached_tiers_are_exhausted(self):
         r = queue.order(self.C, done=["h1", "h2", "i1", "u1"])
         self.assertEqual(self.ids(r), ["n1"])
 
-    def test_delta_orders_by_diff_proximity_within_each_tier(self):
+    def test_delta_orders_by_diff_proximity_then_position(self):
         C = [{"candidate_id": "h_none", "reach_tier": "harness", "position": 1},
              {"candidate_id": "h_file", "reach_tier": "harness", "position": 2,
               "diff_proximity": {"label": "changed-file", "hops": None}},
@@ -267,8 +271,8 @@ class QueueTest(unittest.TestCase):
               "diff_proximity": {"label": "in-diff", "hops": None}},
              {"candidate_id": "i_none", "reach_tier": "indirect", "position": 9}]
         self.assertEqual(self.ids(queue.order(C, delta=True)),
-                         ["h_in1", "h_in2", "h_fn", "h_flow", "h_near", "h_file", "h_none",
-                          "i_in", "i_none"])
+                         ["h_in1", "h_in2", "i_in", "h_fn", "h_flow", "h_near", "h_file", "h_none",
+                          "i_none"])
         self.assertEqual(self.ids(queue.order(C)),
                          ["h_none", "h_file", "h_near", "h_flow", "h_fn", "h_in1", "h_in2",
                           "i_in", "i_none"], "without delta: position only")
@@ -282,18 +286,17 @@ class QueueTest(unittest.TestCase):
             {"candidate_id": "n_near", "reach_tier": "none-found", "position": 7,
              "diff_proximity": {"label": "near-change", "hops": 1}}]
         r = queue.order(C, delta=True)
-        self.assertEqual(self.ids(r), ["h1", "h2", "i1", "u1", "n_in", "n_flow"])
+        self.assertEqual(self.ids(r), ["i1", "h1", "h2", "u1", "n_in", "n_flow"])
         self.assertEqual([c["candidate_id"] for c in r["held"]], ["n_near", "n1"])
         self.assertIn("near the change admitted", r["reason"])
         self.assertNotIn("n_in", self.ids(queue.order(C)), "only in delta mode")
 
-    def test_delta_on_the_fixture_never_moves_a_tier(self):
+    def test_delta_on_the_fixture(self):
         cands = intake.intake(SARIF)["candidates"]
-        tiers = lambda r: [c["reach_tier"] for c in r["queue"]]      # noqa: E731
-        plain, delta = queue.order(cands), queue.order(cands, delta=True)
-        self.assertEqual(tiers(plain)[:3], tiers(delta)[:3])
+        delta = queue.order(cands, delta=True)
+        # the in-diff candidate first, though its tier is `indirect`
         self.assertEqual([c["function"] for c in delta["queue"]],
-                         ["drop_node", "parse_chunk", "read_header", "fmt_path", "lookup"])
+                         ["read_header", "drop_node", "parse_chunk", "fmt_path", "lookup"])
         self.assertEqual([c["function"] for c in delta["held"]], ["copy_name"])
 
     def test_none_found_while_the_budget_is_above_the_floor(self):
