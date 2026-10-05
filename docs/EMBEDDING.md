@@ -88,6 +88,8 @@ unscreened retry if you can spare it.
 
 **Delta: sweep every changed sink.** A delta can plant several flaws, and an agent that chases the first suspicious call skips the rest. `cc-fuzzer sweep init <diff> --file <f>` makes a checklist with one item per changed line that looks like a sink (format calls with no literal format, including the project's own `*f` wrappers the diff shows taking a literal elsewhere; copies; size and pointer arithmetic; indexes; string scans; integer types; frees; loops). `sweep mark` records a verdict, and `crash`/`reached` must name the input that was run. `hooks/sweep-gate.sh --file <f>` is a Stop hook that refuses to end a turn while items are open: at most 3 times, and again only after progress. It's opt-in: install it through your own `--settings` (cc_fuzzer_core.sweep).
 
+**Duplicate tool calls.** Some models put the same tool call into one response two or more times. Claude Code runs every copy in parallel, and every result is re-sent with each later request. On our qualification runs that was 32% of Read calls and 28% of Bash calls. `hooks/dedup-calls.sh` is a PreToolUse + PostToolBatch hook pair that runs each call once per response (cc_fuzzer_core.hygiene). The plugin registers it; a CRS installs it through `--settings`.
+
 **If your oracle is the scoring oracle, say so.** In OSS-CRS every binary is a
 libFuzzer build, so local replay always grades `weak` and nothing would ever
 be submittable. Declare the oracle authoritative and its confirmation upgrades

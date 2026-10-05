@@ -168,6 +168,29 @@ class MarkAndGateTest(unittest.TestCase):
         self.assertEqual(S.gate(self.doc), (False, "delta sweep complete"))
 
 
+@unittest.skipUnless(__import__("tests.support.claude_driver", fromlist=["x"]).claude_binary(),
+                     "no Claude Code binary cached")
+class LiveGateTest(unittest.TestCase):
+    """Real Claude Code, scripted model: the Stop hook holds the turn open once
+    and lets it end when the agent makes no progress."""
+
+    def test_the_gate_blocks_then_lets_go(self):
+        from tests.support import claude_driver
+        with tempfile.TemporaryDirectory() as d:
+            diff, f = Path(d) / "x.diff", Path(d) / "sweep.json"
+            diff.write_text(DIFF)
+            S.save(S.build(DIFF), f)
+            hook = {"type": "command", "command": f"{REPO / 'hooks' / 'sweep-gate.sh'} --file {f}"}
+            res, final = claude_driver.run([{"text": "finished"}, {"text": "still finished"}],
+                                           settings={"hooks": {"Stop": [{"hooks": [hook]}]}})
+            self.assertEqual(final.get("subtype"), "success")
+            reqs = claude_driver.last_requests
+            self.assertEqual(len(reqs), 2)                        # blocked once, then allowed
+            blocked = json.dumps(reqs[1]["messages"][-1])
+            self.assertIn("delta sweep", blocked)
+            self.assertEqual(S.load(f)["gate"]["blocks"], 1)
+
+
 class CliTest(unittest.TestCase):
     def _run(self, *args, stdin=None):
         return subprocess.run([sys.executable, "-m", "cc_fuzzer_core", "sweep", *args],
@@ -182,16 +205,19 @@ class CliTest(unittest.TestCase):
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertEqual(self._run("init", str(diff), "--file", str(f)).returncode, 2)  # exists
             self.assertEqual(self._run("gate", "--file", str(f)).returncode, 1)
-            hook = self._run("gate", "--hook", "--file", str(f), stdin='{"stop_hook_active": false}')
-            self.assertEqual(hook.returncode, 0)
+            gate = self._run("gate", "--json", "--file", str(f))
+            self.assertEqual(gate.returncode, 0)
+            self.assertEqual(json.loads(gate.stdout)["decision"], "block")
+            hook = subprocess.run([str(REPO / "hooks" / "sweep-gate.sh"), "--file", str(f)],
+                                  input='{"stop_hook_active": false}', capture_output=True, text=True)
             self.assertEqual(json.loads(hook.stdout)["decision"], "block")
             self.assertEqual(self._run("mark", "h1", "safe", "every write is bounded", "--file",
                                        str(f)).returncode, 0)
             self.assertEqual(self._run("mark", "h3", "safe", "only a call with no args", "--file",
                                        str(f)).returncode, 0)
             self.assertEqual(self._run("gate", "--file", str(f)).returncode, 0)
-            hook = self._run("gate", "--hook", "--file", str(f), stdin="{}")
-            self.assertEqual((hook.returncode, hook.stdout), (0, ""))
+            gate = self._run("gate", "--json", "--file", str(f))
+            self.assertEqual(json.loads(gate.stdout)["decision"], "allow")
 
     def test_the_file_can_come_from_the_environment(self):
         with tempfile.TemporaryDirectory() as d:
@@ -208,10 +234,13 @@ class CliTest(unittest.TestCase):
         self.assertIn('"skills/delta-sweep" = "cc_fuzzer_core/data/skills/delta-sweep"', text)
         self.assertTrue((REPO / "skills" / "delta-sweep" / "SKILL.md").is_file())
 
-    def test_hook_without_a_sweep_allows(self):
+    def test_a_missing_sweep_allows(self):
         with tempfile.TemporaryDirectory() as d:
-            r = self._run("gate", "--hook", "--file", str(Path(d) / "none.json"), stdin="{}")
-            self.assertEqual((r.returncode, r.stdout), (0, ""))
+            r = self._run("gate", "--json", "--file", str(Path(d) / "none.json"))
+            self.assertEqual(json.loads(r.stdout)["decision"], "allow")
+            h = subprocess.run([str(REPO / "hooks" / "sweep-gate.sh"), "--file", str(Path(d) / "none.json")],
+                               input="{}", capture_output=True, text=True)
+            self.assertEqual((h.returncode, h.stdout), (0, ""))
 
 
 if __name__ == "__main__":

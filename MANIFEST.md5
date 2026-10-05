@@ -106,7 +106,7 @@ b31fd19c17b10ca9c3604e67289155a0  scripts/validate-state.sh
 a7dc0b04ea7777c8acdae764cd238ec0  scripts/write-harness-built.sh
 0084d9a1bababdc76cb8023aff65a0f0  scripts/yolo-route.sh
 767ab4f0522d6d8e429608cc5cb11717  scripts/yolo-state.sh
-c2980b5eef28be05a61fe2faf5a5c7ed  src/cc_fuzzer_core/__init__.py
+76262f7494e985a5cb32fe174b9d983b  src/cc_fuzzer_core/__init__.py
 81df487b0971d3b41a1613371d67df65  src/cc_fuzzer_core/__main__.py
 fe3b8d694186b83378094e38a6b18f61  src/cc_fuzzer_core/builders/__init__.py
 9cdf97f5b1fa3e48755cabf5868ef95e  src/cc_fuzzer_core/builders/clang.py
@@ -114,7 +114,7 @@ fe3b8d694186b83378094e38a6b18f61  src/cc_fuzzer_core/builders/__init__.py
 69f8a53ffc6fe2a986db8c684cf968e1  src/cc_fuzzer_core/builders/ossfuzz.py
 20ac54ed256dd5041ecfa708b7a51a90  src/cc_fuzzer_core/builders/script.py
 e9f82154f2827218549d284fe6a331dc  src/cc_fuzzer_core/builders/toolchain.py
-788fc66cddaab65d9cd255542e70e082  src/cc_fuzzer_core/cli.py
+630afebae579f33b56757d01094b0d9d  src/cc_fuzzer_core/cli.py
 b749542267f72f8d13d502718b1e6a7c  src/cc_fuzzer_core/cmplog.py
 546441c1cfd7f30452d96f205b7b8fca  src/cc_fuzzer_core/config.py
 82b020ef6ef7e983722bb0485f8d4d89  src/cc_fuzzer_core/coverage.py
@@ -136,6 +136,7 @@ cd326f0b64c41c19948171dcece1ebca  src/cc_fuzzer_core/crs.py
 cf5e5bc349950a4ddb58e01214a26b46  src/cc_fuzzer_core/features.py
 8ae7971da9c62b26555df0e2e7fc3ee1  src/cc_fuzzer_core/findings.py
 805843bd588274cb2c1a17c8bca105e1  src/cc_fuzzer_core/gate.py
+a0a0517f7520f562d506f577f2a8b9d5  src/cc_fuzzer_core/hygiene.py
 95e52b507528cc8f268c7bcb82eda50d  src/cc_fuzzer_core/integrations/__init__.py
 d23d3599c29acab35b8b4e9473dfa01b  src/cc_fuzzer_core/integrations/cull/__init__.py
 80ae9038fc47e33322b1d00df66fb4f7  src/cc_fuzzer_core/integrations/cull/cards.py
@@ -175,7 +176,7 @@ ad3c4b5882edecf12ee28c92f8124bef  src/cc_fuzzer_core/state/derive_tick.py
 2d73811f7cb097926e06c719f29e9262  src/cc_fuzzer_core/state/toolbox.py
 8acb8673ee9a410485991685fb295990  src/cc_fuzzer_core/state/yolo_evaluate.py
 705eb14b7954b6469f0f25e05b3d9365  src/cc_fuzzer_core/state/yolo_state.py
-1d9c920dc3be45a250a3afe834c66044  src/cc_fuzzer_core/sweep.py
+8a1336273f1cfa1bd000727c811f8dac  src/cc_fuzzer_core/sweep.py
 ebe65bef6bb78b6bc6140e533d78c51f  src/cc_fuzzer_core/tools.py
 7a8b43505b6ec8baa0ba1b0b7212c71e  src/cc_fuzzer_core/variants.py
 a012158cbac7a2b368f75bde83f60060  templates/authorization.json

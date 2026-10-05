@@ -392,30 +392,23 @@ def _cmd_mark(a):
 
 
 def _cmd_gate(a):
-    """Without --hook: exit 0 when complete, 1 when items are open. With
-    --hook: read the Stop hook input on stdin and answer in the documented
-    Stop hook JSON; a sweep that is missing or unreadable never blocks."""
-    path = _file(a) if (a.file or not a.hook) else None
-    if a.hook:
+    """Exit 0 when complete, 1 while items are open. --json: answer
+    {"decision": "block"|"allow", "reason"} for a host's end-of-turn hook
+    (--continuing: the host is already continuing because of a block); it
+    records the block, and a sweep that is missing or unreadable allows."""
+    if a.json:
         try:
-            event = json.loads(sys.stdin.read() or "{}")
-        except ValueError:
-            event = {}
-        try:
-            path = path or default_file()
+            path = _file(a)
             doc = load(path)
+            block, msg = gate(doc, stop_hook_active=a.continuing, max_blocks=a.max_blocks)
+            save(doc, path)
         except Exception:  # noqa: BLE001 - no sweep, nothing to enforce
-            return 0
-        block, msg = gate(doc, stop_hook_active=bool(event.get("stop_hook_active")),
-                          max_blocks=a.max_blocks)
-        save(doc, path)
-        if block:
-            print(json.dumps({"decision": "block", "reason": msg}))
+            block, msg = False, ""
+        print(json.dumps({"decision": "block" if block else "allow", "reason": msg if block else ""}))
         return 0
-    doc = load(path)
-    opn = open_items(doc)
+    doc = load(_file(a))
     print(show(doc, limit=a.limit))
-    return 1 if opn else 0
+    return 1 if open_items(doc) else 0
 
 
 def register_cli(subparsers):
@@ -440,8 +433,11 @@ def register_cli(subparsers):
     v.add_argument("reason")
     v.add_argument("--input", help="the input you ran (required for crash and reached)")
     v.set_defaults(func=_cmd_mark)
-    v = common(verbs.add_parser("gate", help="exit 1 while items are open; --hook: a Stop hook"))
-    v.add_argument("--hook", action="store_true")
+    v = common(verbs.add_parser("gate", help="exit 1 while items are open; --json: an "
+                                              "end-of-turn decision for a host hook"))
+    v.add_argument("--json", action="store_true")
+    v.add_argument("--continuing", action="store_true",
+                   help="the host is already continuing because of a block")
     v.add_argument("--max-blocks", type=int, default=MAX_BLOCKS)
     v.add_argument("--limit", type=int, default=SHOW_LIMIT)
     v.set_defaults(func=_cmd_gate)

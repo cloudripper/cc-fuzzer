@@ -9,7 +9,8 @@
       "PostToolUse",
       "SessionStart",
       "SubagentStop",
-      "Stop"
+      "Stop",
+      "PostToolBatch"
     ],
     "hook_input": [
       "tool_name",
@@ -20,7 +21,10 @@
       "agent_transcript_path",
       "agent_id",
       "agent_type",
-      "stop_hook_active"
+      "stop_hook_active",
+      "tool_use_id",
+      "session_id",
+      "prompt_id"
     ],
     "hook_output": [
       "hookSpecificOutput",
@@ -77,6 +81,10 @@
     "stop_hook_active": {
       "verified": "2.1.285",
       "meaning": "True while Claude Code is already continuing because a Stop hook blocked. Claude Code advises letting the turn end then, and overrides a hook after CLAUDE_CODE_STOP_HOOK_BLOCK_CAP (default 8) consecutive blocks. hooks/sweep-gate.sh blocks again only after progress, at most 3 times."
+    },
+    "PostToolBatch": {
+      "verified": "2.1.285",
+      "meaning": "Fires once after all tool calls of one response have finished (input has tool_calls); present since 2.1.165. Duplicate calls in one response run in parallel, their PreToolUse hooks concurrently. hooks/dedup-calls.sh clears its per-response batch here."
     }
   },
   "history": [
