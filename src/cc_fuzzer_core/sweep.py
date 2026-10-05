@@ -19,15 +19,25 @@ and refuses to let the work end while an item has no verdict.
                      a turn end once stop_hook_active is set; it overrides a
                      hook after 8 consecutive blocks)
 
-Sink classes are generic C/C++ shapes, matched on added lines only, one item
-per line with every class it matches: format-string (a printf-family call
-with no string literal among its arguments; a project's own wrappers count
-when the diff shows them taking a literal elsewhere, see format_wrappers),
-copy, alloc-size (allocation
-size computed in the call), ptr-arith (pointer arithmetic passed as an
-argument), index (a computed subscript), scan (strlen/strchr-style reads
-that rely on a terminator), int-type (an integer declaration or cast, not a
-pointer), free, loop. They pick what to look at; they decide nothing.
+Sink classes are generic C/C++ shapes, matched on added lines, one item per
+line with every class it matches: format-string (a printf-family call with no
+string literal among its arguments; a project's own wrappers count when the
+diff shows them taking a literal elsewhere, see format_wrappers), copy (incl.
+*_copy/*_cpy wrappers), alloc-size and alloc (a computed or constant size),
+ptr-arith, len-arith (a length or offset accumulated in place), index and
+index-write, scan (strlen/strchr-style reads that need a terminator), div,
+cast-deref, eq-bound (a counter compared for equality with a limit),
+int-type, free (incl. *_free wrappers), abort, loop. Two more come from the
+diff's shape: const-change (an added line equal to a removed one but for
+its numbers: a bound or size moved) and removed-check (a removed guard,
+comparison or length computation: deleting it can make unchanged code below
+vulnerable, so the deletion is the item). They pick what to look at; they
+decide nothing.
+
+Measured against the ground truth of 47 delta benchmarks (79 CPVs): an item
+sits on the vulnerable line of 64, within a line of 67, and on the removed
+guard that causes 3 more. The rest are deltas that make existing code
+reachable rather than change it, which no line checklist can point at.
 
 CLI: `cc-fuzzer sweep init|show|mark|gate [--file F]`. The file defaults to
 $CC_FUZZER_SWEEP_FILE, else <state>/delta-sweep.json in the campaign.
@@ -65,16 +75,26 @@ _INT_TYPE = (r"(?:unsigned|signed|short|long|int|char|size_t|ssize_t|off_t|ptrdi
 _SINKS = (
     ("format-string", re.compile(r"\b(\w*printf\w*|syslog|vsyslog)\s*\(([^;]*)")),
     ("copy", re.compile(r"\b(memcpy|memmove|strcpy|strncpy|strcat|strncat|stpcpy|wcscpy|gets|"
-                        r"sprintf|vsprintf|bcopy|CopyMemory)\s*\(")),
-    ("alloc-size", re.compile(r"\b(malloc|calloc|realloc|reallocarray|alloca|new\s*\w+\s*\[)"
-                              r"\s*\(?[^;]*[-+*/<>]")),
+                        r"sprintf|vsprintf|bcopy|CopyMemory|\w*_(?:copy|cpy|memcpy|move))\s*\(")),
+    ("alloc-size", re.compile(r"\b(malloc|calloc|realloc|reallocarray|alloca|new\s*\w+\s*\[|"
+                              r"\w*_(?:alloc|malloc|calloc|realloc))\s*\(?[^;]*[-+*/<>]")),
+    ("alloc", re.compile(r"\b(\w*_(?:alloc|malloc|calloc)|alloca)\s*\(\s*[A-Z_][A-Z0-9_]*\s*[,)]")),
+    ("len-arith", re.compile(r"\b\w*(?:len|size|sz|count|cnt|num|off|offset|pos|idx|total)\w*"
+                             r"\s*(?:[-+*]=|<<=)", re.I)),
+    ("div", re.compile(r"[^/*\s]\s*[/%]\s*\(?\s*[A-Za-z_][\w.>-]*")),
+    ("cast-deref", re.compile(r"\*\s*\(\s*[A-Za-z_][\w\s]*\*+\s*\)")),
+    # a counter or index compared for equality with a limit: an off-by-one shape
+    ("eq-bound", re.compile(r"(\+\+|--)\s*[A-Za-z_][\w.>-]*\s*[!=]=|[!=]=\s*[\w.>-]*(?:max|limit|cap)\w*",
+                            re.I)),
+    ("abort", re.compile(r"\b(abort|assert|__builtin_trap|__builtin_unreachable)\s*\(")),
+    ("index-write", re.compile(r"\w\s*\[\s*[A-Za-z_][\w.>-]*\s*\]\s*=[^=]")),
     ("ptr-arith", re.compile(r"[(,]\s*[A-Za-z_]\w*(?:(?:->|\.)\w+)*\s*[+-](?![>=+-])\s*[^,;)]*\w")),
     ("index", re.compile(r"\w\s*\[[^\]]*[-+*/][^\]]*\]")),
     ("scan", re.compile(r"\b(strlen|strnlen|strchr|strrchr|strstr|strtok|strcmp|strncmp|strcasecmp|"
                         r"strspn|strcspn|strpbrk|sscanf|atoi|atol|strtol|strtoul)\s*\(")),
     ("int-type", re.compile(r"(^|[;{(,]\s*)(const\s+)?" + _INT_TYPE + r"\b\s+\w+\s*[=;,)\[]"
                             r"|\(\s*" + _INT_TYPE + r"\s*\)")),
-    ("free", re.compile(r"\b(free|realloc|delete\b)\s*[\(\[]?")),
+    ("free", re.compile(r"\b(free|realloc|delete\b|\w*_free\w*)\s*[\(\[]?")),
     ("loop", re.compile(r"\b(for|while)\s*\(")),
 )
 
@@ -108,10 +128,15 @@ def format_wrappers(diff_text: str) -> set:
     return out - {"sizeof", "if"}
 
 
+def _is_comment(line: str) -> bool:
+    s = line.strip()
+    return not s or s.startswith(("//", "/*")) or bool(re.match(r"\*(\s|/|$)", s))
+
+
 def sinks_of(line: str, wrappers: frozenset | set = frozenset()) -> list[str]:
     """The sink classes an added source line matches (none for comments)."""
     s = line.strip()
-    if not s or s.startswith(("//", "/*", "*", "#include")):
+    if not s or s.startswith(("//", "/*", "#include")) or re.match(r"\*(\s|/|$)", s):
         return []
     found = []
     for cls, rx in _SINKS:
@@ -124,45 +149,81 @@ def sinks_of(line: str, wrappers: frozenset | set = frozenset()) -> list[str]:
         # line (its format may be there): not judged from this line
         if cls == "format-string" and (_has_literal(m.group(2)) or ")" not in m.group(2)):
             continue
-        if cls == "free" and not re.search(r"\b(free|realloc)\s*\(|\bdelete\b", s):
+        if cls == "free" and not re.search(r"\b(free|realloc|\w*_free\w*)\s*\(|\bdelete\b", s):
             continue
+        if cls == "div" and re.search(r"//|/\*|#include|\"[^\"]*[/%][^\"]*\"", s):
+            continue            # a comment, a path or a format string, not a division
         found.append(cls)
     return found
 
 
-def build(diff_text: str, *, source: str = "") -> dict:
-    """The checklist for a diff (git or plain unified)."""
-    items, n = [], 0
-    current, path, new_line = None, None, 0
-    wrappers = format_wrappers(diff_text)
+# A removed line that was a guard: deleting it can make unchanged code below
+# vulnerable, so the deletion itself is an item.
+_CHECK_RE = re.compile(r"\b(if|while)\s*\(|\b[A-Z_]*CHECK\w*\s*\(|\bassert\s*\(|\b(memcmp|strn?cmp)\s*\("
+                       r"|[<>]=?|[!=]=|\b\w*(?:len|size|count)\w*\s*[-+*/]?=[^=]", re.I)
+
+
+def _norm(line: str) -> str:
+    return re.sub(r"\s+", "", line)
+
+
+def _hunks(diff_text: str):
+    """(path, new_start, new_count, context, [(tag, new_line, text)]) per hunk;
+    tag is '+', '-' (new_line = where the removal sits) or ' '."""
+    path, hunk, new_line = None, None, 0
     for raw in diff_text.split("\n"):
         if raw.startswith("+++ "):
             p = raw[4:].split("\t")[0]
             path = None if p == "/dev/null" else (p[2:] if p.startswith("b/") else p)
+            hunk = None
             continue
         if raw.startswith("--- ") or raw.startswith("diff --git"):
+            hunk = None
             continue
         m = re.match(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@(.*)$", raw)
         if m and path:
-            n += 1
             new_line = int(m.group(1))
             count = int(m.group(2)) if m.group(2) is not None else 1
-            current = {"id": f"h{n}", "file": path, "lines": [new_line, new_line + max(count - 1, 0)],
-                       "function": (m.group(3).strip() or None), "sinks": []}
-            items.append(current)
+            hunk = (path, new_line, count, m.group(3).strip() or None, [])
+            yield hunk
             continue
-        if current is None:
+        if hunk is None:
             continue
         if raw.startswith("+"):
-            classes = sinks_of(raw[1:], wrappers)
-            if classes:
-                k = len(current["sinks"]) + 1
-                current["sinks"].append({"id": f"{current['id']}.s{k}", "line": new_line,
-                                         "class": classes[0], "classes": classes,
-                                         "text": raw[1:].strip()[:160]})
+            hunk[4].append(("+", new_line, raw[1:]))
             new_line += 1
+        elif raw.startswith("-"):
+            hunk[4].append(("-", new_line, raw[1:]))
         elif raw.startswith(" "):
             new_line += 1
+
+
+def build(diff_text: str, *, source: str = "") -> dict:
+    """The checklist for a diff (git or plain unified)."""
+    items = []
+    wrappers = format_wrappers(diff_text)
+    for n, (path, start, count, ctx, lines) in enumerate(list(_hunks(diff_text)), 1):
+        it = {"id": f"h{n}", "file": path, "lines": [start, start + max(count - 1, 0)],
+              "function": ctx, "sinks": []}
+        added = {_norm(t) for tag, _, t in lines if tag == "+"}
+        removed_digits = {re.sub(r"\d+", "N", _norm(t)) for tag, _, t in lines if tag == "-"}
+        found = []                                  # (line, classes, text)
+        for tag, ln, text in lines:
+            if tag == "+":
+                classes = sinks_of(text, wrappers)
+                # the same line with only a number changed: a bound or size moved
+                if (classes or not _is_comment(text)) and (re.search(r"\d", text) and re.sub(r"\d+", "N", _norm(text)) in removed_digits
+                        and _norm(text) not in {_norm(t) for g, _, t in lines if g == "-"}):
+                    classes = classes + ["const-change"]
+                if classes:
+                    found.append((ln, classes, text.strip()))
+            elif tag == "-" and _norm(text) not in added and _CHECK_RE.search(text) \
+                    and not text.strip().startswith(("//", "/*", "*")):
+                found.append((ln, ["removed-check"], "removed: " + text.strip()))
+        for k, (ln, classes, text) in enumerate(found, 1):
+            it["sinks"].append({"id": f"{it['id']}.s{k}", "line": ln, "class": classes[0],
+                                "classes": classes, "text": text[:160]})
+        items.append(it)
     verdicts = {}
     for it in items:
         if not _is_code(it["file"]):
@@ -193,8 +254,8 @@ def open_items(doc: dict) -> list[dict]:
 
 
 # sinks most often planted first, so the list shows them before loops
-_ORDER = {c: i for i, (c, _) in enumerate(_SINKS)}
-_ORDER["hunk"] = len(_ORDER)
+_ORDER = {c: i + 2 for i, (c, _) in enumerate(_SINKS)}
+_ORDER.update({"format-string": 0, "removed-check": 1, "const-change": 1, "hunk": len(_ORDER) + 2})
 
 
 def show(doc: dict, *, limit: int = SHOW_LIMIT) -> str:

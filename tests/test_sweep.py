@@ -61,6 +61,36 @@ class SinksTest(unittest.TestCase):
         self.assertEqual(S.sinks_of("char *p = q;"), [])                      # a pointer, not an int
         self.assertEqual(S.sinks_of("// strcpy(a, b);"), [])
 
+    def test_more_classes(self):
+        for line, cls in (("*(unsigned int *)res = 0;", "cast-deref"),
+                          ("content_len += header_len;", "len-arith"),
+                          ("b = proj_copy(b, d, n);", "copy"),
+                          ("proj_free(r->x);", "free"),
+                          ("p = proj_alloc(MAX_SIZE, log);", "alloc"),
+                          ("rev[j] = buf[i];", "index-write"),
+                          ("abort();", "abort"),
+                          ("r3 = r1 / r2;", "div"),
+                          ("if (++w->count == w->count_max) {", "eq-bound")):
+            with self.subTest(line=line):
+                self.assertIn(cls, S.sinks_of(line))
+        self.assertEqual(S.sinks_of('printf("%d/%s", a, b);'), [])           # not a division
+        self.assertEqual(S.sinks_of("if (i == n) {"), [])
+
+    def test_removed_checks_and_changed_constants(self):
+        diff = ("--- a/x.c\n+++ b/x.c\n@@ -10,6 +10,5 @@ int f(char *p, int n)\n"
+                "   int a = 0;\n"
+                "-  if (n > 16) return -1;\n"
+                "-  char buf[32];\n"
+                "+  char buf[16];\n"
+                "   /* (offset 3, length 6). */\n"
+                "-  /* (offset 2, length 6). */\n"
+                "   return 0;\n")
+        doc = S.build(diff)
+        got = {s["text"]: s["classes"] for s in doc["items"][0]["sinks"]}
+        self.assertEqual(got["removed: if (n > 16) return -1;"], ["removed-check"])
+        self.assertIn("const-change", got["char buf[16];"])
+        self.assertFalse(any("offset" in t for t in got))                    # comments are not items
+
     def test_wrappers_come_from_the_diff(self):
         self.assertEqual(S.format_wrappers(DIFF), {"log_msgf"})
         self.assertEqual(S.sinks_of("log_msgf(c, sp);", {"log_msgf"}), ["format-string"])
