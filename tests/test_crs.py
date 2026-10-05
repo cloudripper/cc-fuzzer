@@ -561,6 +561,10 @@ class RankTest(unittest.TestCase):
         good = self._r("d-good", "null-deref")
         self.assertEqual(self._order([weak, rejected, leak, good]),
                          ["d-good", "c-leak", "b-pol", "a-weak"])
+        # among the unsubmittable, a crash of any kind is above no crash
+        nothing = self._r("0-none", "none", status=crs.NOT_A_CRASH, policy_verdict={})
+        leaked = self._r("1-leak", "leak", status=crs.REJECTED, policy_verdict={})
+        self.assertEqual(self._order([nothing, leaked]), ["1-leak", "0-none"])
 
     def test_exports_and_results_rank_alike_and_stably(self):
         rs = [self._r("b", "wild-read"), self._r("a", "wild-read")]

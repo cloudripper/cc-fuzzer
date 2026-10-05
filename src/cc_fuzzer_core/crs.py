@@ -583,7 +583,7 @@ def merge_by_patch(clusters, patch_file: str, *, record: Mapping, project_root,
 #   3. what it does: a write (overflow write, wild-write, format-string),
 #      a use-after-free, an overflow read, a read by a string scan (a missing
 #      terminator rather than a size defect), any other memory error, then
-#      leak / timeout / oom
+#      leak / timeout / oom, then no crash at all
 #   4. the stack hash, so equal crashes always come out in the same order
 #
 # It orders and explains; it drops nothing. Holding the tail back is the
@@ -603,7 +603,8 @@ _STRING_SCAN_RE = re.compile(r"(?:^|_)(?:strn?len|strr?chr|strchrnul|strn?cmp|st
 _CLASS_TIERS = {"write": (6, "a write"), "lifetime": (5, "a use-after-free"),
                 "read": (4, "an out-of-bounds read"),
                 "unterminated": (3, "a read by a string scan (a missing terminator)"),
-                "other": (2, "a memory error"), "none": (1, "not a memory-safety error")}
+                "other": (2, "a memory error"), "none": (1, "not a memory-safety error"),
+                "no-crash": (0, "no crash")}
 
 
 @dataclass(frozen=True)
@@ -631,6 +632,8 @@ def _access(r: Mapping) -> str:
 
 def _class_of(r: Mapping) -> str:
     cat, access = str(r.get("category") or ""), _access(r)
+    if cat in ("", "none") or r.get("status") == NOT_A_CRASH:
+        return "no-crash"
     if cat in _NOT_MEMORY or str(r.get("sanitizer") or "") == "leak" or cat.startswith("ubsan"):
         return "none"
     if access == "write" and (cat in _OVERFLOWS or cat in _LIFETIME or cat.startswith("wild")
