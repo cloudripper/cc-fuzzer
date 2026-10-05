@@ -345,3 +345,103 @@ class TrapTest(unittest.TestCase):
             self.assertTrue(c.is_crash, out[-500:])
             self.assertIn("AddressSanitizer: ILL", out)
             self.assertEqual(c.category, "ILL")
+
+
+# A real libFuzzer harness, for the artifacts libFuzzer saves as crash-* that
+# are not crashes: the target calling exit(), and a leak report.
+LIBFUZZER_HARNESS = r"""
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+void *volatile sink;
+int LLVMFuzzerTestOneInput(const uint8_t *d, size_t n) {
+  if (n >= 4 && !memcmp(d, "EXIT", 4)) exit(0);
+  if (n >= 4 && !memcmp(d, "LEAK", 4)) { sink = malloc(64); sink = 0; }
+  if (n >= 4 && !memcmp(d, "BOOM", 4)) { char *volatile p = malloc(4); p[n] = 1; free(p); }
+  return 0;
+}
+"""
+
+
+def build_libfuzzer(out: Path):
+    """None when this clang has no libFuzzer / ASan runtime."""
+    with tempfile.NamedTemporaryFile("w", suffix=".c", delete=False) as f:
+        f.write(LIBFUZZER_HARNESS)
+        path = f.name
+    p = subprocess.run(["clang", "-g", "-O1", "-fsanitize=fuzzer,address", path, "-o", str(out)],
+                       capture_output=True, text=True)
+    os.unlink(path)
+    return out if p.returncode == 0 else None
+
+
+@unittest.skipUnless(HAVE_CLANG, "needs clang")
+class ScreenTest(unittest.TestCase):
+    """screen= labels an input by one run and stops when its cause is not wanted."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.td = tempfile.TemporaryDirectory()
+        cls.d = Path(cls.td.name)
+        cls.binary = build_libfuzzer(cls.d / "h_verify")
+        if cls.binary is None:
+            cls.td.cleanup()
+            raise unittest.SkipTest("clang cannot build -fsanitize=fuzzer,address here")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.td.cleanup()
+
+    def _input(self, data: bytes) -> str:
+        p = self.d / data.decode()
+        p.write_bytes(data)
+        return str(p)
+
+    def _replay(self, data, screen=("crash",)):
+        return R.replay({"verify_binary": str(self.binary)}, self._input(data), screen=screen)
+
+    def test_an_exit_costs_one_run(self):
+        r = self._replay(b"EXIT")
+        self.assertEqual((r.verdict, r.attempts, len(r.runs), r.cause), (R.NO_CRASH, 1, 1, "exit"))
+        self.assertIn("screened out after one run: exit", r.reason)
+
+    def test_a_leak_is_screened_not_lost(self):
+        r = self._replay(b"LEAK")
+        self.assertEqual((r.verdict, r.attempts, r.crashes, r.cause), (R.SCREENED, 1, 1, "leak"))
+        self.assertEqual(r.category, "leak")
+        self.assertEqual(self._replay(b"LEAK", screen=("crash", "leak")).verdict, R.CRASH)
+
+    def test_a_wanted_crash_gets_every_attempt(self):
+        r = self._replay(b"BOOM")
+        self.assertEqual((r.verdict, r.attempts, r.cause, r.category),
+                         (R.CRASH, R.ATTEMPTS, "crash", "heap-buffer-overflow"))
+        self.assertEqual(r.as_dict()["cause"], "crash")
+
+    def test_no_screen_is_the_old_replay(self):
+        r = self._replay(b"EXIT", screen=None)
+        self.assertEqual((r.verdict, r.attempts, r.cause), (R.NO_CRASH, R.ATTEMPTS, "exit"))
+
+    def test_an_unknown_cause_is_refused(self):
+        with self.assertRaises(R.ReplayError):
+            self._replay(b"BOOM", screen=("crashes",))
+
+    def test_triage_reports_the_cause(self):
+        from cc_fuzzer_core import crs
+        rec = {"verify_binary": str(self.binary)}
+        r = crs.triage(rec, self._input(b"EXIT"), screen=("crash",), do_sensitivity=False)
+        self.assertEqual((r.status, r.cause, r.replay["attempts"]), (crs.NOT_A_CRASH, "exit", 1))
+        r = crs.triage(rec, self._input(b"LEAK"), screen=("crash",), do_sensitivity=False)
+        self.assertEqual((r.status, r.cause), (crs.REJECTED, "leak"))
+        self.assertFalse(r.should_submit)
+        self.assertEqual(r.as_dict()["cause"], "leak")
+
+
+class CauseTest(unittest.TestCase):
+    def test_causes(self):
+        from cc_fuzzer_core.crash.classify import cause
+        self.assertEqual(cause("==1== ERROR: libFuzzer: fuzz target exited\n", 77), "exit")
+        self.assertEqual(cause("==1==ERROR: LeakSanitizer: detected memory leaks\n"
+                               "SUMMARY: AddressSanitizer: 64 byte(s) leaked in 1 allocation(s).\n"), "leak")
+        self.assertEqual(cause("==1== ERROR: libFuzzer: timeout after 25 seconds\n"), "timeout")
+        self.assertEqual(cause("==1== ERROR: libFuzzer: out-of-memory (used: 2100Mb; exceeds: 2048Mb)\n"), "oom")
+        self.assertEqual(cause("==1==ERROR: AddressSanitizer: heap-use-after-free on address 0x1\n"), "crash")
+        self.assertEqual(cause("all good\n", 0), "none")

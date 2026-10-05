@@ -1,6 +1,7 @@
 {
   "binary": "/out/framed_verify",
   "category": "heap-buffer-overflow",
+  "cause": "crash",
   "delta_relevance": {
     "files_changed": 1,
     "frames_in_diff": [

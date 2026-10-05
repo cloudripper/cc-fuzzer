@@ -18,6 +18,11 @@ replay() does all three deterministically:
   - the stack hash is computed from the classified frames, so the same crash
     hashes the same whoever is looking at it.
 
+screen= is the fast path for a fuzzer's raw artifacts: the first attempt's
+cause (classify.cause) must be one the caller wants, or replay stops there
+with verdict "screened" (or "no-crash"). A harness that calls exit() then
+costs one run, not three plus minimization.
+
 Determinism is the verdict: a crash that fires on some attempts and not others
 is `flaky`, which is a different answer from `not a crash`.
 
@@ -64,7 +69,7 @@ UBSAN_OPTIONS = ("halt_on_error=1:print_stacktrace=1:abort_on_error=1:"
                  "silence_unsigned_overflow=1")
 
 # verdicts
-CRASH, FLAKY, NO_CRASH = "crash", "flaky", "no-crash"
+CRASH, FLAKY, NO_CRASH, SCREENED = "crash", "flaky", "no-crash", "screened"
 
 
 class ReplayError(RuntimeError):
@@ -103,6 +108,7 @@ class Replay:
     frames: tuple = field(default=())   # up to REPORT_FRAMES, top first
     excerpt: str = ""                   # the sanitizer report, bounded
     sanitizer: str = ""                 # which detector reported it (sanitizer_of)
+    cause: str = ""                     # classify.cause of the first run
 
     @property
     def deterministic(self) -> bool:
@@ -127,6 +133,7 @@ class Replay:
             "frames": list(self.frames),
             "excerpt": self.excerpt,
             "sanitizer": self.sanitizer,
+            "cause": self.cause,
         }
 
 
@@ -239,15 +246,22 @@ def run_once(binary: str, reproducer: str, *, timeout: int = TIMEOUT_S, env=None
 
 
 def replay(record, reproducer: str, *, harness: str = "", attempts: int = ATTEMPTS,
-           timeout: int = TIMEOUT_S, env=None) -> Replay:
-    """Replay `reproducer` on the binary §12 selects for the replay action."""
+           timeout: int = TIMEOUT_S, env=None, screen=None) -> Replay:
+    """Replay `reproducer` on the binary §12 selects for the replay action.
+    `screen`, when given, is the causes worth more than one run (module
+    docstring)."""
     if not os.path.isfile(reproducer):
         raise ReplayError(f"no such reproducer: {reproducer}")
+    if screen is not None:
+        unknown = sorted(set(screen) - set(_classify.CAUSES))
+        if unknown:
+            raise ReplayError(f"unknown screen cause(s): {', '.join(unknown)} "
+                              f"(known: {', '.join(_classify.CAUSES)})")
     sel = _v.select(record or {}, _v.A_REPLAY, harness=harness)
     if not os.access(sel.binary, os.X_OK):
         raise ReplayError(f"{sel.variant} binary is not executable: {sel.binary}")
 
-    runs, crashes, last = [], 0, None
+    runs, crashes, last, first_cause, screened = [], 0, None, "", False
     for i in range(1, attempts + 1):
         rc, out = run_once(sel.binary, reproducer, timeout=timeout, env=env)
         cl = _classify.classify(out, rc)
@@ -255,8 +269,16 @@ def replay(record, reproducer: str, *, harness: str = "", attempts: int = ATTEMP
         if cl.is_crash:
             crashes += 1
             last = (cl, out)
+        if i == 1:
+            first_cause = _classify.cause(out, rc)
+            if screen is not None and first_cause not in screen:
+                attempts, screened = 1, True
+                break
 
-    if crashes == attempts:
+    if screened:
+        verdict = SCREENED if crashes else NO_CRASH
+        reason = f"screened out after one run: {first_cause} (screen keeps {', '.join(screen) or 'nothing'})"
+    elif crashes == attempts:
         verdict, reason = CRASH, f"crashed on all {attempts} attempts"
     elif crashes:
         # Not the same as "no crash": the bug is real but the reproducer is
@@ -276,6 +298,7 @@ def replay(record, reproducer: str, *, harness: str = "", attempts: int = ATTEMP
         frames=tuple(frames(out, limit=REPORT_FRAMES)) if cl else (),
         excerpt=excerpt(out) if cl else "",
         sanitizer=sanitizer_of(out) if cl else "",
+        cause=first_cause,
         reason=reason if sel.evidence_grade == _v.STRONG else f"{reason}; {sel.reason}",
         runs=tuple(runs),
     )

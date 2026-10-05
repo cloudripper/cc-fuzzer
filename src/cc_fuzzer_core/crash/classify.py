@@ -178,7 +178,7 @@ def classify(text: str, exit_code: str | int | None = None) -> Classification:
     line = _first(lines, _SUMMARY_RE)
     if line is not None:
         is_crash, summary = True, line
-        category = _category(line, _SUMMARY_CAT_RE)
+        category = "leak" if " leaked in " in line else _category(line, _SUMMARY_CAT_RE)
         if category not in _KNOWN_SUMMARY and re.search(r"SEGV|null", line):
             category = segv_category(lines) if "SEGV" in line else "null-deref"
 
@@ -238,6 +238,32 @@ def classify(text: str, exit_code: str | int | None = None) -> Classification:
     # a format-string crash faults inside printf; the frame worth naming is its caller
     frame = top_frame(lines, _PRINTF_RE if category == "format-string" else None) if is_crash else ""
     return Classification(is_crash, category, summary, frame, ec)
+
+
+# What made a fuzzer artifact. libFuzzer saves a harness that called exit()
+# and a leak report as crash-* too (in -fork mode its log does not even say
+# which file is which), so the name does not tell; one run of the input does.
+CAUSES = ("crash", "leak", "timeout", "oom", "exit", "none")
+_EXITED = "ERROR: libFuzzer: fuzz target exited"
+_LF_OOM = "ERROR: libFuzzer: out-of-memory"
+_SAN_HEADER_RE = re.compile(r"ERROR: (\w+Sanitizer):")
+
+
+def cause(text: str, exit_code: str | int | None = None) -> str:
+    """One of CAUSES for a run's output: a sanitizer-reported crash, a
+    leak-only report, a timeout or out-of-memory, the target calling exit(),
+    or nothing at all."""
+    if _LF_OOM in text:
+        return "oom"
+    c = classify(text, exit_code)
+    if not c.is_crash:
+        return "exit" if _EXITED in text else "none"
+    header = _SAN_HEADER_RE.search(text)
+    if header and header.group(1) == "LeakSanitizer":
+        return "leak"
+    if c.category in ("timeout", "oom"):
+        return c.category
+    return "crash"
 
 
 def classify_file(path, exit_code=None) -> Classification:

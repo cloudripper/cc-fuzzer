@@ -70,6 +70,22 @@ requires `evidence_grade == "strong"`. A crash shown only on the fuzzing
 binary — because no verify binary was built — is good enough to triage and not
 good enough to submit.
 
+**Raw fuzzer artifacts: screen them.** libFuzzer saves a harness that called
+`exit()`, and a leak report, as `crash-*` too, and in `-fork` mode its log
+does not say which file is which. `screen=` labels each input by one run and
+stops there unless its cause is one you want:
+
+```python
+r = crs.triage(record, crash, harness="parser", config=cfg, screen=("crash",))
+r.cause      # "crash" | "leak" | "timeout" | "oom" | "exit" | "none"
+```
+
+An exit costs one run (`not_a_crash`), a leak one run (`rejected`, a real
+crash of a kind you screened out). Without `screen` every input is replayed
+`replay_attempts` times — which is what tells `flaky` from `not_a_crash`, so
+an input that fired on the fuzzer but not on the screening run is worth one
+unscreened retry if you can spare it.
+
 **If your oracle is the scoring oracle, say so.** In OSS-CRS every binary is a
 libFuzzer build, so local replay always grades `weak` and nothing would ever
 be submittable. Declare the oracle authoritative and its confirmation upgrades
@@ -594,7 +610,7 @@ additive; a removed or retyped key is a new version.
 
 | schema | from | notable fields |
 |---|---|---|
-| `triage-export/v1` | `TriageResult.as_dict()` | status, should_submit, policy_verdict, stack_hash, category, sanitizer, frames, sanitizer_excerpt, pov_sha256, original_sha256, evidence_grade/source, sensitivity, delta_relevance, determinism, source_candidate_id |
+| `triage-export/v1` | `TriageResult.as_dict()` | status, should_submit, policy_verdict, stack_hash, category, sanitizer, frames, sanitizer_excerpt, pov_sha256, original_sha256, evidence_grade/source, sensitivity, delta_relevance, determinism, source_candidate_id, cause |
 | `patch-export/v1` | `PatchVerdict.as_dict()` | verdict (= status), steps (with `ran`, `policy`), unverified_steps, povs (before/after), scope (with concerns, functions), build, determinism |
 | `query-run/v1` | `query.run` | unchanged |
 

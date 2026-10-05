@@ -90,6 +90,7 @@ class TriageResult:
     delta_relevance: dict = field(default_factory=dict)  # delta-relevance/v1, when asked
     determinism: dict = field(default_factory=dict)      # determinism/v1: the knobs used
     source_candidate_id: str = ""  # the static candidate this crash matched, if a matcher was given
+    cause: str = ""               # classify.cause of the first replay: crash, leak, exit, ...
 
     @property
     def submittable(self) -> bool:
@@ -130,7 +131,8 @@ class TriageResult:
                 "sensitivity": self.sensitivity,
                 "delta_relevance": self.delta_relevance,
                 "determinism": self.determinism,
-                "source_candidate_id": self.source_candidate_id}
+                "source_candidate_id": self.source_candidate_id,
+                "cause": self.cause}
 
 
 # ---------------------------------------------------------------------------
@@ -144,11 +146,11 @@ def _triage(record: Mapping, crash: str, *, harness: str = "",
            minimize_probes: int = _minimize.MAX_PROBES,
            do_sensitivity: bool = True,
            sensitivity_probes: int = _minimize.SENSITIVITY_MAX_PROBES,
-           minimize_rounds: int = _minimize.MAX_ROUNDS) -> TriageResult:
+           minimize_rounds: int = _minimize.MAX_ROUNDS, screen=None) -> TriageResult:
     """triage() without the submission policy; see triage()."""
     record = _v.with_verify_source(record, config)
     r = _replay.replay(record, crash, harness=harness, attempts=attempts,
-                       timeout=timeout)
+                       timeout=timeout, screen=screen)
     base = {"replay": r.as_dict(), "original_pov": crash,
             "stack_hash": r.stack_hash, "category": r.category,
             "top_frame": r.top_frame, "frames": tuple(r.frames),
@@ -157,8 +159,13 @@ def _triage(record: Mapping, crash: str, *, harness: str = "",
             "binary": r.binary, "variant": r.variant,
             "evidence_grade": r.evidence_grade, "replay_grade": r.evidence_grade,
             "evidence_source": _verifiers.SOURCE_REPLAY,
-            "original_size": Path(crash).stat().st_size if Path(crash).is_file() else 0}
+            "original_size": Path(crash).stat().st_size if Path(crash).is_file() else 0,
+            "cause": r.cause}
 
+    if r.verdict == _replay.SCREENED:
+        # a real crash, but of a kind the caller screened out (a leak, a timeout)
+        return TriageResult(REJECTED, r.reason, pov=crash, size=base["original_size"],
+                            pov_sha256=base["original_sha256"], **base)
     if r.verdict == _replay.NO_CRASH:
         return TriageResult(NOT_A_CRASH, r.reason, pov=crash, size=base["original_size"],
                             pov_sha256=base["original_sha256"], **base)
@@ -229,7 +236,7 @@ def triage(record: Mapping, crash: str, *, harness: str = "",
            sensitivity_probes: int | None = None,
            policy: str = "", seen: Mapping | None = None,
            delta_range=None, minimize_rounds: int | None = None,
-           candidate_matcher=None) -> TriageResult:
+           candidate_matcher=None, screen=None) -> TriageResult:
     """A crash arrived. Decide what it is, in one call.
 
       1. replay it deterministically on the binary §12 selects
@@ -255,6 +262,13 @@ def triage(record: Mapping, crash: str, *, harness: str = "",
     adds delta_relevance: whether the crash's frames land in what the diff
     changed. Reported, never filtered on -- the policy may use it.
 
+    `screen` is the fast path for raw fuzzer artifacts: the causes
+    (classify.CAUSES) worth a full triage, e.g. ("crash",). The first replay
+    labels the input; any other cause stops there, so a harness that called
+    exit() costs one run (not_a_crash) and a leak one run (rejected). None,
+    the default, replays every input `attempts` times, which is what tells
+    a flaky trigger from no crash.
+
     `candidate_matcher(result_dict) -> str` links the crash to the static
     candidate that predicted it (an integration supplies it; the core knows
     no candidate format). Its answer is `source_candidate_id`, set before the
@@ -271,7 +285,7 @@ def triage(record: Mapping, crash: str, *, harness: str = "",
                 minimize_probes=knobs["minimize_max_probes"],
                 minimize_rounds=knobs["minimize_max_rounds"],
                 do_sensitivity=do_sensitivity,
-                sensitivity_probes=knobs["sensitivity_max_probes"])
+                sensitivity_probes=knobs["sensitivity_max_probes"], screen=screen)
     r = replace(r, determinism=_det.echo(knobs))
     if delta_range:
         r = replace(r, delta_relevance=_delta_relevance(r, delta_range, campaign))
@@ -600,7 +614,8 @@ def _cmd_triage(a):
         r = triage(record, a.crash, harness=a.harness, config=cfg, campaign=c,
                    finding_id=a.finding_id, do_minimize=not a.no_minimize,
                    do_sensitivity=not a.no_sensitivity, policy=a.policy,
-                   delta_range=a.delta or None)
+                   delta_range=a.delta or None,
+                   screen=tuple(x for x in a.screen.split(",") if x) if a.screen is not None else None)
     except Exception as e:  # noqa: BLE001 - the CLI reports, it does not raise
         print(f"error: {type(e).__name__}: {e}", file=sys.stderr)
         return 2
@@ -654,6 +669,9 @@ def register_cli(subparsers):
     v.add_argument("--no-minimize", action="store_true")
     v.add_argument("--no-sensitivity", action="store_true")
     v.add_argument("--delta", default="", help="diff file or git range: report delta relevance")
+    v.add_argument("--screen", default=None, metavar="CAUSES",
+                   help="comma-separated causes worth a full triage (e.g. crash); "
+                        "any other stops after one run")
     v.add_argument("--policy", default="", help="submission policy (default: config, "
                                                  "then builtin:any-confirmed)")
     v.add_argument("--config")

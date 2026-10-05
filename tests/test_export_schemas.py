@@ -48,7 +48,7 @@ def triage_fixture() -> crs.TriageResult:
                          "frames_in_diff": ["write_chunk @ /src/framed.c:25"],
                          "functions_in_diff": [], "nearest_frame_distance": 0,
                          "files_changed": 1},
-        determinism=KNOBS, source_candidate_id="3f2a9c1d0b7e4a65")
+        determinism=KNOBS, source_candidate_id="3f2a9c1d0b7e4a65", cause="crash")
 
 
 def patch_fixture() -> patch.PatchVerdict:
