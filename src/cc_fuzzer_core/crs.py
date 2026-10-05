@@ -15,6 +15,7 @@ in two request/response seams:
     check_patch(record, ...)   a patch was written. Does it stop the PoV
                                without breaking the program?
     cluster / merge_by_patch   which PoVs are one bug (the patcher's input)
+    rank(results)              which confirmed crash to submit first
 
 Both exist because the expensive mistake in a scored run is submitting
 something that is not true. Triage protects the finding; check_patch protects
@@ -38,6 +39,7 @@ service that pretends to do it deterministically.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -46,6 +48,7 @@ from typing import Mapping
 from cc_fuzzer_core import minimize as _minimize
 from cc_fuzzer_core import patch as _patch
 from cc_fuzzer_core import variants as _v
+from cc_fuzzer_core.crash import classify as _classify
 from cc_fuzzer_core.crash import pipeline as _pipeline
 from cc_fuzzer_core.crash import replay as _replay
 from cc_fuzzer_core.crash import verifiers as _verifiers
@@ -567,6 +570,114 @@ def merge_by_patch(clusters, patch_file: str, *, record: Mapping, project_root,
 
 
 # ---------------------------------------------------------------------------
+# rank: which confirmed crash to submit first
+# ---------------------------------------------------------------------------
+#
+# A delta can plant several bugs, and every crash inside the diff passes the
+# policy; only one is the one being scored for. When an inaccurate
+# submission costs points, the order matters. rank() sorts by, in turn:
+#
+#   1. submittable (should_submit, then submittable, then the rest)
+#   2. where it crashed: a frame inside a changed hunk, then a frame in a
+#      changed function (delta_relevance; nothing when it was not asked for)
+#   3. what it does: a write (overflow write, wild-write, format-string),
+#      a use-after-free, an overflow read, a read by a string scan (a missing
+#      terminator rather than a size defect), any other memory error, then
+#      leak / timeout / oom
+#   4. the stack hash, so equal crashes always come out in the same order
+#
+# It orders and explains; it drops nothing. Holding the tail back is the
+# host's call.
+
+RANK_SCHEMA = "submission-rank/v1"
+
+_OVERFLOWS = ("heap-buffer-overflow", "stack-buffer-overflow", "global-buffer-overflow",
+              "stack-use-after-return", "stack-use-after-scope", "container-overflow")
+_LIFETIME = ("heap-use-after-free", "double-free", "attempting-double-free")
+_NOT_MEMORY = ("leak", "timeout", "oom")
+_ACCESS_RE = re.compile(r"\b(READ|WRITE) of size \d+")
+# string scans: reading past the end with one of these is a missing NUL
+_STRING_SCAN_RE = re.compile(r"(?:^|_)(?:strn?len|strr?chr|strchrnul|strn?cmp|strn?casecmp|strstr"
+                             r"|strn?dup|strc?spn|strpbrk|strtok|strn?cpy|strn?cat|rawmemchr)(?:$|_)")
+# (tier, why), highest first
+_CLASS_TIERS = {"write": (6, "a write"), "lifetime": (5, "a use-after-free"),
+                "read": (4, "an out-of-bounds read"),
+                "unterminated": (3, "a read by a string scan (a missing terminator)"),
+                "other": (2, "a memory error"), "none": (1, "not a memory-safety error")}
+
+
+@dataclass(frozen=True)
+class Ranked:
+    rank: int
+    result: Mapping              # the triage-export/v1 document
+    key: tuple                   # what it was sorted on, highest first
+    why: tuple                   # the same, in words
+
+    def as_dict(self) -> dict:
+        r = self.result
+        return {"schema": RANK_SCHEMA, "rank": self.rank, "key": list(self.key),
+                "why": list(self.why), "pov": r.get("pov", ""),
+                "stack_hash": r.get("stack_hash", ""), "category": r.get("category", ""),
+                "top_frame": r.get("top_frame", "")}
+
+
+def _access(r: Mapping) -> str:
+    cat = str(r.get("category") or "")
+    if cat in ("wild-write", "format-string"):
+        return "write"
+    m = _ACCESS_RE.search(str(r.get("sanitizer_excerpt") or ""))
+    return m.group(1).lower() if m else ("read" if cat in ("wild-read", "wild-access") else "")
+
+
+def _class_of(r: Mapping) -> str:
+    cat, access = str(r.get("category") or ""), _access(r)
+    if cat in _NOT_MEMORY or str(r.get("sanitizer") or "") == "leak" or cat.startswith("ubsan"):
+        return "none"
+    if access == "write" and (cat in _OVERFLOWS or cat in _LIFETIME or cat.startswith("wild")
+                              or cat == "format-string"):
+        return "write"
+    if cat in _LIFETIME:
+        return "lifetime"
+    if access == "read" and (cat in _OVERFLOWS or cat.startswith("wild")):
+        first = _classify.frame_functions(str(r.get("sanitizer_excerpt") or "").splitlines(), 1)
+        return "unterminated" if first and _STRING_SCAN_RE.search(first[0]) else "read"
+    return "other"
+
+
+def rank_key(result) -> tuple:
+    """(key, why) for one triage result or triage-export/v1 document."""
+    r = result.as_dict() if hasattr(result, "as_dict") else dict(result)
+    if r.get("should_submit"):
+        status, s_why = 2, "should_submit"
+    elif r.get("submittable"):
+        status, s_why = 1, "submittable, not accepted by the policy"
+    else:
+        status, s_why = 0, f"not submittable ({r.get('status') or 'unknown'})"
+    d = r.get("delta_relevance") or {}
+    if d.get("frames_in_diff"):
+        where, w_why = 2, f"crashes inside a changed hunk ({d['frames_in_diff'][0]})"
+    elif d.get("functions_in_diff"):
+        where, w_why = 1, f"crashes in a changed function ({d['functions_in_diff'][0]})"
+    else:
+        where, w_why = 0, "not in the diff" if d.get("schema") and "error" not in d else "no delta"
+    tier, c_why = _CLASS_TIERS[_class_of(r)]
+    return (status, where, tier), (s_why, w_why, f"{c_why}: {r.get('category') or 'none'}")
+
+
+def rank(results) -> list:
+    """Order results most-worth-submitting first (see above). Each Ranked
+    carries the export document, the key it was sorted on and why."""
+    rows = []
+    for res in results:
+        doc = res.as_dict() if hasattr(res, "as_dict") else dict(res)
+        key, why = rank_key(doc)
+        rows.append((key, why, doc))
+    rows.sort(key=lambda t: (tuple(-k for k in t[0]), str(t[2].get("stack_hash") or ""),
+                             str(t[2].get("pov") or "")))
+    return [Ranked(i, doc, key, why) for i, (key, why, doc) in enumerate(rows, 1)]
+
+
+# ---------------------------------------------------------------------------
 # the corpus seam (thin, and honest about it)
 # ---------------------------------------------------------------------------
 
@@ -657,6 +768,21 @@ def _cmd_cluster(a):
     return 0
 
 
+def _cmd_rank(a):
+    docs = []
+    for p in a.exports:
+        with open(p) as f:
+            docs.append(json.load(f))
+    ranked = rank(docs)
+    if a.json:
+        print(json.dumps([x.as_dict() for x in ranked], indent=2))
+    else:
+        for x in ranked:
+            print(f"{x.rank:>3}. {x.result.get('pov', '')}  {x.result.get('category', '')}"
+                  f"  {x.result.get('top_frame', '')}\n       " + "; ".join(x.why))
+    return 0
+
+
 def register_cli(subparsers):
     from cc_fuzzer_core.cli import add_subsystem
     _p, verbs = add_subsystem(subparsers, "crs",
@@ -677,6 +803,11 @@ def register_cli(subparsers):
     v.add_argument("--config")
     v.add_argument("--json", action="store_true")
     v.set_defaults(func=_cmd_triage)
+
+    v = verbs.add_parser("rank", help="order triage exports, most worth submitting first")
+    v.add_argument("exports", nargs="+", help="triage-export/v1 JSON files")
+    v.add_argument("--json", action="store_true")
+    v.set_defaults(func=_cmd_rank)
 
     v = verbs.add_parser("cluster", help="group triage exports by stack hash; with "
                                          "--patch, merge the groups one patch fixes")

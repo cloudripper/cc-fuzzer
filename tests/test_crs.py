@@ -507,6 +507,84 @@ class ClusterTest(unittest.TestCase):
         self.assertEqual((len(cs), v.status), (3, patch.STALE))
 
 
+class RankTest(unittest.TestCase):
+    """A delta that plants several bugs: every in-diff crash passes the policy,
+    and the most specific one has to go first."""
+
+    IN_HUNK = {"schema": "delta-relevance/v1", "touches_diff": True,
+               "frames_in_diff": ["handle_auth @ src/proto.c:230"], "functions_in_diff": []}
+    IN_FUNC = {"schema": "delta-relevance/v1", "touches_diff": True,
+               "frames_in_diff": [], "functions_in_diff": ["handle_auth @ src/proto.c:90"]}
+    OUTSIDE = {"schema": "delta-relevance/v1", "touches_diff": False,
+               "frames_in_diff": [], "functions_in_diff": []}
+
+    def _r(self, h, category, excerpt="", delta=None, **kw):
+        base = dict(stack_hash=h, category=category, sanitizer="address",
+                    sanitizer_excerpt=excerpt, delta_relevance=delta or self.IN_HUNK,
+                    policy_verdict={"verdict": crs.ACCEPT}, pov=f"/p/{h}")
+        return _result(**{**base, **kw})
+
+    def _order(self, results):
+        return [x.result["stack_hash"] for x in crs.rank(results)]
+
+    def test_writes_before_reads_before_missing_terminators(self):
+        scan = self._r("a-scan", "heap-buffer-overflow",
+                       "==1==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x1\n"
+                       "READ of size 1033 at 0x1 thread T0\n"
+                       "    #0 0x1 in __interceptor_strchr compiler-rt/sanitizer_common_interceptors.inc:1\n"
+                       "    #1 0x2 in handle_auth src/proto.c:230:9\n")
+        read = self._r("b-read", "heap-buffer-overflow",
+                       "READ of size 4 at 0x1 thread T0\n    #0 0x2 in handle_auth src/proto.c:231:9\n")
+        write = self._r("c-write", "heap-buffer-overflow",
+                        "WRITE of size 512 at 0x1 thread T0\n"
+                        "    #0 0x1 in __asan_memcpy compiler-rt/asan_interceptors.cpp:1\n"
+                        "    #1 0x2 in handle_auth src/proto.c:240:5\n")
+        fmt = self._r("d-fmt", "format-string")
+        null = self._r("e-null", "null-deref")
+        uaf = self._r("f-uaf", "heap-use-after-free", "READ of size 8 at 0x1 thread T0\n")
+        ranked = crs.rank([scan, null, read, uaf, write, fmt])
+        self.assertEqual([x.result["stack_hash"] for x in ranked],
+                         ["c-write", "d-fmt", "f-uaf", "b-read", "a-scan", "e-null"])
+        self.assertIn("missing terminator", ranked[4].why[2])
+        self.assertEqual([x.rank for x in ranked], [1, 2, 3, 4, 5, 6])
+
+    def test_the_diff_outranks_the_class(self):
+        out = self._r("a-out", "heap-buffer-overflow", "WRITE of size 4 at 0x1\n", delta=self.OUTSIDE)
+        func = self._r("b-func", "null-deref", delta=self.IN_FUNC)
+        hunk = self._r("c-hunk", "null-deref")
+        self.assertEqual(self._order([out, func, hunk]), ["c-hunk", "b-func", "a-out"])
+
+    def test_submittable_first_and_nothing_is_dropped(self):
+        weak = self._r("a-weak", "wild-write", evidence_grade=variants.WEAK)
+        rejected = self._r("b-pol", "wild-write", policy_verdict={"verdict": crs.REJECT})
+        leak = self._r("c-leak", "leak")
+        good = self._r("d-good", "null-deref")
+        self.assertEqual(self._order([weak, rejected, leak, good]),
+                         ["d-good", "c-leak", "b-pol", "a-weak"])
+
+    def test_exports_and_results_rank_alike_and_stably(self):
+        rs = [self._r("b", "wild-read"), self._r("a", "wild-read")]
+        self.assertEqual(self._order(rs), ["a", "b"])
+        self.assertEqual(self._order([r.as_dict() for r in reversed(rs)]), ["a", "b"])
+        doc = crs.rank(rs)[0].as_dict()
+        self.assertEqual((doc["schema"], doc["rank"], doc["pov"]), (crs.RANK_SCHEMA, 1, "/p/a"))
+
+    def test_rank_cli(self):
+        import sys
+        from tests.support.golden import REPO
+        with tempfile.TemporaryDirectory() as td:
+            paths = []
+            for r in (self._r("a", "null-deref"), self._r("b", "wild-write")):
+                p = Path(td) / f"{r.stack_hash}.json"
+                p.write_text(json.dumps(r.as_dict()))
+                paths.append(str(p))
+            out = subprocess.run([sys.executable, "-m", "cc_fuzzer_core", "crs", "rank", "--json", *paths],
+                                 capture_output=True, text=True,
+                                 env={**os.environ, "PYTHONPATH": str(REPO / "src")})
+            self.assertEqual(out.returncode, 0, out.stderr)
+            self.assertEqual([d["stack_hash"] for d in json.loads(out.stdout)], ["b", "a"])
+
+
 class SurfaceTest(unittest.TestCase):
     def test_the_adapter_does_not_import_the_loop(self):
         """If the CRS surface reached for the tick machinery, 'no loop needed'

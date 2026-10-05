@@ -122,7 +122,7 @@ def _category(line: str, pattern) -> str:
     return m.group(1) if m else line
 
 
-def _frame_functions(lines, n: int) -> list[str]:
+def frame_functions(lines, n: int) -> list[str]:
     """The function names of the first n stack frames, infrastructure included."""
     out = []
     for ln in lines:
@@ -138,7 +138,7 @@ def _frame_functions(lines, n: int) -> list[str]:
 
 def segv_category(lines) -> str:
     """Split an ASan SEGV report (module docstring)."""
-    if any(_PRINTF_RE.search(fn) for fn in _frame_functions(lines, _PRINTF_FRAMES)):
+    if any(_PRINTF_RE.search(fn) for fn in frame_functions(lines, _PRINTF_FRAMES)):
         return "format-string"
     text = "\n".join(lines)
     if _ZERO_PAGE in text:

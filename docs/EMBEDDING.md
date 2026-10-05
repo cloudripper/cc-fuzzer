@@ -164,6 +164,20 @@ r.delta_relevance   # {"touches_diff", "frames_in_diff", "functions_in_diff",
 range when you pass a campaign. An unreadable one is reported as `error`,
 not raised.
 
+**Several bugs, one target.** A delta can plant more than one bug, and every
+crash in the diff passes the policy. When an inaccurate submission costs
+points, submit the most specific first: `crs.rank(results)` orders them by
+submittable, then a frame inside a changed hunk before one in a changed
+function, then a write (overflow write, wild-write, format-string) before a
+use-after-free, an overflow read, a read by a string scan (a missing
+terminator), any other memory error, and leak / timeout / oom last. It drops
+nothing; holding the tail back is your call.
+
+```python
+for x in crs.rank(results):          # TriageResults or triage-export/v1 dicts
+    print(x.rank, x.result["pov"], x.why)
+```
+
 For a downstream consumer (a patcher in another container) the result also
 carries `pov_sha256` and `original_sha256` to key records on, `sanitizer`
 (which detector reported it), `frames` (top
@@ -616,7 +630,8 @@ additive; a removed or retyped key is a new version.
 
 Nested documents carry their own versions: `policy-verdict/v1`,
 `input-sensitivity/v1`, `delta-relevance/v1`, `determinism/v1`,
-`crash-replay/v1`, `minimized-input/v1`.
+`crash-replay/v1`, `minimized-input/v1`. `crs.rank` emits
+`submission-rank/v1` (rank, key, why, pov, stack_hash).
 
 ## 11.1 Determinism
 
@@ -764,6 +779,7 @@ source that moved under the harness.
 | **which PoV bytes matter** | `minimize.sensitivity` | `minimize sensitivity` |
 | **validate a patch** | `crs.check_patch`, `patch` | `patch validate`, `patch scope` |
 | **group PoVs into bugs** | `crs.cluster`, `crs.merge_by_patch` | `crs cluster` |
+| **what to submit first** | `crs.rank` | `crs rank` |
 | seed safety | `crs.safe_seeds`, `quarantine` | `quarantine run` |
 | cmplog dictionary | `crs.dictionary`, `cmplog` | `cmplog extract` |
 | delta targets | `crs.delta_targets`, `delta` | `delta find` |
