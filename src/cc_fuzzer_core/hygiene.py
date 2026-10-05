@@ -85,7 +85,10 @@ def call(session: str, prompt: str, call_id: str, tool: str, tool_input, *,
         calls = {k: v for k, v in doc["calls"].items() if now - v["ts"] <= MAX_AGE_S}
         doc["calls"] = calls
         first = calls.get(key)
-        if first and first["id"] != call_id and key not in doc["denied"]:
+        # The copy may carry the same call id as the original (on the
+        # qualification runs every one did: a duplicated stream), so the id
+        # does not tell them apart; being already in the batch does.
+        if first and key not in doc["denied"]:
             doc["denied"].append(key)
             return (f"Duplicate: this exact {tool} call is already in this response "
                     f"({first['id']}). It runs once; use that result. To run it again on "

@@ -32,6 +32,11 @@ class HygieneTest(unittest.TestCase):
         self.assertIn("Duplicate", _call("b"))
         self.assertIsNone(_call("c"))       # asked again: allowed
 
+    def test_a_copy_with_the_same_call_id_is_a_duplicate(self):
+        """The qualification duplicates all repeated the original's id."""
+        self.assertIsNone(_call("same"))
+        self.assertIn("Duplicate", _call("same"))
+
     def test_different_input_or_tool_is_not_a_duplicate(self):
         self.assertIsNone(_call("a"))
         self.assertIsNone(_call("b", inp={"file_path": "/y.c"}))
@@ -106,14 +111,16 @@ class LiveHygieneTest(unittest.TestCase):
             read = {"tool": "Read", "input": {"file_path": str(work / "a.c")}}
             bash = {"tool": "Bash", "input": {"command": "echo ran >> runs.txt", "description": "r"}}
             res, final = claude_driver.run(
-                [{"tools": [read, read, bash, bash]}, bash, {"text": "done"}],
+                [{"tools": [read, read, bash, bash]}, bash, {"tools": [bash, bash], "same_id": True},
+                 {"text": "done"}],
                 settings=settings, workdir=work, env={H.STATE_ENV: str(Path(d) / "state")})
             self.assertEqual(final.get("subtype"), "success")
             errs = [r["is_error"] for r in res]
             # which of two concurrent copies is denied is a race: exactly one per pair
-            self.assertEqual((sum(errs[0:2]), sum(errs[2:4]), errs[4]), (1, 1, False), errs)
+            self.assertEqual((sum(errs[0:2]), sum(errs[2:4]), errs[4], sum(errs[5:7])),
+                             (1, 1, False, 1), errs)
             self.assertIn("Duplicate", next(r["text"] for r in res if r["is_error"]))
-            self.assertEqual((work / "runs.txt").read_text().count("ran"), 2)
+            self.assertEqual((work / "runs.txt").read_text().count("ran"), 3)
 
 
 if __name__ == "__main__":

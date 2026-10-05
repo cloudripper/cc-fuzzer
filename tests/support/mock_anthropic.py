@@ -1,8 +1,9 @@
 """A scripted Anthropic Messages endpoint for driving real Claude Code offline.
 
 Each POST /v1/messages answers with the next scripted turn, streamed as SSE
-the way the API does. A turn is either {"tool": name, "input": {...}} (one
-tool_use block) or {"text": "..."} (end_turn). Every request body is appended
+the way the API does. A turn is {"tool": name, "input": {...}} (one tool_use
+block), {"tools": [...]} (several; "same_id": true gives them all one id, as a
+duplicated stream does) or {"text": "..."} (end_turn). Every request body is appended
 to <log> so a test can read back what Claude Code sent: the tool_results its
 tools (and hooks) produced. No model, no network, no cost.
 
@@ -68,7 +69,9 @@ class H(BaseHTTPRequestHandler):
         if blocks:
             for k, blk in enumerate(blocks):
                 w(sse("content_block_start", {"type": "content_block_start", "index": k, "content_block": {
-                    "type": "tool_use", "id": f"toolu_mock_{state['i']}_{k}", "name": blk["tool"], "input": {}}}))
+                    "type": "tool_use", "name": blk["tool"], "input": {},
+                    # same_id: every block repeats block 0's id, as a duplicated stream does
+                    "id": f"toolu_mock_{state['i']}_{0 if turn.get('same_id') else k}"}}))
                 w(sse("content_block_delta", {"type": "content_block_delta", "index": k, "delta": {
                     "type": "input_json_delta", "partial_json": json.dumps(blk["input"])}}))
                 w(sse("content_block_stop", {"type": "content_block_stop", "index": k}))
