@@ -178,7 +178,10 @@ def _triage(record: Mapping, crash: str, *, harness: str = "",
                             pov_sha256=base["original_sha256"], **base)
 
     pov, mini = crash, {}
-    if do_minimize:
+    # every probe of a hang or an OOM runs to the limit: minutes per probe,
+    # hours per input, and a reduced hang is not the same question anyway
+    heavy = r.category in UNMINIMIZED
+    if do_minimize and not heavy:
         try:
             m = _minimize.minimize(record, crash, harness=harness,
                                    stack_hash=r.stack_hash, timeout=timeout,
@@ -208,7 +211,7 @@ def _triage(record: Mapping, crash: str, *, harness: str = "",
         r.evidence_grade, v, config)
 
     sens = {}
-    if do_sensitivity:
+    if do_sensitivity and not heavy:
         try:
             sens = _minimize.sensitivity(record, pov, harness=harness,
                                          stack_hash=r.stack_hash, timeout=timeout,
@@ -351,6 +354,7 @@ def _relevance_frames(r: TriageResult) -> list:
 # category and delta_relevance, and never has to parse sanitizer_excerpt.
 
 POLICY_SCHEMA = "policy-verdict/v1"
+UNMINIMIZED = ("timeout", "oom")
 ACCEPT, REJECT = "accept", "reject"
 DEFAULT_POLICY = "builtin:any-confirmed"
 

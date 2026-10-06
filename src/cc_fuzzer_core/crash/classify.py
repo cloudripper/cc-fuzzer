@@ -37,7 +37,10 @@ _ASAN_ERR_RE = re.compile(r"^==[0-9]+==ERROR: AddressSanitizer:")
 _ASAN_ERR_CAT_RE = re.compile(r"^==[0-9]+==ERROR: AddressSanitizer: ([a-zA-Z-]+).*")
 _PLAIN_RE = re.compile(r"^(Segmentation fault|Abort trap|Aborted|Bus error)")
 _ASSERT_RE = re.compile(r"Assertion .* failed|g_assertion_message|__assert_fail")
-_OOM_RE = re.compile(r"out of memory|MemoryError|allocator_may_return_null|requested allocation size .* exceeds")
+# libFuzzer's own OOM (-rss_limit_mb, -malloc_limit_mb) spells it with hyphens:
+# "ERROR: libFuzzer: out-of-memory (malloc(N))" / "(used: NMb; exceeds: NMb)"
+_OOM_RE = re.compile(r"out of memory|libFuzzer: out-of-memory|MemoryError|allocator_may_return_null"
+                     r"|requested allocation size .* exceeds")
 _TIMEOUT_RE = re.compile(r"ERROR: libFuzzer: timeout|DEADLYSIGNAL")
 # libFuzzer's own handler, when no sanitizer reported the signal
 _DEADLY_RE = re.compile(r"(SUMMARY|ERROR): libFuzzer: deadly signal")
@@ -49,6 +52,7 @@ _KEEP_LINE = r"\1"
 
 # Frames from sanitizer / fuzzer infrastructure (matched anywhere in "fn @ loc").
 INFRA_RE = re.compile(r"__sanitizer_|__asan_|__ubsan_|__msan_|__lsan_|compiler-rt|asan_|ubsan_|msan_"
+                      r"|__(sanitizer|asan|ubsan|msan|lsan)::"      # the runtime's C++ frames (OOM hooks)
                       r"|fuzzer::|LLVMFuzzerTestOneInput")
 # libc's abort path: an assert() or abort() reaches raise() through these, and
 # the frame worth naming is the target's function that called it

@@ -108,6 +108,22 @@ class TestClassifyApi(unittest.TestCase):
         # a project function that merely starts with the word is still a frame
         self.assertEqual(cl.top_frame(["    #0 0x1 in raise_error src/e.c:4:1"]), "raise_error @ src/e.c:4")
 
+    def test_libfuzzer_out_of_memory_is_an_oom_crash(self):
+        """libFuzzer's own OOM report (hyphenated) was read as no crash at all;
+        the scorer counts it (base-runner -rss_limit_mb=2560)."""
+        malloc = ("==40== ERROR: libFuzzer: out-of-memory (malloc(4294967296))\n"
+                  "    #0 0x1 in __sanitizer_print_stack_trace compiler-rt/asan_stack.cpp:87:3\n"
+                  "    #1 0x2 in fuzzer::MallocHook(void const volatile*, unsigned long) FuzzerLoop.cpp:131:5\n"
+                  "    #2 0x3 in malloc /src/llvm-project/compiler-rt/lib/asan/asan_malloc_linux.cpp:69:3\n"
+                  "    #3 0x4 in _TIFFmalloc /src/libtiff/libtiff/tif_unix.c:334:12\n"
+                  "SUMMARY: libFuzzer: out-of-memory\n")
+        r = cl.classify(malloc)
+        self.assertEqual((r.is_crash, r.category, r.top_frame),
+                         (True, "oom", "_TIFFmalloc @ /src/libtiff/libtiff/tif_unix.c:334"))
+        rss = "==41== ERROR: libFuzzer: out-of-memory (used: 2600Mb; exceeds: 2560Mb)\nSUMMARY: libFuzzer: out-of-memory\n"
+        self.assertEqual((cl.classify(rss).is_crash, cl.classify(rss).category), (True, "oom"))
+        self.assertEqual(cl.cause(malloc, 1), "oom")
+
     def test_segv_is_split_by_address_and_access(self):
         def segv(addr, access=None, hint=""):
             text = f"==1==ERROR: AddressSanitizer: SEGV on unknown address {addr} (pc 0x1 bp 0x2 sp 0x3 T0)\n"

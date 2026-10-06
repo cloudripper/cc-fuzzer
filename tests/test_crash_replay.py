@@ -354,10 +354,14 @@ LIBFUZZER_HARNESS = r"""
 #include <stdlib.h>
 #include <string.h>
 void *volatile sink;
+volatile unsigned long spun;
+__attribute__((noinline)) void spin(size_t n) { for (;;) spun += n; }
 int LLVMFuzzerTestOneInput(const uint8_t *d, size_t n) {
   if (n >= 4 && !memcmp(d, "EXIT", 4)) exit(0);
   if (n >= 4 && !memcmp(d, "LEAK", 4)) { sink = malloc(64); sink = 0; }
   if (n >= 4 && !memcmp(d, "BOOM", 4)) { char *volatile p = malloc(4); p[n] = 1; free(p); }
+  if (n >= 4 && !memcmp(d, "HANG", 4)) spin(n);
+  if (n >= 4 && !memcmp(d, "HOGS", 4)) { sink = malloc((size_t)4 << 30); if (sink) ((char *)sink)[0] = 1; }
   return 0;
 }
 """
@@ -415,6 +419,21 @@ class ScreenTest(unittest.TestCase):
         self.assertEqual((r.verdict, r.attempts, r.cause, r.category),
                          (R.CRASH, R.ATTEMPTS, "crash", "heap-buffer-overflow"))
         self.assertEqual(r.as_dict()["cause"], "crash")
+
+    def test_replay_args_let_libfuzzer_report_a_hang_and_an_oom(self):
+        """With the scorer's flags (CRSBench: -timeout=25 -rss_limit_mb=2560),
+        libFuzzer itself reports a hang and an OOM, with a stack: both crashes
+        for the scorer. Without them a hang is killed silently (exit 124)."""
+        rec = {"verify_binary": str(self.binary), "replay_args": ["-timeout=2", "-rss_limit_mb=2560"]}
+        r = R.replay(rec, self._input(b"HANG"), attempts=1, timeout=20)
+        self.assertEqual((r.verdict, r.category, r.cause), (R.CRASH, "timeout", "timeout"))
+        self.assertTrue(r.top_frame.startswith("spin @ "), r.top_frame)
+        r = R.replay(rec, self._input(b"HOGS"), attempts=1, timeout=20)
+        self.assertEqual((r.verdict, r.category, r.cause), (R.CRASH, "oom", "oom"))
+        # the sanitizer runtime's malloc hooks are not the site
+        self.assertFalse(r.top_frame.startswith(("__sanitizer", "__asan", "fuzzer::")), r.top_frame)
+        # the screen still turns them away when the caller does not want them
+        self.assertEqual(R.replay(rec, self._input(b"HANG"), timeout=20, screen=("crash",)).verdict, R.SCREENED)
 
     def test_no_screen_is_the_old_replay(self):
         r = self._replay(b"EXIT", screen=None)

@@ -10,6 +10,6 @@
   "files": {},
   "stderr": [],
   "stdout": [
-    "{\"is_crash\":true,\"category\":\"oom\",\"summary_line\":\"==5555== out of memory: allocation of 4294967295 bytes failed\",\"top_frame\":\"malloc @ \",\"exit_code\":null}"
+    "{\"is_crash\":true,\"category\":\"oom\",\"summary_line\":\"==5555== ERROR: libFuzzer: out-of-memory (malloc(4294967295))\",\"top_frame\":\"malloc @ \",\"exit_code\":null}"
   ]
 }

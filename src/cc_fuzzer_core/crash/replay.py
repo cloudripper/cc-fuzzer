@@ -214,14 +214,15 @@ def stack_hash(text: str, *, category: str = "") -> str:
 _LOADER_ERROR = re.compile(r"error while loading shared libraries: [^\n]*")
 
 
-def run_once(binary: str, reproducer: str, *, timeout: int = TIMEOUT_S, env=None):
-    """One attempt. Returns (exit_code, combined output)."""
+def run_once(binary: str, reproducer: str, *, timeout: int = TIMEOUT_S, env=None, args=()):
+    """One attempt. Returns (exit_code, combined output). `args` are libFuzzer
+    flags placed before the reproducer (a record's `replay_args`)."""
     import subprocess
     run_env = dict(os.environ if env is None else env)
     run_env["ASAN_OPTIONS"] = ASAN_OPTIONS
     run_env["UBSAN_OPTIONS"] = UBSAN_OPTIONS
     try:
-        p = subprocess.run([binary, reproducer], capture_output=True, timeout=timeout,
+        p = subprocess.run([binary, *map(str, args), reproducer], capture_output=True, timeout=timeout,
                            env=run_env, stdin=subprocess.DEVNULL)
     except subprocess.TimeoutExpired as e:
         # The target can print a complete sanitizer report and then hang in its
@@ -261,9 +262,13 @@ def replay(record, reproducer: str, *, harness: str = "", attempts: int = ATTEMP
     if not os.access(sel.binary, os.X_OK):
         raise ReplayError(f"{sel.variant} binary is not executable: {sel.binary}")
 
+    # The host's scorer may replay with its own libFuzzer flags (CRSBench: the
+    # base-runner's -timeout=25 -rss_limit_mb=2560): with them a hang is
+    # reported by libFuzzer, with a stack, instead of being killed silently.
+    args = tuple((record or {}).get("replay_args") or ())
     runs, crashes, last, first_cause, screened = [], 0, None, "", False
     for i in range(1, attempts + 1):
-        rc, out = run_once(sel.binary, reproducer, timeout=timeout, env=env)
+        rc, out = run_once(sel.binary, reproducer, timeout=timeout, env=env, args=args)
         cl = _classify.classify(out, rc)
         runs.append(Attempt(i, rc, cl.is_crash, cl.category, cl.top_frame, cl.summary_line))
         if cl.is_crash:
