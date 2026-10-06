@@ -91,6 +91,23 @@ class TestClassifyApi(unittest.TestCase):
         r = cl.classify(text)
         self.assertEqual((r.category, r.top_frame), ("null-deref", "real_fn @ src/x.c:44"))
 
+    def test_an_abort_is_named_by_the_function_that_called_abort(self):
+        """file's apprentice_sort abort(): the site was "raise @ libc", the same
+        for every abort in every target."""
+        text = ("==1== ERROR: libFuzzer: deadly signal\n"
+                "    #0 0x1 in __sanitizer_print_stack_trace compiler-rt/x.cpp:87:3\n"
+                "    #1 0x2 in fuzzer::PrintStackTrace() FuzzerUtil.cpp:210:5\n"
+                "    #2 0x3 in __pthread_kill_implementation (/lib/x86_64-linux-gnu/libc.so.6+0x8e9fb)\n"
+                "    #3 0x4 in raise (/lib/x86_64-linux-gnu/libc.so.6+0x4300a)\n"
+                "    #4 0x5 in abort (/lib/x86_64-linux-gnu/libc.so.6+0x2a4d7)\n"
+                "    #5 0x6 in apprentice_sort /src/file/src/apprentice.c:1143:9\n")
+        r = cl.classify(text)
+        self.assertEqual((r.category, r.top_frame), ("deadly-signal", "apprentice_sort @ /src/file/src/apprentice.c:1143"))
+        self.assertEqual(cl.top_frame(["    #0 0x1 in __assert_fail (/lib/libc.so.6+0x1)",
+                                       "    #1 0x2 in check_hdr src/h.c:9:3"]), "check_hdr @ src/h.c:9")
+        # a project function that merely starts with the word is still a frame
+        self.assertEqual(cl.top_frame(["    #0 0x1 in raise_error src/e.c:4:1"]), "raise_error @ src/e.c:4")
+
     def test_segv_is_split_by_address_and_access(self):
         def segv(addr, access=None, hint=""):
             text = f"==1==ERROR: AddressSanitizer: SEGV on unknown address {addr} (pc 0x1 bp 0x2 sp 0x3 T0)\n"

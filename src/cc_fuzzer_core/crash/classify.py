@@ -50,6 +50,10 @@ _KEEP_LINE = r"\1"
 # Frames from sanitizer / fuzzer infrastructure (matched anywhere in "fn @ loc").
 INFRA_RE = re.compile(r"__sanitizer_|__asan_|__ubsan_|__msan_|__lsan_|compiler-rt|asan_|ubsan_|msan_"
                       r"|fuzzer::|LLVMFuzzerTestOneInput")
+# libc's abort path: an assert() or abort() reaches raise() through these, and
+# the frame worth naming is the target's function that called it
+_ABORT_FN_RE = re.compile(r"^(?:raise|abort|gsignal|pthread_kill|__GI_raise|__GI_abort|__GI___pthread_kill"
+                          r"|__pthread_kill\w*|__assert_fail\w*|__assert_perror_fail|__assert|__libc_message)$")
 
 _KNOWN_SUMMARY = {"heap-buffer-overflow", "stack-buffer-overflow", "global-buffer-overflow",
                   "heap-use-after-free", "use-of-uninitialized-value", "stack-overflow", "null-deref"}
@@ -162,7 +166,8 @@ def top_frame(lines, skip=None) -> str:
                 fn = fields[i + 1] if i + 1 < len(fields) else ""
                 loc = fields[i + 2] if i + 2 < len(fields) else ""
                 frame = f"{fn} @ {_COLUMN_RE.sub(_KEEP_LINE, loc, count=1)}"
-                if not INFRA_RE.search(frame) and not (skip and skip.search(fn)):
+                if not INFRA_RE.search(frame) and not _ABORT_FN_RE.match(fn) \
+                        and not (skip and skip.search(fn)):
                     return frame
                 break
     return ""
