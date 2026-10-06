@@ -24,6 +24,8 @@ except ValueError:
 cmd = [sys.executable, "-m", "cc_fuzzer_core", "sweep", "gate", "--json", *sys.argv[1:]]
 if ev.get("stop_hook_active"):
     cmd.append("--continuing")
+if ev.get("session_id"):
+    cmd += ["--session", str(ev["session_id"])]
 try:
     d = json.loads(subprocess.run(cmd, capture_output=True, text=True, timeout=15).stdout or "{}")
 except Exception:

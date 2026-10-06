@@ -162,6 +162,13 @@ class MarkAndGateTest(unittest.TestCase):
         self.assertFalse(S.gate(self.doc)[0])                                # MAX_BLOCKS reached
         self.assertEqual(self.doc["gate"]["blocks"], S.MAX_BLOCKS)
 
+    def test_the_block_cap_is_per_session(self):
+        for _ in range(S.MAX_BLOCKS):
+            self.assertTrue(S.gate(self.doc, session="round-1")[0])
+        self.assertFalse(S.gate(self.doc, session="round-1")[0])          # spent for this session
+        self.assertTrue(S.gate(self.doc, session="round-2")[0])           # a new round: fresh count
+        self.assertEqual(self.doc["gate"]["blocks"], 1)
+
     def test_complete_never_blocks(self):
         S.mark(self.doc, "h1", "safe", "all bounded by the length check")
         S.mark(self.doc, "h3", "safe", "only a call with no arguments")

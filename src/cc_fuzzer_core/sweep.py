@@ -295,12 +295,17 @@ def mark(doc: dict, item: str, verdict: str, reason: str, *, input_path: str = "
     return doc
 
 
-def gate(doc: dict, *, stop_hook_active: bool = False, max_blocks: int = MAX_BLOCKS) -> tuple:
-    """(block, message). Blocks while items are open, up to max_blocks times,
-    and while Claude Code is already continuing for a hook only if the agent
-    closed something since the last block."""
+def gate(doc: dict, *, stop_hook_active: bool = False, max_blocks: int = MAX_BLOCKS,
+         session: str = "") -> tuple:
+    """(block, message). Blocks while items are open, up to max_blocks times
+    per session, and while the host is already continuing for a hook only if
+    the agent closed something since the last block. A new `session` (a new
+    work round) starts a fresh count: the cap guards one session against a
+    loop, and a run of many rounds must not spend it in the first three."""
     opn = open_items(doc)
     g = doc.setdefault("gate", {"blocks": 0, "open_at_block": None})
+    if session and g.get("session") != session:
+        g.update(session=session, blocks=0, open_at_block=None)
     if not opn:
         return False, "delta sweep complete"
     if g["blocks"] >= max_blocks:
@@ -400,7 +405,8 @@ def _cmd_gate(a):
         try:
             path = _file(a)
             doc = load(path)
-            block, msg = gate(doc, stop_hook_active=a.continuing, max_blocks=a.max_blocks)
+            block, msg = gate(doc, stop_hook_active=a.continuing, max_blocks=a.max_blocks,
+                              session=a.session)
             save(doc, path)
         except Exception:  # noqa: BLE001 - no sweep, nothing to enforce
             block, msg = False, ""
@@ -438,6 +444,7 @@ def register_cli(subparsers):
     v.add_argument("--json", action="store_true")
     v.add_argument("--continuing", action="store_true",
                    help="the host is already continuing because of a block")
+    v.add_argument("--session", default="", help="the host's session: the block cap is per session")
     v.add_argument("--max-blocks", type=int, default=MAX_BLOCKS)
     v.add_argument("--limit", type=int, default=SHOW_LIMIT)
     v.set_defaults(func=_cmd_gate)

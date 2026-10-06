@@ -18,7 +18,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cc-fuzzer-core"
-version = "0.36.2"
+version = "0.36.3"
 description = "Host-independent core of cc-fuzzer: campaign state, crash triage plumbing and loop logic for LLM-in-the-loop fuzzing."
 readme = "README.md"
 license = { text = "MIT" }
