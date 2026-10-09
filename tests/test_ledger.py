@@ -446,7 +446,7 @@ class TestHook(GoldenTestCase):
     def test_hooks_json_registers_it(self):
         d = json.loads((REPO / "hooks" / "hooks.json").read_text())
         cmds = [h["command"] for m in d["hooks"]["SubagentStop"] for h in m["hooks"]]
-        self.assertEqual(cmds, ["${CLAUDE_PLUGIN_ROOT}/hooks/ledger-append.sh"])
+        self.assertEqual(cmds, ['"${CLAUDE_PLUGIN_ROOT}/hooks/ledger-append.sh"'])   # quoted
 
 
 class TestRecordedCampaign(GoldenTestCase):

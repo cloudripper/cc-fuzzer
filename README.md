@@ -6,14 +6,31 @@ cc-fuzzer is **not** a Cyber Reasoning System. It covers the dynamic-analysis ha
 
 ## Quick start
 
-Install the plugin once, inside Claude Code:
+**1. Check the prerequisites.** Claude Code **2.1.285 or later** (the version this plugin is tested on; see `claude-code.contract.json`), `python3` ≥ 3.10, and git. The fuzzing toolchain comes from nix (step 4), or you install it yourself: see [Prerequisites](#prerequisites).
+
+**2. Install the plugin.** Inside Claude Code, in one step (Claude Code 2.1.275 or later):
 
 ```
-/plugin marketplace add ./cc-fuzzer
-/plugin install cc-fuzzer
+/plugin install cc-fuzzer --marketplace cloudripper/cc-fuzzer
 ```
 
-Tier-1 SAST in `/fuzz-review` ships the bundled `rules/semgrep` pack offline by default — no setup needed. Additional cross-language rulesets (C/C++, Python, Go, Rust, etc.) can be pulled on demand from the semgrep registry via an explicit pack, e.g. `--sast-rules p/trailofbits` (requires network at scan time). (semgrep's `--config auto` is intentionally **not** supported: it requires semgrep telemetry, which this plugin keeps disabled for privacy — name an explicit pack instead.)
+Or in two steps, which is also how you install from a local clone:
+
+```
+/plugin marketplace add cloudripper/cc-fuzzer      # or: git clone https://github.com/cloudripper/cc-fuzzer
+                                                   #     /plugin marketplace add ./cc-fuzzer
+/plugin install cc-fuzzer@cc-fuzzer                # <plugin>@<marketplace>
+```
+
+From your shell, `claude plugin install cc-fuzzer@cc-fuzzer` does the same once the marketplace is added. To work on the plugin itself without installing it, run `claude --plugin-dir ./cc-fuzzer` (one session; `/reload-plugins` picks up edits).
+
+**3. Check the install.** Start Claude Code in a project. The SessionStart hook reports the environment and, once a `fuzz/` campaign exists, which tools are missing (clang, compiler-rt, AFL++, llvm-cov/llvm-profdata, gdb). `/cc-fuzzer:doctor` checks the campaign state, the plugin's file integrity and the Claude Code version, read-only, and says what to fix. If either reports **DRIFT DETECTED**, see [Troubleshooting](#troubleshooting).
+
+**4. Run a campaign**, the self-driving way with nix (recommended, below), without nix ([host tools](#without-nix-host-tools)), or step by step ([drive it yourself](#drive-it-yourself-with-or-without-nix)). Results land in `fuzz/findings/` and the report in `fuzz/state/FINDINGS-REPORT-<target>.md`.
+
+The `cc-fuzzer` command the skills run is `bin/cc-fuzzer` in the plugin. Claude Code puts the plugin's `bin/` on the Bash tool's `PATH`, so inside a session `cc-fuzzer …` just works. From your own terminal, call it by its path in your clone (`./cc-fuzzer/bin/cc-fuzzer …`), or `python3 -m cc_fuzzer_core …` once the core is installed (`pip install ./cc-fuzzer`). `${CLAUDE_PLUGIN_ROOT}` is set only inside hooks and plugin files, never in your terminal.
+
+Tier-1 SAST in `/fuzz-review` uses the bundled `rules/semgrep` pack offline; it needs the `semgrep` binary but no rule setup. Additional rulesets (C/C++, Python, Go, Rust, etc.) can be pulled from the semgrep registry with an explicit pack, e.g. `--sast-rules p/trailofbits` (network at scan time). semgrep's `--config auto` is intentionally **not** supported: it requires semgrep telemetry, which this plugin keeps disabled. Name an explicit pack instead.
 
 ### Recommended companion plugin: ctxctl
 
@@ -144,15 +161,17 @@ Everything host-specific is data rather than a second implementation:
 | nix vs bare host vs OSS-Fuzz image | a prompt **profile** (`prompts/profiles/`) |
 | which toolchain builds a variant | a **builder** (`builders/`) |
 | what counts as a confirmed finding | `verification.final_step` in fuzz-config |
-| which subsystems run at all | **feature flags** (§9) |
+| which subsystems run at all | **feature flags** (`cc-fuzzer feature list`; [EMBEDDING §6](docs/EMBEDDING.md#6-prompts)) |
 | which model serves an agent | `data/models.json` |
 | which crashes are worth submitting | the **submission policy** (`submission.policy`) |
 | an outside tool's candidates (cull) | an optional **integration** (`cc_fuzzer_core.integrations`), off by default |
 
 The agents in `agents/` are *rendered output*, not sources: they come from
-`prompts/` and `cc-fuzzer prompts check` fails if they drift.
+`prompts/` and `cc-fuzzer prompts check` fails if they drift. Two are the
+exception: `ops-runner` and `nix-builder` are hand-written plugin-only agents
+(`prompts/render.json` marks them `plugin_only`).
 
-Embedding it in something else: **[docs/EMBEDDING.md](docs/EMBEDDING.md)**.
+Embedding it in something else: **[docs/EMBEDDING.md](docs/EMBEDDING.md)**. What changed in each release: **[CHANGELOG.md](CHANGELOG.md)**.
 
 ## How it works
 
@@ -225,6 +244,10 @@ Every orchestrator invocation begins with `cc-fuzzer tick state`:
 | `poc-builder` | **opus** | Characterizes security impact of confirmed findings for responsible disclosure; impact checked by a `verify.sh`. |
 | `reporting-agent` | **opus** | Re-runs every reproducer and writes `FINDINGS-REPORT-<target>.md` (confirmed vs. false-positive, `git blame` provenance). |
 | `nix-builder` | sonnet | Builds or rebuilds harness binaries via nix derivations (requires `CC_FUZZER_FHS=1`). Runs the repair loop, promotes to nix backend, falls back to legacy on hard failure. |
+| `query-analyst` | sonnet | Writes and runs one fresh static-analysis query (semgrep, or CodeQL where a database exists) to test a stated hypothesis, and triages the hits into gap annotations, review candidates or seed hints. |
+| `ops-runner` | haiku | Runs the Bash work of the main-thread skills (`yolo`, `tick`, `fuzz-stop`, `fuzz-status`, `doctor`, …), so script output stays out of the main context under ctxctl. |
+
+The models are tiers (deep, standard, fast) mapped in `src/cc_fuzzer_core/data/models.json`; see [Customizing model routing](#customizing-model-routing).
 
 ### Skills (`/cc-fuzzer:<name>`)
 
@@ -233,14 +256,31 @@ Claude may model-invoke **every** skill except **`fuzz-reset`**, which alone car
 The gate is about **slash-command auto-invocation**, not subagents. **The orchestrator does not dispatch other agents.** Under the recommended ctxctl configuration the top-level thread is the only context with the `Agent` tool, and no cc-fuzzer agent carries it — so no subagent can spawn another subagent. The orchestrator is a **decision agent**: it reads state, runs the deterministic evaluators, and returns a single `YOLO_NEXT:` next-action directive (its last line); the **main-thread skill** parses that directive and performs the action — dispatch a specialist (`crash-triager`, `planner-consult`, …) via `Agent`, run a bash lever via `ops-runner`, `ScheduleWakeup` to chain a tick, or stop — then re-enters the loop for the next decision. So COLD is a main-thread-driven chain (planner → harness-writer → seed-generator → launch), one decision-then-dispatch step at a time. The directive vocabulary lives in `STATE_SCHEMA.md` ("The `YOLO_NEXT:` next-action directive"). Each skill is a thin wrapper around this decide→dispatch loop, also usable for one-off manual or model-driven dispatches. Cost is bounded by `--budget` and, under YOLO, the cost/redundancy ledger — not by skill gating. Only the irreversible `reset` stays human-gated.
 
 - **Campaign loop** — `campaign` (headline; auto-detects COLD/RESUME/WARM), `tick`, `resume-campaign`, `fuzz-run`, `fuzz-stop`, `yolo`, `fuzz-reset`
-- **Analysis & corpus** — `fuzz-plan`, `harness`, `seed`, `coverage`, `concolic`, `fuzz-review`, `delta`, `dictionaries`
+- **Analysis & corpus** — `fuzz-plan`, `harness`, `seed`, `coverage`, `concolic`, `fuzz-review`, `delta`, `delta-sweep` (a verdict for every risky line a diff changed: `cc-fuzzer sweep init|show|mark|gate`), `dictionaries`
 - **Findings** — `triage`, `poc`, `report`
 - **Nix build** — `nix-build` (rebuild harness binaries via nix derivations; `--harness`, `--variant`, `--force`, `--fallback`), `nix-cleanup` (remove GC roots after campaign; `--gc`, `--dry-run`)
 - **Read-only** — `fuzz-status`, `doctor`, `validate`
 
+Each skill's `argument-hint` (shown when you type `/cc-fuzzer:`) lists its flags.
+
+### Hooks
+
+The plugin registers these in `hooks/hooks.json`. Three of them refuse an action; when one does, Claude sees the reason and adapts. You do not need to do anything.
+
+| Event | Script | What it does |
+|---|---|---|
+| SessionStart | `scripts/env-check.sh` | Reports the environment: nix shell or host tools, missing tools once a `fuzz/` campaign exists (preflight), and plugin file integrity against `MANIFEST.md5`. Through `scripts/enforce-readonly.sh` it also makes the plugin tree read-only (`chmod a-w`) so a campaign cannot edit it; export `CC_FUZZER_DISABLE_READONLY_LOCK=1` before starting Claude to turn that off for plugin development. |
+| PostToolUse (Bash) | `scripts/detect-crashes.sh` | Notices new crash files written by a fuzzer and queues them for triage. |
+| SubagentStop | `hooks/ledger-append.sh` | Records each subagent's measured token usage in the spend ledger (rows in `fuzz/state/events.jsonl`), which `--budget` and YOLO's cost cap read. |
+| PreToolUse (Bash) | `hooks/gate-verify-build.sh` | **Refuses** running a crash against the wrong build of a harness. Which binary an action may run on is decided by the core, not by the prompt. |
+| PreToolUse (Write, Edit, MultiEdit, Bash) | `hooks/gate-findings.sh` | **Refuses** any write into `fuzz/findings/`. Only the verification pipeline (`cc-fuzzer findings promote`) creates a finding. |
+| PreToolUse (Read, Bash, Grep, Glob) + PostToolBatch | `hooks/dedup-calls.sh` | **Refuses** a tool call that repeats one already in the same response ("Duplicate: this exact … call"), so it runs once. A deliberate repeat in a later response runs normally. |
+
+`hooks/sweep-gate.sh` (a Stop hook that keeps a turn going while delta-sweep items are open) ships but is **not registered**: interactively, Stop ends every turn. A host that runs one turn per work round installs it.
+
 ### State
 
-All campaign state lives under `fuzz/state/`. The authoritative spec is **`STATE_SCHEMA.md`** at the plugin root (current schema **v13**). The orchestrator reads only `current.json` on warm ticks. Findings are written exclusively by `scripts/findings.sh` (which runs the verification pipeline); the report only by `reporting-agent`. Plugin scripts are read-only — your only writable scope is `fuzz/`.
+All campaign state lives under `fuzz/state/`. The authoritative spec is **`STATE_SCHEMA.md`** at the plugin root (current schema **v13**). The orchestrator reads only `current.json` on warm ticks. Findings are created only by the verification pipeline (`cc-fuzzer findings promote`, which writes a `fuzz/findings/<id>/.verified` marker last), and the `gate-findings.sh` hook refuses any other write there; the report is written only by `reporting-agent`. Plugin scripts are read-only — your only writable scope is `fuzz/`.
 
 ## Key mechanisms
 
@@ -262,7 +302,7 @@ Per-harness field `build_backend: "nix" | "legacy"` tracks which path was used. 
 
 ### Crash verification
 
-`crash-triager` runs a multi-step pipeline before any crash becomes a finding: an **artifact filter** (four-principle audit that catches harness-only crashes), **deterministic replay** (multiple runs under ASan with identical top frames), and a **target-realistic reproducer** (the target's own CLI rebuilt with ASan, or a small program using only public headers). Crashes that fail any step are logged to `fuzz/state/dropped_crashes.jsonl` (transparency log) and never filed. Confirmed findings ship as self-contained `fuzz/findings/<id>/repro/` bundles a maintainer can verify in their own environment; `/cc-fuzzer:report --mode pre-contact|maintainer|public` renders disclosure-aware reports.
+`crash-triager` runs a three-stage pipeline before any crash becomes a finding: an **artifact filter** (a four-principle audit that catches harness-only crashes), **deterministic replay** in the core (three runs on the binary the core selects for replay, normally the verify build; the same stack each time, and a minimized input that still causes the *same* bug), and a **final verification** step chosen by `verification.final_step` in fuzz-config (default `poc-realism`: the target's own CLI rebuilt with ASan, or a small program using only public headers). Only after that does the core create `fuzz/findings/<id>/`, writing its `.verified` marker last. Crashes that fail any step are logged to `fuzz/state/dropped_crashes.jsonl` (transparency log) and never filed. Confirmed findings ship as self-contained `fuzz/findings/<id>/repro/` bundles a maintainer can verify in their own environment; `/cc-fuzzer:report --mode pre-contact|maintainer|public` renders disclosure-aware reports.
 
 ### Logic-bug oracles
 
@@ -344,19 +384,20 @@ For longer reference material — protocol specs, RFCs, format notes, prior advi
 
 The plugin ships a Nix flake that pins the whole toolchain (clang+compiler-rt, AFL++, SymCC, Z3, llvm-cov/profdata, gdb, addr2line, plus ripgrep/fd). The dev shell is wrapped in `buildFHSEnv` because AFL++ and SymCC assume a traditional `/usr/bin`, `/usr/lib` layout — the FHS wrapping is load-bearing, not cosmetic.
 
-```bash
-cd ~/projects/your-target
-nix develop $CLAUDE_PLUGIN_ROOT     # exports CC_FUZZER_FHS=1; auto-binds $PWD
-claude
-```
+There are two ways in, and you need only one:
 
-The SessionStart hook (`scripts/env-check.sh`) reports whether you're in the cc-fuzzer FHS shell, some other nix shell, or on host tools — and only warns inside directories that contain a `fuzz/`. The plugin does **not** ship a `flake.lock`: run `nix flake update` once per project to get a lock you own, which pins your toolchain for the campaign. The plugin imposes the toolchain *shape*; you own the *version*.
+- **`nix run github:cloudripper/cc-fuzzer#init`** in the target's directory (the [quick start](#with-nix-recommended-clone--bootstrap--set-and-forget) path). It writes a project `flake.nix` and `fuzz/nix-deps.nix` and locks them (`nix flake lock`), so the project owns its `flake.lock`. Later, `nix flake update ccfuzzer` moves it to a newer plugin toolchain. Note that `#init` pulls the plugin flake from GitHub, which can be a different version from the plugin you installed in Claude Code.
+- **The plugin's own dev shell**, without a project flake: `nix develop github:cloudripper/cc-fuzzer` (or `nix develop ./cc-fuzzer` from a clone), then `claude`. It exports `CC_FUZZER_FHS=1` and binds `$PWD`, but adds none of the target's build deps.
+
+The SessionStart hook (`scripts/env-check.sh`) reports whether you're in the cc-fuzzer FHS shell, some other nix shell, or on host tools, and only warns inside directories that contain a `fuzz/`. The plugin imposes the toolchain *shape*; the project's lock pins the *version*.
 
 No nix? Everything still works with host tools (see [Prerequisites](#prerequisites)); `scripts/install-symcc.sh` bootstraps SymCC, and preflight reports what's missing.
 
 ## Plugin integrity (`MANIFEST.md5`)
 
-`MANIFEST.md5` fingerprints every shipped file. Agents are told plugin files are read-only, but in-place patches have happened — they silently vanish on `/plugin install` and leave mystery regressions. `scripts/integrity-check.sh` makes drift loud: it runs at SessionStart, in `/cc-fuzzer:doctor`, and is referenced by every subagent before it trusts its memory of a script. A "DRIFT DETECTED" warning is non-fatal — reinstall to restore canonical state, or, if you're a developer iterating, regenerate the manifest before cutting a release.
+`MANIFEST.md5` fingerprints the shipped files: `src/`, `scripts/`, `bin/`, `prompts/`, `templates/`, `references/`, `dictionaries/`, `STATE_SCHEMA.md`, and the plugin trees `.claude-plugin/`, `agents/` and `skills/`. It leaves out `rules/` (third-party rule content updated on its own schedule) and `hooks/`. Agents are told plugin files are read-only, but in-place patches have happened; they silently vanish on `/plugin install` and leave mystery regressions. `scripts/integrity-check.sh` makes drift loud: it runs at SessionStart, in `/cc-fuzzer:doctor`, and is referenced by every subagent before it trusts its memory of a script. A "DRIFT DETECTED" warning is non-fatal; see [Troubleshooting](#troubleshooting).
+
+Developers: run `scripts/gen-manifest.sh` after changing a tracked file. `tests/test_manifest_current.py` fails until you do, so a release cannot ship a stale manifest (0.36.4 to 0.38.0 did, and every session warned).
 
 ## Scope
 
@@ -394,13 +435,41 @@ Typical token mix: ~60% Haiku (seeds, mutator, concolic dispatch), ~25% Sonnet (
 
 **Path B — host tools.** Install what you're missing (the SessionStart hook reports gaps): `clang`/`clang++` + `compiler-rt`, `afl-fuzz` + `afl-clang-fast`, `llvm-cov` + `llvm-profdata`, `gdb` + `addr2line`, and SymCC (`scripts/install-symcc.sh` for a build-from-source path).
 
+**Both paths need:**
+
+- **Claude Code 2.1.285 or later.** That is the version `claude-code.contract.json` was verified against. Older versions get a warning from `/cc-fuzzer:doctor`, and the duplicate-call hook needs the PostToolBatch event.
+- **python3 3.10 or later.** `bin/cc-fuzzer` and every hook run `python3 -m cc_fuzzer_core`.
+- **git.**
+- **semgrep**, for `/fuzz-review`'s Tier-1 SAST. The rules are bundled; the binary is not.
+- Optionally **CodeQL**, for the query lever and the cull integration on targets with a database.
+
 ## Customizing model routing
 
-Each subagent's model is set in its frontmatter. To force a single model temporarily:
+Agents run on **tiers**: `deep` (opus), `standard` (sonnet) and `fast` (haiku). The packaged mapping, `src/cc_fuzzer_core/data/models.json`, says which agent is on which tier, and each agent's frontmatter `model:` is rendered from it. Override it, lowest to highest precedence, with a partial document of the same shape:
 
-```bash
-export CLAUDE_CODE_SUBAGENT_MODEL=claude-sonnet-4-6   # unset to restore defaults
+1. the packaged `data/models.json`;
+2. a `models` block in the campaign's `fuzz/state/fuzz-config.json` (per campaign);
+3. the JSON file named by `$CC_FUZZER_MODELS` (per machine or container).
+
+```json
+{ "tiers": { "deep": "<model id>" }, "agents": { "mutator": "standard" } }
 ```
+
+`cc-fuzzer models show` prints the effective mapping, and `cc-fuzzer models resolve <agent>` prints one agent's model. To force every subagent onto one model for a session, set Claude Code's own `CLAUDE_CODE_SUBAGENT_MODEL`; unset it to return to the mapping.
+
+## Troubleshooting
+
+- **"DRIFT DETECTED" at session start.** A plugin file differs from `MANIFEST.md5`.
+  - If you did not edit the plugin, reinstall it (`/plugin install cc-fuzzer@cc-fuzzer`) to restore the canonical files.
+  - If you are developing it, run `scripts/gen-manifest.sh`.
+  - The warning is never fatal.
+- **"Duplicate: this exact … call" denials.** The duplicate-call hook ran one copy of a call the model put into its response twice. Nothing to do: the first copy ran, and a later repeat runs normally.
+- **A command refused for running the wrong build, or a write into `fuzz/findings/` refused.** These are the two gate hooks doing their job. Crashes replay on the build the core selects, and findings come only from `cc-fuzzer findings promote`.
+- **The campaign looks stale or broken.**
+  - `/cc-fuzzer:doctor` diagnoses state corruption, read-only.
+  - `/cc-fuzzer:resume-campaign` picks a stopped campaign back up.
+  - `/fuzz-reset` starts over; it is destructive and human-only.
+- **After a plugin update.** Re-run `#init` only to move a nix project to the new toolchain. A host-tools setup needs nothing.
 
 ## References
 

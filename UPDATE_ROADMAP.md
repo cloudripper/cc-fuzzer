@@ -1,6 +1,6 @@
 # cc-fuzzer: carve out a host-independent core
 
-> **Status: delivered (0.31.0 to 0.32.0).** All twelve sections are
+> **Status: delivered (0.31.0 to 0.32.0).** All twelve sections are Later releases (0.33 onward) are listed in CHANGELOG.md.
 > implemented and tested, and CI runs the suite on Python 3.10 to 3.13. This
 > document is the design record: it says what was decided and why, in the
 > words used when it was decided. Where the build differs, the table below is

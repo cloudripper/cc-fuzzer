@@ -35,8 +35,12 @@ cc-fuzzer --version
 The package is stdlib-only and needs Python 3.10 or newer. The wheel carries
 its own data (prompts, rules and the query pack, dictionaries, templates,
 `STATE_SCHEMA.md`, `models.json`). `CC_FUZZER_ROOT` is **not** required. Pin
-it by commit and wheel sha256 when you vendor it: the version is bumped per
-release, not per change.
+it by commit and wheel sha256 when you vendor it. What changed between
+versions, and whether a host notices, is in `CHANGELOG.md`.
+
+The plugin's hook scripts (`hooks/*.sh`) are **not** in the wheel: they are
+the plugin's translation of Claude Code's hook JSON. A host calls the same
+decisions through the CLI or the API instead (§14).
 
 ## 2. Seam one: a crash arrives
 
@@ -56,10 +60,10 @@ known:
 
 | | |
 |---|---|
-| **replay** | deterministically, 3×, on the binary §12 selects — never an instrumented build |
-| **minimize** | smallest input reproducing **the same bug** (see §3) |
+| **replay** | deterministically, 3×, on the binary §10 selects — never an instrumented build |
+| **minimize** | smallest input reproducing **the same bug** (see §3); skipped for `timeout` and `oom` (`crs.UNMINIMIZED`: every probe would run to the limit), so `pov` is the original |
 | **verify** | your oracle, via `verification.final_step` |
-| **byte map** | only if confirmed: which bytes of the PoV decide the bug (see §3.1) |
+| **byte map** | only if confirmed, and not for `timeout`/`oom`: which bytes of the PoV decide the bug (see §3.1) |
 | **marker** | only if confirmed, and only if you pass a campaign |
 | **delta relevance** | only if you pass `delta_range` (reported, never a filter) |
 | **policy** | always: `policy_verdict`, and so `should_submit` |
@@ -86,9 +90,29 @@ crash of a kind you screened out). Without `screen` every input is replayed
 an input that fired on the fuzzer but not on the screening run is worth one
 unscreened retry if you can spare it.
 
-**Delta: sweep every changed sink.** A delta can plant several flaws, and an agent that chases the first suspicious call skips the rest. `cc-fuzzer sweep init <diff> --file <f>` makes a checklist with one item per changed line that looks like a sink (format calls with no literal format, including the project's own `*f` wrappers the diff shows taking a literal elsewhere; copies; size and pointer arithmetic; indexes; string scans; integer types; frees; loops). `sweep mark` records a verdict, and `crash`/`reached` must name the input that was run. `hooks/sweep-gate.sh --file <f>` is a Stop hook that refuses to end a turn while items are open: at most 3 times, and again only after progress. It's opt-in: install it through your own `--settings` (cc_fuzzer_core.sweep).
+**Hangs and OOMs, if your scorer counts them.** CRSBench, for one, replays a
+PoV through OSS-Fuzz's base-runner with `-timeout=25 -rss_limit_mb=2560`, and
+counts any non-zero exit as a crash, so an input running past 25 s or 2,560 MB
+scores unless the harness's `.options` neutralise it (`timeout_exitcode=0`).
+To replay as the scorer does, put its flags in the record; libFuzzer then
+reports a hang with its stack instead of the replay killing it silently, and
+its own OOM report (`ERROR: libFuzzer: out-of-memory`) classifies as `oom`:
 
-**Duplicate tool calls.** Some models put the same tool call into one response two or more times. Claude Code runs every copy in parallel, and every result is re-sent with each later request. On our qualification runs that was 32% of Read calls and 28% of Bash calls. `hooks/dedup-calls.sh` is a PreToolUse + PostToolBatch hook pair that runs each call once per response (cc_fuzzer_core.hygiene). The plugin registers it; a CRS installs it through `--settings`.
+```python
+record = {"harness_binary": "/out/parser",
+          "replay_args": ["-timeout=25", "-rss_limit_mb=2560"]}   # placed before the input
+r = crs.triage(record, crash, harness="parser", config=cfg,
+               screen=("crash", "timeout", "oom"))               # let them reach triage
+```
+
+Hangs and slow inputs are easy to confuse: a host that submits hangs should
+confirm one outlasts a margin (ParallaxCRS replays at twice the timeout) and
+cap how many it submits. Minimization's own probes call `run_once` without
+`replay_args`, which is one more reason `timeout`/`oom` are not minimized.
+
+**Delta: sweep every changed sink**, and **duplicate tool calls**: see §14,
+which covers the sweep checklist and its Stop gate, the duplicate-call guard,
+the behaviour governor and the round policy, and how to wire each one.
 
 **If your oracle is the scoring oracle, say so.** In OSS-CRS every binary is a
 libFuzzer build, so local replay always grades `weak` and nothing would ever
@@ -135,8 +159,13 @@ r.policy_verdict   # {"schema": "policy-verdict/v1", "verdict": "accept"|"reject
 ```
 
 `builtin:any-confirmed` (default) accepts every confirmed finding;
-`builtin:memory-safety` accepts ASan/MSan memory errors and rejects `ubsan-*`,
-`oom`, `timeout`, leaks and `generic-crash`. A custom policy gets the whole
+`builtin:memory-safety` accepts only errors reported by ASan or MSan. It
+rejects leaks, anything from UBSan (`sanitizer == "undefined"` or a `ubsan-*`
+category), `oom`, `timeout`, `generic-crash`, `abort`, `assertion-failure`,
+`signed-integer-overflow`, `integer-overflow` and `segfault`, and everything
+reported by no sanitizer or by libFuzzer alone (`deadly-signal`, libFuzzer's
+own timeout and OOM). A scorer that counts aborts or hangs (CRSBench counts any
+non-zero exit) needs a custom policy; build it on this one as shown below. A custom policy gets the whole
 result dict (including `sanitizer`, `category`, `delta_relevance`) and returns
 a bool, `"accept"`/`"reject"`, a `(verdict, reason)` pair, or a dict. The core
 keeps no submission state: pass `seen` ({stack_hash: count}) to enforce
@@ -172,10 +201,13 @@ not raised.
 crash in the diff passes the policy. When an inaccurate submission costs
 points, submit the most specific first: `crs.rank(results)` orders them by
 submittable, then a frame inside a changed hunk before one in a changed
-function, then a write (overflow write, wild-write, format-string) before a
-use-after-free, an overflow read, a read by a string scan (a missing
-terminator), any other memory error, and leak / timeout / oom last. It drops
-nothing; holding the tail back is your call.
+function, then by class: a write (overflow write, wild-write, format-string),
+a use-after-free, an overflow read, a read by a string scan (a missing
+terminator), any other crash (`abort`, `assertion-failure`, `segfault`,
+`deadly-signal`, `generic-crash` and the rest), then what is not a
+memory-safety error (leak, timeout, oom, UBSan), and no crash at all last. The
+stack hash breaks ties. It drops nothing; holding the tail back is your call.
+`crs.rank_key(result)` gives one result's `(key, why)`.
 
 ```python
 for x in crs.rank(results):          # TriageResults or triage-export/v1 dicts
@@ -451,7 +483,7 @@ The `oss-fuzz` backend maps purposes to the image's own controls:
 | variant | `SANITIZER` | `FUZZING_ENGINE` |
 |---|---|---|
 | fuzzer | `address` | `libfuzzer` |
-| verify | `undefined` | `none` |
+| verify | `address` | `none` (a standalone binary, no fuzzer driver) |
 | coverage | `coverage` | `libfuzzer` |
 | cmplog | `address` | `afl` (+ `AFL_LLVM_CMPLOG=1`) |
 | symcc | — | **unsupported** |
@@ -465,8 +497,8 @@ cc-fuzzer build record-args --result build-result.json
 ```
 
 `unsupported` ≠ `skipped`. Skipped means the campaign turned the variant off;
-unsupported means it was asked for and this image cannot. §12 needs the
-difference.
+unsupported means it was asked for and this image cannot. §10 (which binary
+may run what) needs the difference.
 
 ## 8. Plug in your oracle
 
@@ -567,6 +599,40 @@ allowed words (the program by basename, `bash`/`sh` in front of a script
 allowed), with no `;`, `&&`, `||`, `&`, `|`, newline, backticks, `$(` or
 redirection. `crs-promote-pov x; cp y /artifacts/povs/` is refused.
 
+## 10.1 Export schemas
+
+What crosses a container boundary is versioned, and its shape is pinned by
+goldens (`tests/golden/exports/`). Within a version a new optional key is
+additive; a removed or retyped key is a new version.
+
+| schema | from | notable fields |
+|---|---|---|
+| `triage-export/v1` | `TriageResult.as_dict()` | status, should_submit, policy_verdict, stack_hash, category, sanitizer, frames, sanitizer_excerpt, pov_sha256, original_sha256, evidence_grade/source, sensitivity, delta_relevance, determinism, source_candidate_id, cause |
+| `patch-export/v1` | `PatchVerdict.as_dict()` | verdict (= status), steps (with `ran`, `policy`), unverified_steps, povs (before/after), scope (with concerns, functions), build, determinism |
+| `query-run/v1` | `query.run` | unchanged |
+
+Nested documents carry their own versions: `policy-verdict/v1`,
+`input-sensitivity/v1`, `delta-relevance/v1`, `determinism/v1`,
+`crash-replay/v1`, `minimized-input/v1`. `crs.rank` emits
+`submission-rank/v1` (rank, key, why, pov, stack_hash).
+
+Other documents that can cross a host boundary:
+
+| schema | from | where it matters |
+|---|---|---|
+| `pov-cluster/v1` | `crs.cluster`, `crs.merge_by_patch` | patch grouping (§4) |
+| `pov-run/v1`, `step-result/v1` | the patch runner protocol | §4 |
+| `verify-request/v1`, `verify-verdict/v1` | the `command:` oracle protocol | §8 |
+| `verification-marker/v1` | `fuzz/findings/<id>/.verified` | §9 |
+| `build-spec/v1`, `build-plan/v1`, `build-result/v1` | `cc-fuzzer build` | §7 |
+| `delta-sweep/v1` | `cc-fuzzer sweep` (the file `CC_FUZZER_SWEEP_FILE` names) | §14 |
+| `tick-result/v1` | `loop.step` | the appendix |
+| `event/v1` | `fuzz/state/events.jsonl` (incl. the spend ledger) | §11 |
+| `models/v1` | `cc-fuzzer models show` | §11.1 |
+
+`hygiene call` and `governor observe` answer small unversioned JSON
+(`{"decision", "reason"}` and `{"nudge"}`); §14 gives their shapes.
+
 ## 11. Budgets and accounting
 
 ```bash
@@ -620,23 +686,6 @@ Local totals drift from the provider's accounting (pricing tables, cache
 billing, retries you never saw), so the guard should trip **before** the
 provider does, not **instead** of it.
 
-## 10.1 Export schemas
-
-What crosses a container boundary is versioned, and its shape is pinned by
-goldens (`tests/golden/exports/`). Within a version a new optional key is
-additive; a removed or retyped key is a new version.
-
-| schema | from | notable fields |
-|---|---|---|
-| `triage-export/v1` | `TriageResult.as_dict()` | status, should_submit, policy_verdict, stack_hash, category, sanitizer, frames, sanitizer_excerpt, pov_sha256, original_sha256, evidence_grade/source, sensitivity, delta_relevance, determinism, source_candidate_id, cause |
-| `patch-export/v1` | `PatchVerdict.as_dict()` | verdict (= status), steps (with `ran`, `policy`), unverified_steps, povs (before/after), scope (with concerns, functions), build, determinism |
-| `query-run/v1` | `query.run` | unchanged |
-
-Nested documents carry their own versions: `policy-verdict/v1`,
-`input-sensitivity/v1`, `delta-relevance/v1`, `determinism/v1`,
-`crash-replay/v1`, `minimized-input/v1`. `crs.rank` emits
-`submission-rank/v1` (rank, key, why, pov, stack_hash).
-
 ## 11.1 Determinism
 
 The numbers that decide a result are configuration, and every result
@@ -645,13 +694,19 @@ The numbers that decide a result are configuration, and every result
 ```json
 {"determinism": {"replay_attempts": 3, "replay_timeout_s": 30,
                  "minimize_max_probes": 400, "minimize_max_rounds": 40,
-                 "sensitivity_max_probes": 1024, "fuzzer_seed": 1337}}
+                 "sensitivity_max_probes": 1024, "fuzzer_seed": 0}}
 ```
+
+These are the defaults. `fuzzer_seed: 0` is libFuzzer's "pick one"; set a
+fixed seed (ParallaxCRS uses 1337) when runs must be comparable.
 
 An explicit argument wins over config, config over the defaults. The fuzzer
 seed reaches extra gates as `CC_FUZZER_FUZZER_SEED` (the reference fuzz gate
 passes it to libFuzzer as `-seed`). Reproducible runs also need **pinned model
-IDs** in `data/models.json`: a dated model ID, not an alias that moves.
+IDs**: a dated model ID, not an alias that moves. Do not edit the packaged
+`data/models.json`; override it with a `models` block in fuzz-config (per
+campaign) or the JSON file named by `$CC_FUZZER_MODELS` (per host), and check
+the result with `cc-fuzzer models show`.
 
 ## 12. Smoke test your integration
 
@@ -709,6 +764,123 @@ to define the format.
 
 What the integration is still waiting on from cull, and what each update
 switches on: [cull-upstream.md](cull-upstream.md).
+
+## 14. Optional: agent-behaviour helpers
+
+Four small modules help a host that runs a model agent beside the fuzzer.
+None needs a campaign, none sleeps or schedules, and each answers with a
+decision that the host turns into whatever its agent framework speaks. The
+plugin's `hooks/*.sh` do that for Claude Code, but they are not in the wheel
+(§1): a host calls the CLI or the API directly.
+
+### 14.1 The delta sweep (`sweep`, 0.35)
+
+A delta can plant several flaws, and an agent that chases the first suspicious
+call skips the rest. The sweep turns a diff into a checklist
+(`delta-sweep/v1`): one item per added line that looks like a sink, with every
+class it matches, plus one per code hunk with none. Files that are not C/C++
+source are closed up front (`not-code`).
+
+- **Classes:** `format-string` (a printf-family call with no literal format,
+  including the project's own `*f` wrappers the diff shows taking a literal
+  elsewhere), `copy`, `alloc-size`, `alloc`, `ptr-arith`, `len-arith`,
+  `index`, `index-write`, `scan`, `div`, `cast-deref`, `eq-bound`, `int-type`,
+  `free`, `abort`, `loop`. From the diff's shape: `const-change` (a bound or
+  size moved) and `removed-check` (a guard deleted). Measured on 79 delta CPVs:
+  an item sits on the vulnerable line of 64.
+- **Verdicts** (`sweep mark`): `crash` and `reached` must name the input that
+  was run (`--input`); `unreachable` and `safe` need a reason.
+- **The gate:** `cc-fuzzer sweep gate --json [--session S] [--continuing]
+  [--max-blocks N]` says whether a turn may end. It blocks at most 3 times
+  **per session** (`--session`; a host with one session per round gets 3 per
+  round), and again only after progress.
+
+```bash
+export CC_FUZZER_SWEEP_FILE=/work/delta-sweep.json        # no campaign needed
+cc-fuzzer sweep init /work/ref.diff
+cc-fuzzer sweep show --limit 20                            # for the prompt
+cc-fuzzer sweep mark --input /work/pov.bin h3.s1 crash "the over-read at parse.c:88"
+cc-fuzzer sweep gate --json --session "$SESSION_ID"        # in a Stop hook
+```
+
+### 14.2 The duplicate-call guard (`hygiene`, 0.36)
+
+Some models put the same tool call into one response two or more times; the
+agent CLI runs every copy and re-sends every result with each later request.
+On the qualification runs that was 32% of Read and 28% of Bash calls.
+`hygiene` keeps a per-session batch: a call identical to one already in the
+current response is denied, the batch ends with the response, and a call
+denied once runs if asked for again.
+
+```bash
+# before each tool call: the tool's input JSON on stdin, the rest as flags
+echo "$TOOL_INPUT_JSON" | cc-fuzzer hygiene call --session "$S" --prompt "$PROMPT_ID" \
+    --id "$TOOL_USE_ID" --tool Read          # -> {"decision": "allow"|"deny", "reason": "..."}
+cc-fuzzer hygiene batch-end --session "$S"   # once every call of the response has finished
+```
+
+API: `hygiene.call(session, prompt, call_id, tool, tool_input)` returns a
+reason string to deny, or `""`; `hygiene.batch_end(session)`. State
+lives under `$CC_FUZZER_HOOK_STATE` (default `$TMPDIR/cc-fuzzer-hooks`), and
+entries expire after `MAX_AGE_S` (300 s).
+
+### 14.3 The behaviour governor (`governor`, 0.37)
+
+On the qualification runs 88-89% of the agent's tool calls read or searched
+the source and 1-2% ran an input. The governor watches each finished batch of
+calls and, once `threshold` reading calls (default 30) have gone by since the
+last input run, returns a short nudge for the host to show the model before
+its next request. It repeats only after another full streak, and an input run
+resets it.
+
+```bash
+echo "$POST_TOOL_BATCH_INPUT" | cc-fuzzer governor observe --session "$S" \
+    --threshold 30 --run 'my-harness-name' --how 'run it with my-runner <file>'
+# -> {"nudge": "..."} or {"nudge": ""}
+```
+
+The CLI reads a Claude Code PostToolBatch hook input (`session_id`,
+`tool_calls`) on stdin. API: `governor.observe(session, calls, *, threshold=30,
+run_patterns=DEFAULT_RUN_PATTERNS, how=...)` returns the nudge or `None`;
+`governor.classify(call)` says whether one call reads, runs an input, or is
+neutral. Input runs are recognised by pattern: `crc-promote-pov`,
+`crs-fuzz add-seeds`, `run-pov`, `-runs=N`, gdb, plus the host's `--run`
+patterns (such as the harness name). The plugin does not register it.
+
+### 14.4 The round policy (`stoprules`, 0.38)
+
+A host that runs model rounds beside a fuzzer has three decisions to make:
+whether to continue after a round, how long a round may go without progress
+(the stall), and, once the rounds have stopped, whether to idle, reopen them
+or end the run. `stoprules` makes them one policy the host feeds with
+outcomes; it reads no state of its own.
+
+```python
+from cc_fuzzer_core import stoprules as sr
+
+rounds = sr.Rounds(sr.default_policy(delta=True, name="parity"))   # or "evidence"
+stall_s = rounds.stall_for(open_targets=open_sweep_items)          # for the next round
+d = rounds.after_round(worked=True, progressed=new_stack or new_verdict,
+                       known_before=len(known_stacks), open_targets=open_sweep_items)
+if d.action == sr.STOP:
+    rounds.stop("dry: " + d.reason, known=len(known_stacks), corpus=corpus_files)
+
+# while idle, every so often:
+d = rounds.after_stop(now_s=time.monotonic(), run_s=elapsed, known=len(known_stacks),
+                      corpus=corpus_files, budget_left=can_pay_for_a_round)
+# d.action: sr.IDLE | sr.REOPEN | sr.EXIT
+```
+
+- `parity` is the rule set ParallaxCRS ran in qualification: once a bug is
+  known, `dry_limit` worked rounds in a row with no new stack and no new sweep
+  verdict stop the rounds (2 in delta, 3 in full); the stall is 300 s in delta
+  and off in full; stopped rounds never resume.
+- `evidence` keeps a round from counting dry while delta targets are open,
+  doubles the stall while they are, and reopens stopped rounds on new evidence
+  (a new stack, or 5% corpus growth), at most `reopen_max` times while budget
+  remains. Only a stop whose reason starts with `dry` is reopened.
+- `give_up_after_s` (default 0 = never) ends a run once the rounds have
+  stopped and nothing has progressed for that long, after `min_run_s`.
 
 ## Things that will bite
 
@@ -774,6 +946,75 @@ what makes `cost_cap` a measurement rather than a declaration.
 exist to stop a caller acting** — state that failed validation, or a target
 source that moved under the harness.
 
+## Appendix: crash vocabulary
+
+What `classify()` and `replay()` put in a result, so a policy can match on it
+without parsing reports.
+
+**`cause`** (`classify.CAUSES`), one run's label, used by `screen=`: `crash`,
+`leak`, `timeout`, `oom`, `exit` (the harness called `exit()`), `none`.
+
+**`sanitizer`** (`replay.sanitizer_of`): `address`, `memory`, `leak`,
+`thread`, `undefined`, `libfuzzer` (libFuzzer reported it itself: a deadly
+signal, its timeout or its OOM), or `""`.
+
+**`category`**, in the order classify looks:
+
+1. A sanitizer `SUMMARY:` line names it: ASan's token
+   (`heap-buffer-overflow`, `stack-buffer-overflow`, `global-buffer-overflow`,
+   `heap-use-after-free`, `double-free`, `stack-use-after-return`, ...), `leak`,
+   or UBSan's `undefined-behavior`. An ASan SEGV is split by the fault address,
+   the access kind and the frames: `null-deref` (the zero page, below 0x10000,
+   or no address), `wild-read`, `wild-write`, `wild-access`, and
+   `format-string` (a printf-family function in the top three frames, whose
+   caller is the `top_frame`).
+2. Without a summary, a UBSan `runtime error:` line: `signed-integer-overflow`,
+   `integer-overflow` (unsigned), `ubsan-shift`, `ubsan-div-zero`,
+   `ubsan-alignment`, `null-deref`, or `ubsan-other`.
+3. Otherwise: `segfault`, `abort`, `assertion-failure`, `oom` (including
+   libFuzzer's `ERROR: libFuzzer: out-of-memory`), `timeout`,
+   `deadly-signal` (libFuzzer's own handler), or `generic-crash`.
+
+`crs.rank` treats `ubsan-*` as "not a memory-safety error", but a UBSan
+report categorised `undefined-behavior` (it had a summary) lands with the other
+crashes. Match UBSan by `sanitizer == "undefined"` when it matters.
+
+**`top_frame`** is the first frame in the target. Frames of the sanitizer
+runtime (`__sanitizer::`, `__asan::`, ...), libFuzzer (`fuzzer::`) and the
+fuzz entry point are passed over, and so are libc's `raise`, `abort` and
+`__assert_fail`, so an abort is named by the target function that called it
+(0.36.4).
+
+**`stack_hash`** is the first 16 hex characters of a sha256 over the top
+`HASH_FRAMES` (3) frames (the category when there are none). `frames` lists up
+to 12, top first.
+
+**The replay environment is fixed**, not inherited:
+`ASAN_OPTIONS=symbolize=1:abort_on_error=1:halt_on_error=1:print_stacktrace=1:detect_leaks=1:handle_sigill=1`
+and
+`UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1:abort_on_error=1:silence_unsigned_overflow=1`,
+the last as OSS-Fuzz and its scorers run UBSan builds (unsigned wrap-around is
+defined behaviour). Add the scorer's libFuzzer flags with `replay_args` (§2).
+
+## Appendix: environment variables the core reads
+
+| Variable | What it does |
+|---|---|
+| `CC_FUZZER_ROOT` | Data root; not needed with the wheel. |
+| `CC_FUZZER_FEATURES` | Feature-flag overrides on top of the profile (§6). |
+| `CC_FUZZER_MODELS` | A JSON file of model overrides, above fuzz-config's `models` block (§11.1). |
+| `CC_FUZZER_TOOL_<NAME>` | Path of a tool (`LLVM_COV`, `LLVM_PROFDATA`, ...) when it is not on `PATH`. |
+| `CC_FUZZER_CPUS` | Cores the core may use. |
+| `CC_FUZZER_SWEEP_FILE` | The sweep file when there is no campaign (§14.1). |
+| `CC_FUZZER_HOOK_STATE` | State dir of `hygiene` and `governor` (default `$TMPDIR/cc-fuzzer-hooks`). |
+| `CC_FUZZER_BUILD`, `_POV`, `_POVS`, `_STACK_HASH`, `_TOUCHED_FUNCTIONS`, `_HARNESS`, `_PATCH`, `_FUZZER_SEED` | Set **by** the core for an extra patch gate (§4). |
+| `CCFUZZ_ALLOW_DESTRUCTIVE_SEEDS` | Lets `quarantine` pass seeds it would hold back. Leave unset. |
+| `FINDINGS_SKIP_VERIFY` | **Skips verification when promoting a finding.** For tests only; never set it in a host. |
+| `FINDINGS_DEDUP_THRESHOLD`, `HARNESS`, `ORACLE_TYPE`, `DIVERGENCE` | Inputs to the `findings` CLI. |
+| `PROJECT_ROOT`, `FUZZ_ROOT`, `FUZZ_STATE_DIR`, `FUZZ_OUT_DIR`, `FUZZ_COV_DIR`, `FUZZ_CORPUS_DIR`, `FUZZ_CRASHES_DIR` | Where a campaign lives. A host that keeps its own state dir should set only `PROJECT_ROOT`; moving one of the others splits state. |
+| `FUZZ_FORKS`, `FUZZ_FORKS_OVERRIDE`, `SNAPSHOT_COVERAGE_MAX_SAMPLES`, `STALE_THRESHOLD_SECONDS` | Campaign fuzzing and snapshot tuning. |
+| `OUT` | The OSS-Fuzz builder's output dir. |
+
 ## Reference
 
 | Need | Module | CLI |
@@ -784,7 +1025,12 @@ source that moved under the harness.
 | **validate a patch** | `crs.check_patch`, `patch` | `patch validate`, `patch scope` |
 | **group PoVs into bugs** | `crs.cluster`, `crs.merge_by_patch` | `crs cluster` |
 | **what to submit first** | `crs.rank` | `crs rank` |
-| **delta sweep checklist** | `sweep` | `sweep init/show/mark/gate` |
+| **delta sweep checklist** | `sweep` (§14.1) | `sweep init/show/mark/gate` |
+| **duplicate tool calls** | `hygiene` (§14.2) | `hygiene call`, `hygiene batch-end` |
+| **reading-streak nudge** | `governor` (§14.3) | `governor observe` |
+| **when rounds stop, reopen, give up** | `stoprules` (§14.4) | — (an API) |
+| coverage snapshot (campaign) | `coverage.snapshot` | `coverage snapshot` |
+| crash vocabulary | `crash.classify` (Appendix) | `crash classify` |
 | seed safety | `crs.safe_seeds`, `quarantine` | `quarantine run` |
 | cmplog dictionary | `crs.dictionary`, `cmplog` | `cmplog extract` |
 | delta targets | `crs.delta_targets`, `delta` | `delta find` |

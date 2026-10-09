@@ -1,0 +1,12 @@
+{
+  "name": "cc-fuzzer",
+  "owner": { "name": "cloudripper" },
+  "description": "cc-fuzzer: a Claude Code plugin that runs fuzzing campaigns, with a host-neutral core a CRS can embed.",
+  "plugins": [
+    {
+      "name": "cc-fuzzer",
+      "source": "./",
+      "description": "Fuzzing campaigns driven by Claude Code: harnesses, seeds, crash triage, PoCs and reports."
+    }
+  ]
+}

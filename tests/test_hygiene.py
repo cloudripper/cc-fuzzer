@@ -90,7 +90,7 @@ class HygieneTest(unittest.TestCase):
 
     def test_registered_in_the_plugin(self):
         hooks = json.loads((REPO / "hooks" / "hooks.json").read_text())["hooks"]
-        cmd = "${CLAUDE_PLUGIN_ROOT}/hooks/dedup-calls.sh"
+        cmd = '"${CLAUDE_PLUGIN_ROOT}/hooks/dedup-calls.sh"'   # quoted: install paths may hold spaces
         self.assertTrue(any(h["command"] == cmd for m in hooks["PreToolUse"] for h in m["hooks"]))
         self.assertTrue(any(h["command"] == cmd for m in hooks["PostToolBatch"] for h in m["hooks"]))
 

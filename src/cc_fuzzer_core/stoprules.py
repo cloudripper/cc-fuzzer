@@ -1,4 +1,4 @@
-"""When model rounds stop, resume, and when a run gives up (§7, Phase 3).
+"""When model rounds stop, resume, and when a run gives up (docs/EMBEDDING.md §14.4).
 
 A host that runs model rounds beside a fuzzer has to decide three things, and
 until now each host hard-coded them:
@@ -14,18 +14,18 @@ and acts on the decision (the same contract as loop.step()).
 
 Policies:
 
-    parity     the rules ParallaxCRS ran in qualification, unchanged: once a
+    parity     the rules ParallaxCRS ran in AIxCC qualification, unchanged: once a
                bug is known, `dry_limit` worked rounds in a row with no new
                stack and no new sweep verdict stop the rounds; the in-round
                stall is `stall_s`; stopped rounds never resume.
-    evidence   Q7: a round is not dry while delta targets remain open (a delta
+    evidence   a round is not dry while delta targets remain open (a delta
                can plant several bugs; curl's dict stopped after a wrong find
                with $34 unspent), the stall is doubled while they do, and
                stopped rounds reopen on new evidence (a new stack, or the
                corpus grew by `reopen_corpus_frac`) at most `reopen_max` times
                while budget remains.
 
-Independent of the policy, `give_up_after_s` (Q8; 0 = never) lets a run exit
+Independent of the policy, `give_up_after_s` (0 = never) lets a run exit
 cleanly once its model rounds have stopped, nothing has progressed (no new
 stack, no corpus growth) for that long, and it has run `min_run_s`.
 """
@@ -100,7 +100,7 @@ class Rounds:
         if progressed or not known_before:
             self.dry = 0
         elif self.policy.name == "evidence" and open_targets > 0:
-            pass                        # open delta targets: not a dry round (Q7)
+            pass                        # open delta targets: not a dry round
         else:
             self.dry += 1
         self.history.append((self.dry, progressed, known_before, open_targets))
