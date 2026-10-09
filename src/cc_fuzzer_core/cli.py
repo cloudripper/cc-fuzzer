@@ -35,6 +35,7 @@ SUBSYSTEMS = (
     "cc_fuzzer_core.delta",
     "cc_fuzzer_core.sweep",
     "cc_fuzzer_core.hygiene",
+    "cc_fuzzer_core.governor",
     "cc_fuzzer_core.prescan",
     "cc_fuzzer_core.variants",
     "cc_fuzzer_core.builders",
