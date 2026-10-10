@@ -102,6 +102,36 @@ class DdminTest(unittest.TestCase):
         _, rounds = minimize.ddmin(b"x" * 500, lambda d: True, max_rounds=3)
         self.assertLessEqual(rounds, 3)
 
+    def test_a_spent_budget_ends_the_search_at_once(self):
+        """Q40, sqlite3: after the 400th run the search went on for ~788,000
+        candidates (30 min) on a 131 KB input, every one answered "no"."""
+        calls = {"n": 0}
+        budget = 50
+
+        def probe(d):                      # never the same bug: the worst case
+            calls["n"] += 1
+            return False
+        spent = lambda: calls["n"] >= budget
+        data = bytes(range(256)) * 512    # 128 KB
+        out, _ = minimize.ddmin(data, probe, spent=spent)
+        self.assertEqual(out, data)
+        self.assertEqual(calls["n"], budget)                  # not one call past the budget
+        # without the stop the same search keeps calling (bounded here by rounds)
+        calls["n"] = 0
+        minimize.ddmin(data, probe, max_rounds=12)
+        self.assertGreater(calls["n"], 20 * budget)
+
+    def test_progress_made_before_the_budget_ran_out_is_kept(self):
+        calls = {"n": 0}
+
+        def probe(d):
+            calls["n"] += 1
+            return b"BOOM" in d
+        data = b"x" * 1000 + b"BOOM" + b"y" * 7000      # the first half holds it
+        out, _ = minimize.ddmin(data, probe, spent=lambda: calls["n"] >= 6)
+        self.assertIn(b"BOOM", out)
+        self.assertLess(len(out), len(data))
+
 
 @unittest.skipUnless(HAVE_CLANG, "needs clang")
 class RealBinaryTest(unittest.TestCase):

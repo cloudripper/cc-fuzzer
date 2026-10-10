@@ -2,6 +2,10 @@
 
 Each entry says who notices: **host** (a program embedding the core, see `docs/EMBEDDING.md`), **plugin** (an interactive Claude Code user, see `README.md`), or both. Versions before 0.32.0 are in the git history.
 
+## 0.41.0 (2026-10-10)
+
+- **both:** minimization stops when its probe budget is spent. Before, ddmin went on after the last allowed run: every candidate then answered "no", so it doubled the granularity down to single bytes and built a full-size complement for each chunk. On a 131 KB sqlite3 crasher that was about 788,000 candidates and 30 minutes after the 400th run (a host holding a lock through triage waited all that time). The same inputs now finish in 28 s and 40 s with identical results. `ddmin(..., spent=)` takes the stop condition.
+
 ## 0.40.0 (2026-10-10)
 
 - **both:** delta sweep class `macro-arg`: an added call to an ALL-CAPS function-like macro with an expression argument. Given the source tree (`sweep.build(..., src_root=)`, CLI `sweep init --src`), the item's `note` carries the macro's expansion from its `#define` (the calling file first, then its directory, then headers). An argument that regroups in the body makes the item `macro-precedence`, listed first: `CHECKOVERFLOW(off, size, 6+8+4)` with `size - structsize` in the body checks `size + 6`. On libexif delta-02 the agent reached that line and marked it "a pure refactor" without expanding the macro. Over the 47 benchmark deltas the class adds 7 items. A plain `macro-arg` sorts with the weakest sinks, and a macro name inside a string literal is not a call.

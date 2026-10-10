@@ -151,21 +151,32 @@ class _Probe:
 # ddmin
 # ---------------------------------------------------------------------------
 
-def ddmin(data: bytes, still_fails, *, max_rounds: int = MAX_ROUNDS) -> tuple:
-    """Classic delta debugging. Returns (reduced, rounds)."""
+def ddmin(data: bytes, still_fails, *, max_rounds: int = MAX_ROUNDS, spent=None) -> tuple:
+    """Classic delta debugging. Returns (reduced, rounds).
+
+    `spent()` true ends the search at once: once the probe budget is gone
+    every candidate answers "no", and the search would go on doubling the
+    granularity to one byte, building a full-size complement per chunk. On
+    a 131 KB sqlite3 input that was ~788,000 candidates and 30 minutes after
+    the 400th run, with the promote lock held (Q40)."""
+    spent = spent or (lambda: False)
     n, rounds = 2, 0
-    while len(data) >= 2 and rounds < max_rounds:
+    while len(data) >= 2 and rounds < max_rounds and not spent():
         rounds += 1
         chunk = max(1, len(data) // n)
         chunks = [data[i:i + chunk] for i in range(0, len(data), chunk)]
         # First try each single chunk (a big win when one survives alone).
         for c in chunks:
+            if spent():
+                return data, rounds
             if len(c) < len(data) and still_fails(c):
                 data, n = c, 2
                 break
         else:
             # Then try removing one chunk at a time.
             for i in range(len(chunks)):
+                if spent():
+                    return data, rounds
                 complement = b"".join(chunks[:i] + chunks[i + 1:])
                 if complement and len(complement) < len(data) and still_fails(complement):
                     data = complement
@@ -209,7 +220,8 @@ def minimize(record, reproducer: str, *, harness: str = "", stack_hash: str = ""
     try:
         probe = _Probe(base.binary, want, timeout=timeout, workdir=wd,
                        max_probes=max_probes)
-        reduced, rounds = ddmin(data, probe, max_rounds=max_rounds)
+        reduced, rounds = ddmin(data, probe, max_rounds=max_rounds,
+                                spent=lambda: probe.exhausted)
         # Never return something that does not reproduce: if the search ran out
         # of budget mid-step, fall back to the original rather than shipping a
         # smaller input nobody checked.
