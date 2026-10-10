@@ -27,7 +27,10 @@ diff shows them taking a literal elsewhere, see format_wrappers), copy (incl.
 ptr-arith, len-arith (a length or offset accumulated in place), index and
 index-write, scan (strlen/strchr-style reads that need a terminator), div,
 cast-deref, eq-bound (a counter compared for equality with a limit),
-int-type, free (incl. *_free wrappers), abort, loop. Two more come from the
+int-type, free (incl. *_free wrappers), abort, loop, and macro-arg (an
+ALL-CAPS function-like macro called with an expression argument; given the
+source tree, the item carries the macro's expansion, and an argument that
+regroups in the body makes it macro-precedence, see macroarg). Two more come from the
 diff's shape: const-change (an added line equal to a removed one but for
 its numbers: a bound or size moved) and removed-check (a removed guard,
 comparison or length computation: deleting it can make unchanged code below
@@ -38,6 +41,8 @@ Measured against the ground truth of 47 delta benchmarks (79 CPVs): an item
 sits on the vulnerable line of 64, within a line of 67, and on the removed
 guard that causes 3 more. The rest are deltas that make existing code
 reachable rather than change it, which no line checklist can point at.
+macro-arg adds 7 items over the 47 deltas; one is libexif delta-02's CPV
+line, where the agent marked the macro call safe without expanding it.
 
 CLI: `cc-fuzzer sweep init|show|mark|gate [--file F]`. The file defaults to
 $CC_FUZZER_SWEEP_FILE, else <state>/delta-sweep.json in the campaign.
@@ -52,6 +57,7 @@ import time
 from pathlib import Path
 
 from cc_fuzzer_core import delta as _delta
+from cc_fuzzer_core import macroarg
 
 SCHEMA = "delta-sweep/v1"
 FILENAME = "delta-sweep.json"
@@ -154,6 +160,8 @@ def sinks_of(line: str, wrappers: frozenset | set = frozenset()) -> list[str]:
         if cls == "div" and re.search(r"//|/\*|#include|\"[^\"]*[/%][^\"]*\"", s):
             continue            # a comment, a path or a format string, not a division
         found.append(cls)
+    if not s.startswith("#") and macroarg.calls(s):
+        found.append("macro-arg")
     return found
 
 
@@ -198,10 +206,42 @@ def _hunks(diff_text: str):
             new_line += 1
 
 
-def build(diff_text: str, *, source: str = "") -> dict:
-    """The checklist for a diff (git or plain unified)."""
+def _macro_note(text: str, path: str, src_root, cache: dict) -> tuple[str, bool]:
+    """(note, precedence broken) for a macro-arg line: the macro's expansion
+    and where an argument regroups, from its #define under src_root."""
+    notes, broken = [], False
+    for name, args in macroarg.calls(text):
+        if src_root is None:
+            notes.append(f"{name} is a macro: its arguments are pasted into its body as text; "
+                         "expand it before judging what it checks")
+            continue
+        if name not in cache:
+            try:
+                cache[name] = macroarg.find_define(name, src_root, near=path)
+            except OSError:
+                cache[name] = None
+        d = cache[name]
+        if d is None:
+            notes.append(f"{name}: no #define found in the source; expand it by hand before "
+                         "judging what it checks")
+            continue
+        params, body, where, line = d
+        issues = macroarg.check(params, body, args)
+        broken = broken or bool(issues)
+        n = f"{name} ({where}:{line}) expands to `{macroarg.expand(params, body, args)}`"
+        if issues:
+            n += "; precedence: " + "; ".join(issues)
+        notes.append(n)
+    return " | ".join(notes)[:600], broken
+
+
+def build(diff_text: str, *, source: str = "", src_root=None) -> dict:
+    """The checklist for a diff (git or plain unified). With `src_root` (the
+    tree the diff applies to) a macro-arg item carries its macro's expansion,
+    and a precedence break makes it macro-precedence."""
     items = []
     wrappers = format_wrappers(diff_text)
+    macros: dict = {}
     for n, (path, start, count, ctx, lines) in enumerate(list(_hunks(diff_text)), 1):
         it = {"id": f"h{n}", "file": path, "lines": [start, start + max(count - 1, 0)],
               "function": ctx, "sinks": []}
@@ -221,8 +261,15 @@ def build(diff_text: str, *, source: str = "") -> dict:
                     and not text.strip().startswith(("//", "/*", "*")):
                 found.append((ln, ["removed-check"], "removed: " + text.strip()))
         for k, (ln, classes, text) in enumerate(found, 1):
-            it["sinks"].append({"id": f"{it['id']}.s{k}", "line": ln, "class": classes[0],
-                                "classes": classes, "text": text[:160]})
+            sink = {"id": f"{it['id']}.s{k}", "line": ln, "class": classes[0],
+                    "classes": classes, "text": text[:160]}
+            if "macro-arg" in classes and _is_code(path):
+                note, broken = _macro_note(text, path, src_root, macros)
+                if broken:
+                    classes = ["macro-precedence"] + classes
+                    sink.update({"class": classes[0], "classes": classes})
+                sink["note"] = note
+            it["sinks"].append(sink)
         items.append(it)
     verdicts = {}
     for it in items:
@@ -255,7 +302,9 @@ def open_items(doc: dict) -> list[dict]:
 
 # sinks most often planted first, so the list shows them before loops
 _ORDER = {c: i + 2 for i, (c, _) in enumerate(_SINKS)}
-_ORDER.update({"format-string": 0, "removed-check": 1, "const-change": 1, "hunk": len(_ORDER) + 2})
+_ORDER.update({"format-string": 0, "macro-precedence": 0, "removed-check": 1, "const-change": 1,
+               "hunk": len(_ORDER) + 2})
+_ORDER["macro-arg"] = _ORDER["loop"]            # a plain macro call sorts with the weakest sinks
 
 
 def show(doc: dict, *, limit: int = SHOW_LIMIT) -> str:
@@ -265,6 +314,8 @@ def show(doc: dict, *, limit: int = SHOW_LIMIT) -> str:
         where = f"{r['file']}:{r['line']}"
         cls = ",".join(r.get("classes") or [r["class"]])
         lines.append(f"  {r['id']:<8} {cls:<22} {where}  {r['text']}")
+        if r.get("note"):
+            lines.append(f"           {r['note']}")
     if len(opn) > limit:
         lines.append(f"  ... and {len(opn) - limit} more")
     if opn:
@@ -372,7 +423,7 @@ def _cmd_init(a):
     if path.exists() and not a.force:
         print(f"{path} exists; --force to rebuild it (verdicts are lost)", file=sys.stderr)
         return 2
-    doc = build(text, source=src)
+    doc = build(text, source=src, src_root=a.src)
     save(doc, path)
     print(show(doc))
     return 0
@@ -429,6 +480,8 @@ def register_cli(subparsers):
     v = common(verbs.add_parser("init", help="build the checklist from a diff file or git range"))
     v.add_argument("diff")
     v.add_argument("--force", action="store_true")
+    v.add_argument("--src", help="the source tree the diff applies to: macro-arg items then "
+                                 "carry the macro's expansion")
     v.set_defaults(func=_cmd_init)
     v = common(verbs.add_parser("show", help="the items with no verdict yet"))
     v.add_argument("--limit", type=int, default=SHOW_LIMIT)

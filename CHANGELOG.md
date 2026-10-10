@@ -2,6 +2,11 @@
 
 Each entry says who notices: **host** (a program embedding the core, see `docs/EMBEDDING.md`), **plugin** (an interactive Claude Code user, see `README.md`), or both. Versions before 0.32.0 are in the git history.
 
+## 0.40.0 (2026-10-10)
+
+- **both:** delta sweep class `macro-arg`: an added call to an ALL-CAPS function-like macro with an expression argument. Given the source tree (`sweep.build(..., src_root=)`, CLI `sweep init --src`), the item's `note` carries the macro's expansion from its `#define` (the calling file first, then its directory, then headers). An argument that regroups in the body makes the item `macro-precedence`, listed first: `CHECKOVERFLOW(off, size, 6+8+4)` with `size - structsize` in the body checks `size + 6`. On libexif delta-02 the agent reached that line and marked it "a pure refactor" without expanding the macro. Over the 47 benchmark deltas the class adds 7 items. A plain `macro-arg` sorts with the weakest sinks, and a macro name inside a string literal is not a call.
+- **plugin:** the `delta-sweep` skill builds the sweep with `--src` and says to judge a macro call by its expansion.
+
 ## 0.39.0 (2026-10-10)
 
 - **host:** `stoprules.Policy.min_round_s`: the in-round stall never ends a round younger than this. `Rounds.stall_due(round_s=, idle_s=, stall_s=)` makes the whole stall decision. `default_policy` sets it to 900 s (the stall is off in full mode, so it matters in delta). Before, with a bug known from an earlier round, the 300 s stall ended every later delta round while the model was still re-reading the code: in 6 of 6 delta model runs those rounds ran no input. A bare `Policy()` has no floor, and the `parity` after-round decisions are unchanged.

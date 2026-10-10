@@ -786,8 +786,13 @@ source are closed up front (`not-code`).
   elsewhere), `copy`, `alloc-size`, `alloc`, `ptr-arith`, `len-arith`,
   `index`, `index-write`, `scan`, `div`, `cast-deref`, `eq-bound`, `int-type`,
   `free`, `abort`, `loop`. From the diff's shape: `const-change` (a bound or
-  size moved) and `removed-check` (a guard deleted). Measured on 79 delta CPVs:
-  an item sits on the vulnerable line of 64.
+  size moved) and `removed-check` (a guard deleted). `macro-arg`: an ALL-CAPS
+  function-like macro called with an expression argument. With
+  `build(..., src_root=)` (CLI `sweep init --src`) the item's `note` carries
+  the macro's expansion from its `#define`, and an argument that regroups
+  in the body (`size - structsize` with `6+8+4`) makes it
+  `macro-precedence`, listed first. Measured on 79 delta CPVs: an item sits
+  on the vulnerable line of 64.
 - **Verdicts** (`sweep mark`): `crash` and `reached` must name the input that
   was run (`--input`); `unreachable` and `safe` need a reason.
 - **The gate:** `cc-fuzzer sweep gate --json [--session S] [--continuing]

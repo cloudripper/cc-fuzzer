@@ -8,8 +8,8 @@ A change can plant more than one flaw. Reading the diff, finding the first suspi
 
 Run `cc-fuzzer` (in the plugin: `${CLAUDE_PLUGIN_ROOT}/bin/cc-fuzzer`):
 
-1. **Build it once:** `cc-fuzzer sweep init $ARGUMENTS`. Files that are not C/C++ source are closed up front. If a sweep already exists, `cc-fuzzer sweep show` continues it.
-2. **Work the list in the order shown.** `format-string` items come first: a call whose format is not a literal lets input supply `%n`/`%s`. For each item, decide whether the harness reaches the line and with what input, then craft that input and run it.
+1. **Build it once:** `cc-fuzzer sweep init $ARGUMENTS --src <source tree>`. Files that are not C/C++ source are closed up front. If a sweep already exists, `cc-fuzzer sweep show` continues it.
+2. **Work the list in the order shown.** `format-string` items come first: a call whose format is not a literal lets input supply `%n`/`%s`. So do `macro-precedence` items: a macro pastes its arguments into its body as text, and the item shows the expansion where an argument such as `6+8+4` regroups, e.g. `size - 6+8+4` is `size + 6`. Judge a macro call (`macro-arg`) by its expansion, never by how the call reads. For each item, decide whether the harness reaches the line and with what input, then craft that input and run it.
 3. **Record each verdict:**
    `cc-fuzzer sweep mark <id> <verdict> "<why>" [--input <file>]`
    - `crash`: an input reached it and crashed. Give `--input`.

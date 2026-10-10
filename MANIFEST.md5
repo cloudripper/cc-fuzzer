@@ -10,7 +10,7 @@
 # refreshed out of band), so drift there is expected and must not trip the
 # integrity check. The SAST driver (src/cc_fuzzer_core/prescan/sast_scan.py) IS tracked.
 60f3787d730e612373d17ba1a8916386  .claude-plugin/marketplace.json
-5aec778e11c0c493289b8af1007990f1  .claude-plugin/plugin.json
+9e40f459295bc0a6a6f708465a4c98ee  .claude-plugin/plugin.json
 c753233cb0fe17d3307ef077128440cb  STATE_SCHEMA.md
 aa905795c58d27abb785b4c5c495cf0e  agents/campaign-planner.md
 4e8fff324c32c9e81cd33ecfe9a05eeb  agents/code-reviewer-deep.md
@@ -127,7 +127,7 @@ a7dc0b04ea7777c8acdae764cd238ec0  scripts/write-harness-built.sh
 ab92fe31f7dd65857e74edaa3656f909  skills/campaign/SKILL.md
 75b89d0d8054fb0c949c834a9586e2bc  skills/concolic/SKILL.md
 a9fe23066680c4d5d9d0bc0223eb26df  skills/coverage/SKILL.md
-0d22d890699e2446bb90de904b8c0d38  skills/delta-sweep/SKILL.md
+28dae8e5648ab95a47f47c8f68d7064e  skills/delta-sweep/SKILL.md
 3021152619b25a137025b33e4992f273  skills/delta/SKILL.md
 f1bfc70bab160dd5f2fd52cea4374122  skills/dictionaries/SKILL.md
 12d8061e2cf9a922345b537e85ccc0d2  skills/doctor/SKILL.md
@@ -148,7 +148,7 @@ e290baf96ab206f60000850d6b4a9891  skills/report/SKILL.md
 165e6d1267fc833d28bfd534ce183ee4  skills/triage/SKILL.md
 5a4c4742d1e773ae1f19ee7cf901146d  skills/validate/SKILL.md
 c5bc3264292c2df34b1bf3fcf195f531  skills/yolo/SKILL.md
-68f456fa3e3d7f3fa1dde28827446e6c  src/cc_fuzzer_core/__init__.py
+1c153c5983b41dcf8b75bd5487575a70  src/cc_fuzzer_core/__init__.py
 81df487b0971d3b41a1613371d67df65  src/cc_fuzzer_core/__main__.py
 fe3b8d694186b83378094e38a6b18f61  src/cc_fuzzer_core/builders/__init__.py
 9cdf97f5b1fa3e48755cabf5868ef95e  src/cc_fuzzer_core/builders/clang.py
@@ -191,6 +191,7 @@ e010ffca97598769e5ffdb5da905ddc2  src/cc_fuzzer_core/integrations/cull/feedback.
 e709f6fc59e061b5e59e6cd28a3b1a7a  src/cc_fuzzer_core/integrations/cull/queue.py
 3fb5e51b572f8fa2153edfb168927ad4  src/cc_fuzzer_core/ledger.py
 e70123cfac2ba971526f765f7179f7f6  src/cc_fuzzer_core/loop.py
+1faf7bca188ba4d66fd455759e5070f0  src/cc_fuzzer_core/macroarg.py
 bb55e017ba8a659b9c8eccc1b73bec33  src/cc_fuzzer_core/manifest.py
 694449cba7f7b18a0e0ced0fde544c3c  src/cc_fuzzer_core/minimize.py
 0d9d5a6b363526c4bba2cdc149ee7852  src/cc_fuzzer_core/models.py
@@ -220,7 +221,7 @@ ad3c4b5882edecf12ee28c92f8124bef  src/cc_fuzzer_core/state/derive_tick.py
 8acb8673ee9a410485991685fb295990  src/cc_fuzzer_core/state/yolo_evaluate.py
 705eb14b7954b6469f0f25e05b3d9365  src/cc_fuzzer_core/state/yolo_state.py
 bc8d5ebf78c8d79b67ec95eda6e7a4e0  src/cc_fuzzer_core/stoprules.py
-a8e396f6496cabb14a581a100e111af1  src/cc_fuzzer_core/sweep.py
+a2953eb918973a9f9f31ca1afa96e727  src/cc_fuzzer_core/sweep.py
 ebe65bef6bb78b6bc6140e533d78c51f  src/cc_fuzzer_core/tools.py
 7a8b43505b6ec8baa0ba1b0b7212c71e  src/cc_fuzzer_core/variants.py
 a012158cbac7a2b368f75bde83f60060  templates/authorization.json
