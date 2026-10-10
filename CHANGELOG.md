@@ -2,6 +2,10 @@
 
 Each entry says who notices: **host** (a program embedding the core, see `docs/EMBEDDING.md`), **plugin** (an interactive Claude Code user, see `README.md`), or both. Versions before 0.32.0 are in the git history.
 
+## 0.45.0 (2026-10-10)
+
+- **host:** a cull alert on a hang libFuzzer reports (CWE-1333 ReDoS, 400, 407, 674, 835) is imported as an `infinite_loop` candidate (sink class `timeout`) instead of `other`, which the default `import_other: false` dropped. cull's new `redos` preset flags a regex compiled from a non-constant pattern, and file's ReDoS CPV is such a hang.
+
 ## 0.44.0 (2026-10-10)
 
 - **both:** cull cards are written so the model can triage them without opening the file.

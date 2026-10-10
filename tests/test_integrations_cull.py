@@ -103,6 +103,17 @@ class IntakeTest(unittest.TestCase):
             with self.subTest(want=want):
                 self.assertEqual(intake.candidate_id(ev), want)
 
+    def test_a_hang_alert_is_a_timeout_candidate_not_dropped(self):
+        """cull's `redos` preset (CWE-1333) and other hangs libFuzzer reports:
+        file's ReDoS CPV is a hang; an unmapped CWE was imported as `other`
+        and, with import_other off, dropped."""
+        for cwe in ("CWE-1333", "1333", "CWE-400", "CWE-835"):
+            ev = {"family": "CWE-1333", "alert": {"rule": "cull/cpp/redos/x", "cwes": [cwe]}}
+            self.assertEqual(intake.pattern_of(ev, {}), "infinite_loop", cwe)
+        self.assertEqual(intake._SINK_CLASS["infinite_loop"], "timeout")
+        from cc_fuzzer_core import enums
+        self.assertEqual(enums.cr_to_category("infinite_loop"), "timeout")
+
     def test_an_invalid_file_is_an_error_not_an_empty_intake(self):
         bad = _doc()
         del bad["runs"][0]["results"][0]["locations"][0]["logicalLocations"]

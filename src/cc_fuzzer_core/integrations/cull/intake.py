@@ -57,10 +57,13 @@ _SINK_PATTERN = {"heap-buffer-overflow": "oob", "stack-buffer-overflow": "oob",
                  "null-deref": "null_deref"}
 _ALERT_CWE = {**{c: "oob_write" for c in ("787", "788", "120", "121", "122", "131", "805")},
               **{c: "oob_read" for c in ("125", "126", "127")},
-              "416": "uaf", "415": "double_free", "476": "null_deref", "690": "null_deref"}
+              "416": "uaf", "415": "double_free", "476": "null_deref", "690": "null_deref",
+              # hangs libFuzzer reports past -timeout (cull's `redos` preset: a regex
+              # compiled from a non-constant pattern; file's ReDoS CPV)
+              **{c: "infinite_loop" for c in ("1333", "400", "407", "674", "835")}}
 _SINK_CLASS = {"oob_write": "out-of-bounds-write", "oob_read": "out-of-bounds-read",
                "uaf": "heap-use-after-free", "double_free": "double-free",
-               "null_deref": "segv", "int_overflow": "integer-overflow"}
+               "null_deref": "segv", "int_overflow": "integer-overflow", "infinite_loop": "timeout"}
 
 
 class IntakeError(ValueError):
