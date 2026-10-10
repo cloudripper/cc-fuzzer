@@ -359,6 +359,48 @@ class CardsTest(unittest.TestCase):
             self.assertIn(want, text)
 
 
+class CardContentTest(unittest.TestCase):
+    """finals Q46: sqlite3's first cards said "no comparison is possible:
+    missing sink.dest_capacity", listed integers in both byte orders, and
+    never showed the code."""
+    H = [{"value": "\\x00\\x00\\x00d", "hex": "00000064", "kind": "int", "tainted": False},
+         {"value": "d\\x00\\x00\\x00", "hex": "64000000", "kind": "int", "tainted": False},
+         {"value": "\\x0a", "hex": "0a", "kind": "int", "tainted": True},
+         {"value": "PRAGMA", "hex": "505241474d41", "kind": "string", "tainted": True},
+         {"value": "-", "hex": "2d", "kind": "int", "tainted": False}]
+
+    def test_hints_text_first_one_byte_order_and_a_limit(self):
+        self.assertEqual(cards.hints(self.H, 8), ["PRAGMA", "\\x0a", "\\x00\\x00\\x00d", "-"])
+        self.assertEqual(cards.hints(self.H, 2), ["PRAGMA", "\\x0a"])
+        self.assertEqual(cards.hints(["a", "a", "b"], 8), ["a", "b"])           # bare values
+
+    def test_unsized_access_is_said_plainly(self):
+        w = cards.plain_why("no comparison is possible: missing sink.dest_capacity; guarded by n > 0")
+        self.assertNotIn("dest_capacity", w)
+        self.assertIn("could not determine the buffer size", w)
+        self.assertTrue(w.endswith("guarded by n > 0"))
+
+    def test_the_card_shows_the_code_and_the_siblings(self):
+        import tempfile
+        root = Path(tempfile.mkdtemp())
+        (root / "proj" / "src").mkdir(parents=True)
+        (root / "proj" / "src" / "p.c").write_text("int a;\n  memcpy(buf, in, len);\n")
+        c = {"candidate_id": "x", "function": "parse", "path": "proj/src/p.c", "line": 2,
+             "family": "CWE-787", "reach_tier": "harness", "input_hints": self.H,
+             "why": "no comparison is possible: missing sink.dest_capacity"}
+        sib = [dict(c, candidate_id="y", line=9), dict(c, candidate_id="z", line=7)]
+        r = cards.render([c], source_root=root, pool=[c] + sib)
+        self.assertIn("code: `memcpy(buf, in, len);`", r["text"])
+        self.assertIn("also in parse: 2 more candidate(s), lines 7, 9", r["text"])
+        self.assertNotIn("d\\x00\\x00\\x00", r["text"])
+        plain = cards.render([c])                                    # no tree, no pool
+        self.assertNotIn("code:", plain["text"])
+        self.assertNotIn("also in", plain["text"])
+        self.assertIn("code:", cards.render([c], source_root=root)["text"])
+        gone = cards.render([dict(c, path="proj/src/missing.c")], source_root=root)
+        self.assertNotIn("code:", gone["text"])                      # unreadable: no line
+
+
 class FeedbackTest(_Campaign):
     CAND = {"candidate_id": "c1", "function": "parse_chunk", "path": "src/parse.c",
             "line": 120, "position": 1}

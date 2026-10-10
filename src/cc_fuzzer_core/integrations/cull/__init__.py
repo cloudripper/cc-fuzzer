@@ -49,7 +49,8 @@ DEFAULTS = {
     # prompt cards
     "cards_top_k": 10,
     "card_max_tokens": 300,
-    "cards_max_tokens": 2000,
+    "cards_max_tokens": 3000,
+    "card_max_hints": 8,
     # prescan weight per reach tier (a semgrep `high` hit weighs 9)
     "signal_weights": {"harness": 15, "indirect": 12, "unknown": 11, "none-found": 10},
     # feedback: a refutation from coverage needs this many executions of the sink
