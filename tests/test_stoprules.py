@@ -93,6 +93,36 @@ class EvidenceTest(unittest.TestCase):
         self.assertEqual(r.after_stop(now_s=0, run_s=0, known=5, corpus=100, budget_left=True).action, sr.IDLE)
 
 
+class MinRoundTest(unittest.TestCase):
+    """Q37: with a bug known before the round, a 300 s stall ended every delta
+    round after the first while the model was still re-reading the code
+    (libssh2: round 3 had just found the rekey path to cpv_0)."""
+
+    def test_the_default_floor_is_900s_and_the_stall_is_unchanged(self):
+        self.assertEqual(sr.default_policy(delta=True).min_round_s, 900)
+        self.assertEqual(sr.default_policy(delta=True, min_round_s=0).min_round_s, 0)
+        self.assertEqual(sr.Policy().min_round_s, 0)                       # bare Policy: no floor
+        self.assertEqual(sr.Rounds(sr.default_policy(delta=True)).stall_for(), 300)
+
+    def test_a_stall_waits_for_the_floor(self):
+        r = sr.Rounds(sr.default_policy(delta=True))
+        # libssh2 round 2: bug known from round 1, nothing new from the start
+        for t in (300, 600, 899):
+            self.assertFalse(r.stall_due(round_s=t, idle_s=t, stall_s=300), t)
+        self.assertTrue(r.stall_due(round_s=900, idle_s=900, stall_s=300))
+
+    def test_after_the_floor_the_stall_counts_from_the_last_progress(self):
+        r = sr.Rounds(sr.default_policy(delta=True))
+        self.assertFalse(r.stall_due(round_s=1000, idle_s=299, stall_s=300))
+        self.assertTrue(r.stall_due(round_s=1000, idle_s=300, stall_s=300))
+
+    def test_no_stall_never_stops_and_floor_zero_is_the_old_rule(self):
+        r = sr.Rounds(sr.default_policy(delta=False))                     # full: stall off
+        self.assertFalse(r.stall_due(round_s=99999, idle_s=99999, stall_s=r.stall_for()))
+        r = sr.Rounds(sr.default_policy(delta=True, min_round_s=0))
+        self.assertTrue(r.stall_due(round_s=300, idle_s=300, stall_s=300))
+
+
 class GiveUpTest(unittest.TestCase):
     def test_a_stalled_run_exits_after_the_window_and_the_minimum(self):
         """Q8: curl dict ran ~6 h after its fuzzer went flat."""

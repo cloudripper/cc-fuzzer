@@ -2,6 +2,10 @@
 
 Each entry says who notices: **host** (a program embedding the core, see `docs/EMBEDDING.md`), **plugin** (an interactive Claude Code user, see `README.md`), or both. Versions before 0.32.0 are in the git history.
 
+## 0.39.0 (2026-10-10)
+
+- **host:** `stoprules.Policy.min_round_s`: the in-round stall never ends a round younger than this. `Rounds.stall_due(round_s=, idle_s=, stall_s=)` makes the whole stall decision. `default_policy` sets it to 900 s (the stall is off in full mode, so it matters in delta). Before, with a bug known from an earlier round, the 300 s stall ended every later delta round while the model was still re-reading the code: in 6 of 6 delta model runs those rounds ran no input. A bare `Policy()` has no floor, and the `parity` after-round decisions are unchanged.
+
 ## 0.38.1 (2026-10-09)
 
 Documentation and packaging; no behaviour change in the core.

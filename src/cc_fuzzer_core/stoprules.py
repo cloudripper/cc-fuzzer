@@ -25,9 +25,13 @@ Policies:
                corpus grew by `reopen_corpus_frac`) at most `reopen_max` times
                while budget remains.
 
-Independent of the policy, `give_up_after_s` (0 = never) lets a run exit
-cleanly once its model rounds have stopped, nothing has progressed (no new
-stack, no corpus growth) for that long, and it has run `min_run_s`.
+Independent of the policy, `min_round_s` keeps the stall from ending a round
+younger than that: a round starts fresh and spends its first minutes
+re-reading the diff and the code, and a 300 s stall ended every delta round
+after the first before it ran a single input (6 of 6 model runs, Q37). And
+`give_up_after_s` (0 = never) lets a run exit cleanly once its model rounds
+have stopped, nothing has progressed (no new stack, no corpus growth) for
+that long, and it has run `min_run_s`.
 """
 from __future__ import annotations
 
@@ -43,6 +47,7 @@ class Policy:
     name: str = "parity"
     dry_limit: int = 3                # 0 = never stop for dry rounds
     stall_s: float = 0.0              # 0 = no in-round stall stop
+    min_round_s: float = 0.0          # the stall never ends a round younger than this
     reopen_max: int = 2
     reopen_corpus_frac: float = 0.05
     give_up_after_s: float = 0.0      # 0 = never exit
@@ -54,12 +59,15 @@ class Policy:
 
 
 def default_policy(*, delta: bool, name: str = "parity", dry_limit: int | None = None,
-                   stall_s: float | None = None, **kw) -> Policy:
+                   stall_s: float | None = None, min_round_s: float | None = None,
+                   **kw) -> Policy:
     """ParallaxCRS's defaults: dry limit 2 in delta (a delta can hold several
-    CPVs) and 3 in full; stall 300 s in delta, off in full."""
+    CPVs) and 3 in full; stall 300 s in delta, off in full; a stalled round
+    still runs 900 s (the stall is off in full mode, so it matters in delta)."""
     return Policy(name=name,
                   dry_limit=(2 if delta else 3) if dry_limit is None else dry_limit,
-                  stall_s=(300.0 if delta else 0.0) if stall_s is None else stall_s, **kw)
+                  stall_s=(300.0 if delta else 0.0) if stall_s is None else stall_s,
+                  min_round_s=900.0 if min_round_s is None else min_round_s, **kw)
 
 
 @dataclass(frozen=True)
@@ -89,6 +97,12 @@ class Rounds:
         if self.policy.name == "evidence" and open_targets > 0:
             return 2 * s
         return s
+
+    def stall_due(self, *, round_s: float, idle_s: float, stall_s: float) -> bool:
+        """Whether the in-round stall ends the round now: `idle_s` s without
+        progress reached `stall_s` (0 = no stall) and the round has run
+        `round_s` >= the policy's `min_round_s`."""
+        return stall_s > 0 and idle_s >= stall_s and round_s >= self.policy.min_round_s
 
     def after_round(self, *, worked: bool, progressed: bool, known_before: int,
                     open_targets: int = 0) -> Decision:
