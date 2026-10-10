@@ -14,7 +14,7 @@ Run `cc-fuzzer` (in the plugin: `${CLAUDE_PLUGIN_ROOT}/bin/cc-fuzzer`):
    `cc-fuzzer sweep mark <id> <verdict> "<why>" [--input <file>]`
    - `crash`: an input reached it and crashed. Give `--input`.
    - `reached`: an input reached it and did not crash. Give `--input`.
-   - `unreachable`: the harness cannot reach it. Say why: which check or option is in the way.
+   - `unreachable`: the harness cannot reach it. Say why: which check or option is in the way. If the fuzzer already executes the function (the host gives coverage), this needs `--input` too: an input that reaches the function, and the guard that stops this line. Code reading alone is refused.
    - `safe`: reachable, but bounded or checked. Say by what.
    Marking a hunk id (`h3`) gives all its lines the same verdict. Use that only when one reason really covers them all.
 4. `cc-fuzzer sweep show` lists what is still open. `cc-fuzzer sweep gate` exits 1 while anything is.

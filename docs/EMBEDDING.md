@@ -794,7 +794,9 @@ source are closed up front (`not-code`).
   `macro-precedence`, listed first. Measured on 79 delta CPVs: an item sits
   on the vulnerable line of 64.
 - **Verdicts** (`sweep mark`): `crash` and `reached` must name the input that
-  was run (`--input`); `unreachable` and `safe` need a reason.
+  was run (`--input`); `unreachable` and `safe` need a reason. With
+  `$CC_FUZZER_SWEEP_COVERAGE` (a snapshot `{"executed": [...]}`), `unreachable`
+  for an item in a function the fuzzer executes needs `--input` as well.
 - **The gate:** `cc-fuzzer sweep gate --json [--session S] [--continuing]
   [--max-blocks N]` says whether a turn may end. It blocks at most 3 times
   **per session** (`--session`; a host with one session per round gets 3 per

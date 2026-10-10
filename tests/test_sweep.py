@@ -252,3 +252,57 @@ class CliTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReachedUnreachableTest(unittest.TestCase):
+    """finals Q41, libssh2: the agent marked the kex hunk unreachable ("dead in
+    this harness. Confirmed by code reading") while the fuzzer executed the
+    function; a nested key exchange reaches the line."""
+    DIFF = ("--- a/src/kex.c\n+++ b/src/kex.c\n"
+            "@@ -470,5 +470,4 @@ diffie_hellman_sha_algo(LIBSSH2_SESSION *session,\n"
+            "     if(session->server_hostkey)\n"
+            "         LIBSSH2_FREE(session, session->server_hostkey);\n"
+            "-    session->server_hostkey = NULL;\n"
+            "     rc = _libssh2_copy_string(session, &buf, &session->server_hostkey,\n")
+
+    def setUp(self):
+        import tempfile
+        self.d = Path(tempfile.mkdtemp())
+        self.doc = S.build(self.DIFF)
+        self.item = S.open_items(self.doc)[0]["id"]
+
+    def test_unreachable_needs_an_input_in_an_executed_function(self):
+        ex = {"diffie_hellman_sha_algo", "kex.c:diffie_hellman_sha_algo"}
+        with self.assertRaises(S.SweepError) as e:
+            S.mark(self.doc, self.item, "unreachable", "needs a rekey, impossible here", executed=ex)
+        self.assertIn("already executes diffie_hellman_sha_algo", str(e.exception))
+        inp = self.d / "kexinit.bin"
+        inp.write_bytes(b"x")
+        S.mark(self.doc, self.item, "unreachable", "reached the function, guard at 465 stops it",
+                   input_path=str(inp), executed=ex)
+        self.assertEqual(self.doc["verdicts"][self.item]["verdict"], "unreachable")
+
+    def test_other_verdicts_and_unexecuted_functions_are_unchanged(self):
+        S.mark(self.doc, self.item, "safe", "the pointer is reassigned before any use",
+                   executed={"diffie_hellman_sha_algo"})
+        doc = S.build(self.DIFF)
+        S.mark(doc, self.item, "unreachable", "harness never negotiates this kex",
+                   executed={"other_fn"})
+        S.mark(S.build(self.DIFF), self.item, "unreachable", "no coverage measured yet")
+
+    def test_snapshot_reading_and_the_cli(self):
+        cov = self.d / "cov.json"
+        cov.write_text(json.dumps({"ts": 1, "executed": [{"name": "kex.c:diffie_hellman_sha_algo"}, "main"]}))
+        self.assertEqual(S.executed_functions(cov),
+                         {"kex.c:diffie_hellman_sha_algo", "diffie_hellman_sha_algo", "main"})
+        self.assertIsNone(S.executed_functions(self.d / "none.json"))
+        self.assertEqual(S.function_of("diffie_hellman_sha_algo(LIBSSH2_SESSION *session,"),
+                         "diffie_hellman_sha_algo")
+        f = self.d / "s.json"
+        S.save(self.doc, f)
+        env = {**os.environ, "CC_FUZZER_SWEEP_COVERAGE": str(cov)}
+        out = subprocess.run([sys.executable, "-m", "cc_fuzzer_core", "sweep", "mark", self.item,
+                              "unreachable", "dead in this harness, code reading", "--file", str(f)],
+                             capture_output=True, text=True, env=env)
+        self.assertEqual(out.returncode, 2)
+        self.assertIn("refused", out.stderr)

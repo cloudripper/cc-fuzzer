@@ -2,6 +2,10 @@
 
 Each entry says who notices: **host** (a program embedding the core, see `docs/EMBEDDING.md`), **plugin** (an interactive Claude Code user, see `README.md`), or both. Versions before 0.32.0 are in the git history.
 
+## 0.42.0 (2026-10-10)
+
+- **both:** a sweep `unreachable` verdict for an item inside a function the fuzzer already executes needs `--input`: an input that reaches the function, and the guard that stops the line. Code reading alone is refused. The coverage comes from `$CC_FUZZER_SWEEP_COVERAGE` (`mark(executed=)`); without it nothing changes. On a libssh2 delta the agent marked the hunk holding the CPV "dead in this harness. Confirmed by code reading" while the fuzzer ran that function; a nested key exchange reaches the line. The `delta-sweep` skill says so.
+
 ## 0.41.0 (2026-10-10)
 
 - **both:** minimization stops when its probe budget is spent. Before, ddmin went on after the last allowed run: every candidate then answered "no", so it doubled the granularity down to single bytes and built a full-size complement for each chunk. On a 131 KB sqlite3 crasher that was about 788,000 candidates and 30 minutes after the 400th run (a host holding a lock through triage waited all that time). The same inputs now finish in 28 s and 40 s with identical results. `ddmin(..., spent=)` takes the stop condition.

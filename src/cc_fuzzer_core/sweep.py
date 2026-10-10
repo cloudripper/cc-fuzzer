@@ -324,7 +324,44 @@ def show(doc: dict, *, limit: int = SHOW_LIMIT) -> str:
     return "\n".join(lines)
 
 
-def mark(doc: dict, item: str, verdict: str, reason: str, *, input_path: str = "") -> dict:
+COVERAGE_ENV = "CC_FUZZER_SWEEP_COVERAGE"
+_FN_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+
+
+def function_of(context) -> str:
+    """The function a hunk is in, from its context line ("static int f(int a,"
+    or a bare name); "" when there is none."""
+    c = (context or "").strip()
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", c):
+        return c
+    m = _FN_RE.search(c)
+    return m.group(1) if m else ""
+
+
+def executed_functions(path) -> set | None:
+    """Function names a coverage snapshot shows executed: {"executed": [name |
+    {"name": ...}]}; a static function's "file.c:name" counts by its bare name
+    too. None when there is no usable snapshot."""
+    try:
+        d = json.loads(Path(path).read_text())
+    except (OSError, ValueError, TypeError):
+        return None
+    out = set()
+    for e in (d.get("executed") if isinstance(d, dict) else None) or []:
+        n = e.get("name") if isinstance(e, dict) else str(e)
+        if n:
+            out.update({n, n.rsplit(":", 1)[-1]})
+    return out
+
+
+def mark(doc: dict, item: str, verdict: str, reason: str, *, input_path: str = "",
+         executed: set | None = None) -> dict:
+    """Record a verdict. `executed`: functions the fuzzer's coverage shows run;
+    an `unreachable` for an item inside one needs --input (an input that
+    reaches the function), not code reading alone. On libssh2 the agent
+    marked the kex hunk "dead in this harness. Confirmed by code reading"
+    while the fuzzer executed the function; a nested key exchange reaches the
+    line (finals Q41)."""
     ids = {r["id"] for r in required(doc)} | {it["id"] for it in doc["items"]}
     if item not in ids:
         raise SweepError(f"no sweep item {item!r} (see `cc-fuzzer sweep show`)")
@@ -335,6 +372,17 @@ def mark(doc: dict, item: str, verdict: str, reason: str, *, input_path: str = "
     if verdict in ("crash", "reached"):
         if not input_path or not Path(input_path).is_file():
             raise SweepError(f"`{verdict}` needs --input <file> naming the input you ran")
+    if verdict == "unreachable" and executed and not (input_path and Path(input_path).is_file()):
+        hunk_id = item.split(".", 1)[0]
+        it = next((x for x in doc["items"] if x["id"] == hunk_id), None)
+        fn = function_of(it.get("function")) if it else ""
+        if fn and fn in executed:
+            raise SweepError(
+                f"`unreachable` refused: the fuzzer already executes {fn} (coverage). Code "
+                f"reading is not enough here: run an input that reaches {fn} (a corpus or "
+                "seed input will do), then mark `reached`, `safe` or `crash` with --input, "
+                "or `unreachable` with --input naming that input and the guard that stops "
+                "this line")
     rec = {"verdict": verdict, "reason": reason.strip()[:400], "ts": int(time.time())}
     if input_path:
         rec["input"] = str(Path(input_path).resolve())
@@ -438,7 +486,9 @@ def _cmd_mark(a):
     path = _file(a)
     doc = load(path)
     try:
-        mark(doc, a.item, a.verdict, a.reason, input_path=a.input or "")
+        cov = os.environ.get(COVERAGE_ENV)
+        mark(doc, a.item, a.verdict, a.reason, input_path=a.input or "",
+             executed=executed_functions(cov) if cov else None)
     except SweepError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
