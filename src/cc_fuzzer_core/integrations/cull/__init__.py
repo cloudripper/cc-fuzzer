@@ -44,6 +44,8 @@ DEFAULTS = {
                        "medium": {"max_rank": 20, "reach_tiers": ["harness", "indirect"]}},
     # the queue admits none-found candidates only with this much budget left
     "none_found_budget_floor": 0.3,
+    # full scan: one candidate per function first (queue.spread)
+    "per_function": True,
     # prompt cards
     "cards_top_k": 10,
     "card_max_tokens": 300,

@@ -2,6 +2,10 @@
 
 Each entry says who notices: **host** (a program embedding the core, see `docs/EMBEDDING.md`), **plugin** (an interactive Claude Code user, see `README.md`), or both. Versions before 0.32.0 are in the git history.
 
+## 0.43.0 (2026-10-10)
+
+- **both:** the full-scan cull queue is spread over functions (`cull.per_function`, default on). Each function's best candidate comes first, in cull's order. A function with a candidate already done waits behind every function no round has looked at, because the queue is rebuilt each round. A repeat of the same (function, line, family) under another path is dropped. cull lists every sink line, so one function could fill the queue: sqlite3's generated parser `yy_reduce` held at least the first 25 places. Over the 35 full-mode CPVs cull has a candidate for, in rounds of 10 cards, the median round in which the CPV's candidate first appears goes from 24 to 8, and the number reached by round 10 from 14 to 23. None comes later. Delta mode keeps its diff-proximity order.
+
 ## 0.42.0 (2026-10-10)
 
 - **both:** a sweep `unreachable` verdict for an item inside a function the fuzzer already executes needs `--input`: an input that reaches the function, and the guard that stops the line. Code reading alone is refused. The coverage comes from `$CC_FUZZER_SWEEP_COVERAGE` (`mark(executed=)`); without it nothing changes. On a libssh2 delta the agent marked the hunk holding the CPV "dead in this harness. Confirmed by code reading" while the fuzzer ran that function; a nested key exchange reaches the line. The `delta-sweep` skill says so.

@@ -249,6 +249,35 @@ class QueueTest(unittest.TestCase):
                {"candidate_id": "h", "reach_tier": "harness", "position": 1}]
         self.assertEqual(self.ids(queue.order(tie)), ["h", "i"])
 
+    def test_full_scan_spreads_the_queue_over_functions(self):
+        """finals Q45, sqlite3: the generated parser yy_reduce held the first ~25
+        places, and the CPVs sat at 365 and 460 with ~10 cards a round."""
+        flood = [{"candidate_id": f"yy{i}", "reach_tier": "harness", "position": i + 1,
+                  "function": "yy_reduce", "line": 100 + i, "family": "CWE-787"} for i in range(30)]
+        other = [{"candidate_id": "cpv", "reach_tier": "harness", "position": 40,
+                  "function": "shell_error_context", "line": 23158, "family": "CWE-125", "path": "bld/shell.c"},
+                 {"candidate_id": "cpv-copy", "reach_tier": "harness", "position": 41,
+                  "function": "shell_error_context", "line": 23158, "family": "CWE-125", "path": "test/shell.c"},
+                 {"candidate_id": "cpv2", "reach_tier": "harness", "position": 42,
+                  "function": "shell_error_context", "line": 23150, "family": "CWE-125"},
+                 {"candidate_id": "x", "reach_tier": "indirect", "position": 35, "function": "other_fn",
+                  "line": 1, "family": "CWE-787"}]
+        ids = self.ids(queue.order(flood + other))
+        self.assertEqual(ids[:3], ["yy0", "x", "cpv"])            # one per function, cull's order
+        self.assertNotIn("cpv-copy", ids)                           # same line under another path
+        # then the rest in cull's order: yy_reduce's other lines, then the CPV's other line
+        self.assertEqual(ids[3:], [f"yy{i}" for i in range(1, 30)] + ["cpv2"])
+        # the queue is rebuilt each round: a worked function's next line must not
+        # come before a function no round has seen
+        late = {"candidate_id": "late", "reach_tier": "harness", "position": 90,
+                "function": "late_fn", "line": 5, "family": "CWE-125"}
+        nxt = self.ids(queue.order(flood + other + [late], done=["yy0", "x", "cpv"]))
+        self.assertEqual(nxt[:3], ["late", "yy1", "yy2"])
+        # switched off, and in delta mode: cull's order as before
+        off = self.ids(queue.order(flood + other, config={"cull": {"per_function": False}}))
+        self.assertEqual(off[:3], ["yy0", "yy1", "yy2"])
+        self.assertEqual(self.ids(queue.order(flood + other, delta=True))[:3], ["yy0", "yy1", "yy2"])
+
     def test_none_found_after_the_reached_tiers_are_exhausted(self):
         r = queue.order(self.C, done=["h1", "h2", "i1", "u1"])
         self.assertEqual(self.ids(r), ["n1"])

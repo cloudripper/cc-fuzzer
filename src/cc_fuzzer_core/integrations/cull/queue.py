@@ -19,6 +19,16 @@ the least likely bug in the list. So:
 `budget_remaining` is a fraction in [0, 1]; None means "not tracked", which
 admits none-found only after the reached tiers.
 
+Full scan (`delta=False`, cull.per_function, default on): the order is
+spread over functions. Each function's best candidate comes first, in cull's
+order; its further candidates only after every function has had one; and a
+repeat of the same (function, line, family) under another path is dropped.
+cull lists every sink line, so one function can fill the queue: sqlite3's
+generated parser yy_reduce held the first ~25 places, and the model, ~10
+cards a round, never got near the CPVs (places 365 and 460). Over the 35
+full-mode CPVs cull has a candidate for, the median place goes 235 -> 71,
+and none moves down (finals Q45).
+
 Delta mode (`delta=True`) asks what the diff introduced. The reached
 candidates nearest the change come first, by `diff_proximity`: in-diff,
 changed-function, diff-flow, near-change, changed-file, then none; position
@@ -52,19 +62,49 @@ def _band(c: Mapping) -> int:
     return PROXIMITY.index(label) if label else len(PROXIMITY)
 
 
+def spread(queue: list, worked: set = frozenset()) -> list:
+    """One candidate per function first (in the given order), then the rest;
+    repeats of (function, line, family) under another path dropped. Functions
+    in `worked` (a candidate of theirs is done) get no first place: the queue
+    is rebuilt every round, and their next line must not crowd out a function
+    no round has looked at."""
+    seen, uniq = set(), []
+    for c in queue:
+        k = (c.get("function"), c.get("line"), c.get("family"))
+        if c.get("function") and k in seen:
+            continue
+        seen.add(k)
+        uniq.append(c)
+    firsts, rest, fns = [], [], set()
+    for c in uniq:
+        fn = c.get("function")
+        if fn and (fn in fns or fn in worked):
+            rest.append(c)
+        else:
+            firsts.append(c)
+            if fn:
+                fns.add(fn)
+    return firsts + rest
+
+
 def order(candidates: Iterable[Mapping], *, done: Iterable[str] = (),
           budget_remaining: float | None = None, config: Mapping | None = None,
           delta: bool = False) -> dict:
     """{"queue": [...], "held": [...], "reason": str} -- held are the
     none-found candidates not admitted yet."""
-    floor = float(settings(config)["none_found_budget_floor"])
+    st = settings(config)
+    floor = float(st["none_found_budget_floor"])
     done = set(done)
+    candidates = list(candidates)
+    worked = {c.get("function") for c in candidates if c.get("candidate_id") in done and c.get("function")}
     cands = [c for c in candidates if c.get("candidate_id") not in done]
     def by_rank(c):
         tier = REACHED.index(c["reach_tier"]) if c.get("reach_tier") in REACHED else len(REACHED)
         return ((_band(c),) if delta else ()) + (c.get("position") or 10**9, tier)
     reached = sorted((c for c in cands if c.get("reach_tier") in REACHED), key=by_rank)
     none_found = sorted((c for c in cands if c.get("reach_tier") not in REACHED), key=by_rank)
+    if not delta and st.get("per_function", True):
+        reached, none_found = spread(reached, worked), spread(none_found, worked)
     if not reached:
         why = "reached tiers exhausted"
         admit = True
