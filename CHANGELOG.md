@@ -2,6 +2,10 @@
 
 Each entry says who notices: **host** (a program embedding the core, see `docs/EMBEDDING.md`), **plugin** (an interactive Claude Code user, see `README.md`), or both. Versions before 0.32.0 are in the git history.
 
+## 0.46.0 (2026-10-12)
+
+- **host:** delta mode, once the sweep is complete (`queue.order(..., sweep_done=True)`, `cull.rare_after_sweep`, default on): the best candidate of each rare class goes first, once per class. A rare class is a pattern with at most `cull.rare_class_max` (25) candidates, such as a hang, a lifetime or a null. After the sweep, delta order is cull's order for code far from the diff. On file's delta, the out-of-diff ReDoS CPV (the only hang candidate) moves from 88th to 2nd. libssh2's and libexif's CPVs keep their places. Before the sweep completes nothing moves; full mode is unchanged.
+
 ## 0.45.0 (2026-10-10)
 
 - **host:** a cull alert on a hang libFuzzer reports (CWE-1333 ReDoS, 400, 407, 674, 835) is imported as an `infinite_loop` candidate (sink class `timeout`) instead of `other`, which the default `import_other: false` dropped. cull's new `redos` preset flags a regex compiled from a non-constant pattern, and file's ReDoS CPV is such a hang.

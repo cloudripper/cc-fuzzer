@@ -289,6 +289,38 @@ class QueueTest(unittest.TestCase):
         self.assertEqual(off[:3], ["yy0", "yy1", "yy2"])
         self.assertEqual(self.ids(queue.order(flood + other, delta=True))[:3], ["yy0", "yy1", "yy2"])
 
+    def test_rare_classes_go_first_once_the_delta_sweep_is_complete(self):
+        """finals Q48: file's ReDoS CPV has a candidate out of the diff (the only
+        hang candidate) and sat 88th in delta order after a sweep that finished
+        in round 1."""
+        common = [{"candidate_id": f"w{i}", "reach_tier": "harness", "position": i + 1,
+                   "pattern": "oob_write", "function": f"f{i}", "line": i} for i in range(40)]
+        indiff = {"candidate_id": "d", "reach_tier": "harness", "position": 60, "pattern": "oob_write",
+                  "function": "g", "line": 1, "diff_proximity": {"label": "in-diff"}}
+        hang = {"candidate_id": "hang", "reach_tier": "harness", "position": 90,
+                "pattern": "infinite_loop", "function": "regc", "line": 734}
+        uaf = [{"candidate_id": f"u{i}", "reach_tier": "harness", "position": 70 + i,
+                "pattern": "uaf", "function": f"h{i}", "line": i} for i in range(3)]
+        cands = common + [indiff, hang] + uaf
+        ids = lambda **kw: self.ids(queue.order(cands, delta=True, **kw))
+        before = ids()
+        self.assertEqual(before[0], "d")                          # sweep open: delta order
+        self.assertGreater(before.index("hang"), 40)
+        after = ids(sweep_done=True)
+        self.assertEqual(after[:2], ["u0", "hang"])               # rare firsts, by cull position
+        self.assertEqual(after[2], "d")                           # then the delta order
+        self.assertEqual(sorted(after), sorted(before))           # nothing dropped
+        # once per class: with u0 done, uaf is not lifted again; the hang still is
+        nxt = self.ids(queue.order(cands, delta=True, sweep_done=True, done=["u0"]))
+        self.assertEqual(nxt[0], "hang")
+        self.assertGreater(nxt.index("u1"), nxt.index("d"))
+        # a big class is never lifted; off, and full mode: unchanged
+        self.assertNotEqual(ids(sweep_done=True)[0], "w0")
+        self.assertEqual(self.ids(queue.order(cands, delta=True, sweep_done=True,
+                                              config={"cull": {"rare_after_sweep": False}})), before)
+        full = self.ids(queue.order(cands))
+        self.assertEqual(self.ids(queue.order(cands, sweep_done=True)), full)
+
     def test_none_found_after_the_reached_tiers_are_exhausted(self):
         r = queue.order(self.C, done=["h1", "h2", "i1", "u1"])
         self.assertEqual(self.ids(r), ["n1"])

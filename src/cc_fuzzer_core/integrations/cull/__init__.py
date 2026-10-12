@@ -46,6 +46,10 @@ DEFAULTS = {
     "none_found_budget_floor": 0.3,
     # full scan: one candidate per function first (queue.spread)
     "per_function": True,
+    # delta, once the sweep is complete: the best candidate of each class with at
+    # most rare_class_max candidates goes first (queue.rare_first)
+    "rare_after_sweep": True,
+    "rare_class_max": 25,
     # prompt cards
     "cards_top_k": 10,
     "card_max_tokens": 300,

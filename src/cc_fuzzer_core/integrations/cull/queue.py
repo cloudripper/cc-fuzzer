@@ -29,6 +29,13 @@ cards a round, never got near the CPVs (places 365 and 460). Over the 35
 full-mode CPVs cull has a candidate for, the median place goes 235 -> 71,
 and none moves down (finals Q45).
 
+Delta mode once the sweep is complete (`sweep_done`, cull.rare_after_sweep,
+default on): the diff's lines all have a verdict, and what is left in delta
+order is far from the diff in cull's order. The best candidate of each rare
+class (a pattern with at most cull.rare_class_max candidates: a hang, a
+lifetime, a null) goes first, once per class. file's ReDoS CPV is out of the
+diff and was 88th; it becomes 2nd. Before the sweep completes, nothing moves.
+
 Delta mode (`delta=True`) asks what the diff introduced. The reached
 candidates nearest the change come first, by `diff_proximity`: in-diff,
 changed-function, diff-flow, near-change, changed-file, then none; position
@@ -87,9 +94,27 @@ def spread(queue: list, worked: set = frozenset()) -> list:
     return firsts + rest
 
 
+def rare_first(queue: list, all_candidates: list, done: set, max_size: int) -> list:
+    """The best (cull position) candidate of each class with at most `max_size`
+    candidates, first; once per class: a class with a done candidate is not
+    lifted again (the queue is rebuilt every round)."""
+    size: dict = {}
+    for c in all_candidates:
+        size[c.get("pattern")] = size.get(c.get("pattern"), 0) + 1
+    worked = {c.get("pattern") for c in all_candidates if c.get("candidate_id") in done}
+    firsts, seen = [], set()
+    for c in sorted(queue, key=lambda c: c.get("position") or 10**9):
+        p = c.get("pattern")
+        if p and size.get(p, 0) <= max_size and p not in worked and p not in seen:
+            seen.add(p)
+            firsts.append(c)
+    ids = {id(c) for c in firsts}
+    return firsts + [c for c in queue if id(c) not in ids]
+
+
 def order(candidates: Iterable[Mapping], *, done: Iterable[str] = (),
           budget_remaining: float | None = None, config: Mapping | None = None,
-          delta: bool = False) -> dict:
+          delta: bool = False, sweep_done: bool = False) -> dict:
     """{"queue": [...], "held": [...], "reason": str} -- held are the
     none-found candidates not admitted yet."""
     st = settings(config)
@@ -116,12 +141,17 @@ def order(candidates: Iterable[Mapping], *, done: Iterable[str] = (),
                + ("" if budget_remaining is None else
                   f"; budget remaining {budget_remaining:.2f} < floor {floor:.2f}"))
         admit = False
+    lift = delta and sweep_done and st.get("rare_after_sweep", True)
     if admit:
-        return {"queue": reached + none_found, "held": [],
-                "reason": "none-found admitted: " + why}
+        q = reached + none_found
+        if lift:
+            q = rare_first(q, candidates, done, int(st.get("rare_class_max", 25)))
+        return {"queue": q, "held": [], "reason": "none-found admitted: " + why}
     near = [c for c in none_found if delta and proximity(c) in DELTA_ADMIT]
     held = [c for c in none_found if not (delta and proximity(c) in DELTA_ADMIT)]
     if near:
         why += f"; {len(near)} near the change admitted (delta)"
-    return {"queue": reached + near, "held": held,
-            "reason": "none-found held: " + why}
+    q = reached + near
+    if lift:
+        q = rare_first(q, candidates, done, int(st.get("rare_class_max", 25)))
+    return {"queue": q, "held": held, "reason": "none-found held: " + why}
