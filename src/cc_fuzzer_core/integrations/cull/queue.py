@@ -29,6 +29,18 @@ cards a round, never got near the CPVs (places 365 and 460). Over the 35
 full-mode CPVs cull has a candidate for, the median place goes 235 -> 71,
 and none moves down (finals Q45).
 
+Full scan, cull.entry_boost (default on): before the spread, a candidate's
+place is cull's position divided by its boost, so cull's order holds wherever
+the boost is equal (finals Q77). A short call chain from the harness counts:
+(4 / max(length, 2)) ** 1.5, so a function two calls from the entry goes 2.8
+times as early and one eight calls away 2.8 times as late. A chain into the
+fuzzer's own harness code is not boosted. A candidate cull gives medium or
+high confidence counts twice; the fixed-offset and ambiguous-capacity tiers
+and CWE-690 count half. On the 16 full-mode survey benchmarks (38 CPVs with a
+candidate) the CPVs in the first 30 places go 13 -> 16 and the geometric mean
+of their first places 52 -> 37 (at worst x2.4); on the 38 delta databases in
+full order (67 CPVs) the first 30 go 16 -> 19 and the first 10 6 -> 8.
+
 Delta mode once the sweep is complete (`sweep_done`, cull.rare_after_sweep,
 default on): the diff's lines all have a verdict, and what is left in delta
 order is far from the diff in cull's order. The best candidate of each rare
@@ -55,6 +67,9 @@ REACHED = ("harness", "indirect", "unknown")
 PROXIMITY = ("in-diff", "changed-function", "diff-flow", "near-change", "changed-file")
 # a none-found candidate this near the change is admitted in delta mode
 DELTA_ADMIT = ("in-diff", "changed-function", "diff-flow")
+# full scan, cull.entry_boost: tiers whose candidates sat ahead of the CPVs far
+# more often than on them (finals Q77)
+WEAK_TIERS = ("fixed-offset", "ambiguous-capacity")
 
 
 def proximity(c: Mapping) -> str | None:
@@ -67,6 +82,19 @@ def proximity(c: Mapping) -> str | None:
 def _band(c: Mapping) -> int:
     label = proximity(c)
     return PROXIMITY.index(label) if label else len(PROXIMITY)
+
+
+def boost(c: Mapping) -> float:
+    """How many times earlier than cull's position a full-scan candidate goes."""
+    m = 1.0
+    n = len(c.get("call_chain") or [])
+    if n and "fuzz" not in (c.get("path") or "").lower():
+        m *= (4 / max(n, 2)) ** 1.5
+    if c.get("confidence") in ("medium", "high"):
+        m *= 2
+    if c.get("tier") in WEAK_TIERS or c.get("family") == "CWE-690":
+        m *= 0.5
+    return m
 
 
 def spread(queue: list, worked: set = frozenset()) -> list:
@@ -123,9 +151,12 @@ def order(candidates: Iterable[Mapping], *, done: Iterable[str] = (),
     candidates = list(candidates)
     worked = {c.get("function") for c in candidates if c.get("candidate_id") in done and c.get("function")}
     cands = [c for c in candidates if c.get("candidate_id") not in done]
+    boosted = not delta and st.get("entry_boost", True)
     def by_rank(c):
         tier = REACHED.index(c["reach_tier"]) if c.get("reach_tier") in REACHED else len(REACHED)
-        return ((_band(c),) if delta else ()) + (c.get("position") or 10**9, tier)
+        pos = c.get("position")
+        pos = (pos / boost(c) if boosted else pos) if pos else 10**9
+        return ((_band(c),) if delta else ()) + (pos, tier)
     reached = sorted((c for c in cands if c.get("reach_tier") in REACHED), key=by_rank)
     none_found = sorted((c for c in cands if c.get("reach_tier") not in REACHED), key=by_rank)
     if not delta and st.get("per_function", True):

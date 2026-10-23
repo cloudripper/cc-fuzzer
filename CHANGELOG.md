@@ -2,6 +2,10 @@
 
 Each entry says who notices: **host** (a program embedding the core, see `docs/EMBEDDING.md`), **plugin** (an interactive Claude Code user, see `README.md`), or both. Versions before 0.32.0 are in the git history.
 
+## 0.47.0 (2026-10-23)
+
+- **host:** full mode (`queue.order`, `cull.entry_boost`, default on): before the per-function spread, each candidate's place is cull's position divided by `queue.boost(c)`, so cull's order holds wherever the boost is equal. The boost is (4 / max(call-chain length, 2)) ** 1.5, not applied to the fuzzer's own harness code; ×2 for cull confidence medium or high; ×0.5 for the fixed-offset and ambiguous-capacity tiers and for CWE-690. On cull 0.4.0's scans of the 16 full-mode survey benchmarks (38 CPVs with a candidate), CPVs in the first 30 queue places go 13 to 16 and the geometric mean of their first places 52 to 37 (at worst ×2.4, one benchmark later). On the 38 delta databases in full order (67 CPVs), the first 30 go 16 to 19 and the first 10 6 to 8. Delta order is unchanged.
+
 ## 0.46.0 (2026-10-12)
 
 - **host:** delta mode, once the sweep is complete (`queue.order(..., sweep_done=True)`, `cull.rare_after_sweep`, default on): the best candidate of each rare class goes first, once per class. A rare class is a pattern with at most `cull.rare_class_max` (25) candidates, such as a hang, a lifetime or a null. After the sweep, delta order is cull's order for code far from the diff. On file's delta, the out-of-diff ReDoS CPV (the only hang candidate) moves from 88th to 2nd. libssh2's and libexif's CPVs keep their places. Before the sweep completes nothing moves; full mode is unchanged.

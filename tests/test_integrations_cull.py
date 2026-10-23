@@ -289,6 +289,30 @@ class QueueTest(unittest.TestCase):
         self.assertEqual(off[:3], ["yy0", "yy1", "yy2"])
         self.assertEqual(self.ids(queue.order(flood + other, delta=True))[:3], ["yy0", "yy1", "yy2"])
 
+    def test_full_scan_boost_by_entry_distance_confidence_and_tier(self):
+        """finals Q77: cull's position divided by queue.boost, full scan only."""
+        def c(cid, pos, chain=0, **kw):
+            return dict({"candidate_id": cid, "reach_tier": "harness", "position": pos,
+                         "function": cid, "line": 1, "family": "CWE-787",
+                         "call_chain": ["f"] * chain}, **kw)
+        far = c("far", 1, chain=8)                     # 1 / (4/8)**1.5 = 2.83
+        near = c("near", 3, chain=2)                   # 3 / 2**1.5 = 1.06
+        mid = c("mid", 4, chain=4)                     # 4 / 1 = 4
+        none = c("nochain", 5)                         # no chain: 5
+        harn = c("harness_code", 2, chain=1, path="fuzz/fuzz_x.c")    # harness code: 2
+        conf = c("conf", 7, chain=4, confidence="medium")             # 7 / 2 = 3.5
+        weak = c("weak", 6, chain=4, tier="fixed-offset")             # 6 / 0.5 = 12
+        n690 = c("n690", 5.5, chain=4, family="CWE-690")              # 5.5 / 0.5 = 11
+        cands = [far, near, mid, none, harn, conf, weak, n690]
+        self.assertEqual(self.ids(queue.order(cands)),
+                         ["near", "harness_code", "far", "conf", "mid", "nochain", "n690", "weak"])
+        self.assertAlmostEqual(queue.boost(c("one", 1, chain=1)), 2 ** 1.5)  # a chain of 1 counts as 2
+        self.assertEqual(queue.boost({}), 1.0)
+        # off, and delta mode: cull's position as before
+        culls = ["far", "harness_code", "near", "mid", "nochain", "n690", "weak", "conf"]
+        self.assertEqual(self.ids(queue.order(cands, config={"cull": {"entry_boost": False}})), culls)
+        self.assertEqual(self.ids(queue.order(cands, delta=True)), culls)
+
     def test_rare_classes_go_first_once_the_delta_sweep_is_complete(self):
         """finals Q48: file's ReDoS CPV has a candidate out of the diff (the only
         hang candidate) and sat 88th in delta order after a sweep that finished
