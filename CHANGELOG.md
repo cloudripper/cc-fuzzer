@@ -2,6 +2,12 @@
 
 Each entry says who notices: **host** (a program embedding the core, see `docs/EMBEDDING.md`), **plugin** (an interactive Claude Code user, see `README.md`), or both. Versions before 0.32.0 are in the git history.
 
+## 0.49.0 (2026-10-25)
+
+- **host:** a model's first look orders the head of the queue (`queue.order(..., triage={candidate_id: score})`, `queue.triaged`, `cull.triage` default on, `cull.triage_promote` 6, `cull.triage_demote` 0). A card scored 6 or more goes first, highest score first. A card scored 0 goes behind the last scored card. Every other card, including any card that was not scored, keeps its place, and nothing is dropped or held differently. Without `triage` the order is unchanged.
+- **host:** new `cull.triage` module, which makes no model call. `windows(queue, pool, source_root)` builds the prompts: each card plus its function's source, in windows of 10. `parse(reply, numbers)` reads back the scores. The host makes the calls.
+- **Measured:** the first 100 full-mode cards of the 16 survey benchmarks (24 CPVs with a card there), scored by GLM-5.3-Flash with this prompt. CPVs in the first 30 places go 16 to 19, and the median place goes 17 to 8.5. 14 move earlier and 3 later; of the 8 past place 30, 6 come into the first 30. A repeat run held every high score. With the CPV's fix applied, 4 of the 5 cards whose shown code the fix changed scored lower.
+
 ## 0.48.0 (2026-10-25)
 
 - **host:** delta mode (`queue.order(..., delta=True)`, `cull.delta_spread`, default on): inside each diff band the order is spread over functions, as a full scan's is over the whole queue (`queue.band_spread`): each function's best candidate in the band first, then the band's rest, and a repeat of the same (function, line, family) under another path is dropped. The bands keep their order. A large diff puts a thousand in-diff lines in a few functions, and a CPV in another changed function sat behind them. On cull 0.4.4's scans of the 38 delta databases, reranked with each task's own diff (70 CPVs with a candidate), the CPVs worked within 3 rounds of 10 cards go 49 to 56, within 10 rounds 56 to 61, and past round 300 2 to 0; 22 earlier, none later (held-out 67: 20 earlier, none later). Full mode is unchanged.

@@ -411,6 +411,68 @@ class QueueTest(unittest.TestCase):
         # full mode does not see bands
         self.assertEqual(self.ids(queue.order(cands))[:2], ["big0", "far1"])
 
+    def test_triage_orders_the_head_and_drops_nothing(self):
+        """finals Q88: a model's first look at the first cards; a high score
+        goes first, a zero goes behind the last scored card, nothing is lost."""
+        def c(cid, pos, fn):
+            return {"candidate_id": cid, "reach_tier": "harness", "position": pos,
+                    "function": fn, "line": pos, "family": "CWE-787"}
+        cands = [c(f"k{i}", i + 1, f"fn{i}") for i in range(12)]
+        base = self.ids(queue.order(cands))
+        self.assertEqual(base, [f"k{i}" for i in range(12)])
+        # k0..k7 looked at: k6 a visible bug, k3 plausible, k1 and k4 clearly safe;
+        # k5 unscored (a failed window) stays put; k8.. were not looked at
+        scores = {"k0": 2, "k1": 0, "k2": 1, "k3": 6, "k4": 0, "k6": 9, "k7": 3}
+        ids = self.ids(queue.order(cands, triage=scores))
+        self.assertEqual(ids, ["k6", "k3", "k0", "k2", "k5", "k7", "k1", "k4",
+                               "k8", "k9", "k10", "k11"])
+        self.assertEqual(sorted(ids), sorted(base))
+        # rebuilt next round with the head worked: still applied, nothing comes back
+        nxt = self.ids(queue.order(cands, triage=scores, done=["k6", "k3", "k0"]))
+        self.assertEqual(nxt[:5], ["k2", "k5", "k7", "k1", "k4"])
+        # a score for a candidate not in the queue, or none at all, changes nothing
+        self.assertEqual(self.ids(queue.order(cands, triage={"gone": 9})), base)
+        self.assertEqual(self.ids(queue.order(cands, triage={})), base)
+        # off, and other thresholds
+        self.assertEqual(self.ids(queue.order(cands, triage=scores,
+                                              config={"cull": {"triage": False}})), base)
+        hi = self.ids(queue.order(cands, triage=scores, config={"cull": {"triage_promote": 9,
+                                                                        "triage_demote": -1}}))
+        self.assertEqual(hi[:4], ["k6", "k0", "k1", "k2"])
+        # held none-found candidates stay held whatever their score
+        held = cands + [{"candidate_id": "n1", "reach_tier": "none-found", "position": 1}]
+        r = queue.order(held, triage={"n1": 10})
+        self.assertNotIn("n1", self.ids(r))
+        self.assertEqual([x["candidate_id"] for x in r["held"]], ["n1"])
+
+    def test_triage_windows_and_parse(self):
+        from cc_fuzzer_core.integrations.cull import triage
+        with tempfile.TemporaryDirectory() as d:
+            src = Path(d) / "p" / "a.c"
+            src.parent.mkdir()
+            src.write_text("\n".join(f"line {i}" for i in range(1, 401)) + "\n")
+            q = [{"candidate_id": f"c{i}", "function": "f" if i < 2 else f"g{i}", "path": "p/a.c",
+                  "line": 250 if i == 0 else 10 + i, "function_span": {"start": 5, "end": 300 if i == 0 else 30},
+                  "family": "CWE-787", "reach_tier": "harness"} for i in range(13)]
+            w = triage.windows(q, q, d, size=5)
+            self.assertEqual([n for n, _ in w], [[1, 2, 3, 4, 5], [6, 7, 8, 9, 10], [11, 12, 13]])
+            self.assertTrue(w[0][1].startswith(triage.PROMPT))
+            self.assertIn("### Candidate 1\n", w[0][1])
+            self.assertNotIn("### Candidate 6\n", w[0][1])
+            self.assertIn("    11  line 11", w[0][1])
+            # a long function is cut to its head and the lines around the sink
+            long_src = triage.function_source(q[0], d)
+            self.assertIn("     5  line 5\n", long_src)
+            self.assertIn("   ...", long_src)
+            self.assertIn("   250  line 250\n", long_src)
+            self.assertLessEqual(len(long_src.splitlines()), triage.MAX_SOURCE_LINES + 2)
+            self.assertEqual(triage.function_source({"path": "nope.c", "line": 3}, d),
+                             "(source not available)")
+        reply = ('thinking {"card": 1, "score": 9, "why": "x"}\n{"card": 2, "score": "3"}\n'
+                 '{"card": 7, "score": 9}\n{"card": 3, "score": 11}\n{"card": 4}\nnot json {"card": x}')
+        self.assertEqual(triage.parse(reply, [1, 2, 3, 4, 5]), {1: 9.0, 2: 3.0})
+        self.assertEqual(triage.parse("", [1]), {})
+
     def test_delta_admits_a_none_found_candidate_in_the_diff(self):
         C = self.C + [
             {"candidate_id": "n_in", "reach_tier": "none-found", "position": 9,

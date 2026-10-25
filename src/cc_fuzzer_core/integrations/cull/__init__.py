@@ -13,6 +13,7 @@ through the query-engine command a host configures.
             ├─ sast-signal/v1  -> prescan suspicion by function          (intake.py)
             ├─ cards           -> model context, token-bounded           (cards.py)
             ├─ queue           -> reached tiers before none-found        (queue.py)
+            │    └─ triage     <- a model's first look orders the head    (triage.py)
             └─ feedback        <- triage outcomes, cull-feedback/v1      (feedback.py)
        input hints -> harness dictionary                                  (hints.py)
 
@@ -54,6 +55,11 @@ DEFAULTS = {
     # most rare_class_max candidates goes first (queue.rare_first)
     "rare_after_sweep": True,
     "rare_class_max": 25,
+    # a model's first look (queue.order's `triage` scores, triage.py): promote
+    # cards scored triage_promote or more, demote those scored triage_demote or less
+    "triage": True,
+    "triage_promote": 6,
+    "triage_demote": 0,
     # prompt cards
     "cards_top_k": 10,
     "card_max_tokens": 300,

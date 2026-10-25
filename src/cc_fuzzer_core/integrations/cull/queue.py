@@ -48,6 +48,18 @@ class (a pattern with at most cull.rare_class_max candidates: a hang, a
 lifetime, a null) goes first, once per class. file's ReDoS CPV is out of the
 diff and was 88th; it becomes 2nd. Before the sweep completes, nothing moves.
 
+Triage (`triage`: {candidate_id: score 0-10}, a model's first look at the
+head of the queue, cull.triage): a card scored cull.triage_promote (6) or more
+goes first, highest score first; one scored cull.triage_demote (0) or less goes
+behind the last card that was scored; every other card keeps its place. On the
+16 full-mode survey benchmarks (first 100 cards scored by GLM-5.3-Flash, 24 CPVs
+with a card there) the CPVs in the first 30 go 16 -> 19, the median place
+17 -> 8.5, 14 earlier and 3 later; of the 8 CPVs past place 30, 6 come into the
+first 30 (finals Q88). Promotion alone moves nothing later by more than 2
+places but brings in only 3 of the 8; the rest come from the demotion, which
+also costs the one large loss (a CPV card scored 0, 52 places). An unscored
+card is not moved, so a failed or partial triage leaves cull's order.
+
 Delta mode (`delta=True`) asks what the diff introduced. The reached
 candidates nearest the change come first, by `diff_proximity`: in-diff,
 changed-function, diff-flow, near-change, changed-file, then none; position
@@ -157,9 +169,28 @@ def rare_first(queue: list, all_candidates: list, done: set, max_size: int) -> l
     return firsts + [c for c in queue if id(c) not in ids]
 
 
+def triaged(queue: list, scores: Mapping, promote: float = 6, demote: float = 0) -> list:
+    """Order by a first look (`scores`: candidate_id -> 0-10): promoted cards
+    first (highest score, then queue order), demoted ones behind the last
+    scored card, the rest in place."""
+    def score(c):
+        return scores.get(c.get("candidate_id"))
+    scored = [i for i, c in enumerate(queue) if score(c) is not None]
+    if not scored:
+        return list(queue)
+    end = scored[-1]
+    up = sorted((c for c in queue if (score(c) if score(c) is not None else -1) >= promote),
+                key=lambda c: -score(c))
+    down = [c for c in queue[:end + 1] if score(c) is not None and score(c) <= demote]
+    moved = {id(c) for c in up} | {id(c) for c in down}
+    keep = [c for c in queue[:end + 1] if id(c) not in moved]
+    return up + keep + down + [c for c in queue[end + 1:] if id(c) not in moved]
+
+
 def order(candidates: Iterable[Mapping], *, done: Iterable[str] = (),
           budget_remaining: float | None = None, config: Mapping | None = None,
-          delta: bool = False, sweep_done: bool = False) -> dict:
+          delta: bool = False, sweep_done: bool = False,
+          triage: Mapping | None = None) -> dict:
     """{"queue": [...], "held": [...], "reason": str} -- held are the
     none-found candidates not admitted yet."""
     st = settings(config)
@@ -192,8 +223,12 @@ def order(candidates: Iterable[Mapping], *, done: Iterable[str] = (),
                   f"; budget remaining {budget_remaining:.2f} < floor {floor:.2f}"))
         admit = False
     lift = delta and sweep_done and st.get("rare_after_sweep", True)
+    first_look = triage if triage and st.get("triage", True) else None
+    def looked(q):
+        return (triaged(q, first_look, float(st.get("triage_promote", 6)),
+                        float(st.get("triage_demote", 0))) if first_look else q)
     if admit:
-        q = reached + none_found
+        q = looked(reached + none_found)
         if lift:
             q = rare_first(q, candidates, done, int(st.get("rare_class_max", 25)))
         return {"queue": q, "held": [], "reason": "none-found admitted: " + why}
@@ -201,7 +236,7 @@ def order(candidates: Iterable[Mapping], *, done: Iterable[str] = (),
     held = [c for c in none_found if not (delta and proximity(c) in DELTA_ADMIT)]
     if near:
         why += f"; {len(near)} near the change admitted (delta)"
-    q = reached + near
+    q = looked(reached + near)
     if lift:
         q = rare_first(q, candidates, done, int(st.get("rare_class_max", 25)))
     return {"queue": q, "held": held, "reason": "none-found held: " + why}
