@@ -284,10 +284,9 @@ class QueueTest(unittest.TestCase):
                 "function": "late_fn", "line": 5, "family": "CWE-125"}
         nxt = self.ids(queue.order(flood + other + [late], done=["yy0", "x", "cpv"]))
         self.assertEqual(nxt[:3], ["late", "yy1", "yy2"])
-        # switched off, and in delta mode: cull's order as before
+        # switched off: cull's order as before (delta mode spreads per band, Q85)
         off = self.ids(queue.order(flood + other, config={"cull": {"per_function": False}}))
         self.assertEqual(off[:3], ["yy0", "yy1", "yy2"])
-        self.assertEqual(self.ids(queue.order(flood + other, delta=True))[:3], ["yy0", "yy1", "yy2"])
 
     def test_full_scan_boost_by_entry_distance_confidence_and_tier(self):
         """finals Q77: cull's position divided by queue.boost, full scan only."""
@@ -372,6 +371,45 @@ class QueueTest(unittest.TestCase):
         self.assertEqual(self.ids(queue.order(C)),
                          ["h_none", "h_file", "h_near", "h_flow", "h_fn", "h_in1", "h_in2",
                           "i_in", "i_none"], "without delta: position only")
+
+    def test_delta_spreads_each_band_over_functions(self):
+        """finals Q85: a large diff put a thousand in-diff lines in a few
+        functions, and a CPV in another changed function sat behind them."""
+        def c(cid, pos, fn, band=None, line=None, tier="harness"):
+            d = {"candidate_id": cid, "reach_tier": tier, "position": pos, "function": fn,
+                 "line": line or pos, "family": "CWE-787"}
+            if band:
+                d["diff_proximity"] = {"label": band, "hops": None}
+            return d
+        flood = [c(f"big{i}", i + 1, "big_fn", "in-diff") for i in range(20)]
+        cpv = c("cpv", 30, "small_fn", "in-diff")
+        again = c("cpv-again", 31, "big_fn", "in-diff", line=5)          # same line, other path
+        fn = [c("fn1", 2, "changed_a", "changed-function"),
+              c("fn2", 3, "changed_a", "changed-function"),
+              c("fn3", 4, "changed_b", "changed-function")]
+        far = [c("far1", 1, "far_fn"), c("far2", 2, "far_fn")]
+        held = [c("n_in1", 5, "big_fn", "in-diff", line=99, tier="none-found"),
+                c("n_in2", 6, "lonely", "in-diff", tier="none-found")]
+        cands = flood + [cpv, again] + fn + far + held
+        ids = self.ids(queue.order(cands, delta=True))
+        # one per function inside each band, then the band's rest; bands in order
+        self.assertEqual(ids[:2], ["big0", "cpv"])
+        self.assertEqual(ids[2:21], [f"big{i}" for i in range(1, 20)])
+        self.assertNotIn("cpv-again", ids)
+        self.assertEqual(ids[21:24], ["fn1", "fn3", "fn2"])
+        self.assertEqual(ids[24:26], ["far1", "far2"])
+        # the admitted none-found in-diff candidates are spread too, after the reached
+        self.assertEqual(ids[26:], ["n_in1", "n_in2"])
+        # rebuilt next round: a worked function's next line comes after a fresh one,
+        # but never ahead of its band's other functions or behind a later band
+        nxt = self.ids(queue.order(cands, delta=True, done=["big0"]))
+        self.assertEqual(nxt[:2], ["cpv", "big1"])
+        self.assertLess(nxt.index("big19"), nxt.index("fn1"))
+        # off: band, then cull's position
+        off = self.ids(queue.order(cands, delta=True, config={"cull": {"delta_spread": False}}))
+        self.assertEqual(off[:21], [f"big{i}" for i in range(20)] + ["cpv"])
+        # full mode does not see bands
+        self.assertEqual(self.ids(queue.order(cands))[:2], ["big0", "far1"])
 
     def test_delta_admits_a_none_found_candidate_in_the_diff(self):
         C = self.C + [

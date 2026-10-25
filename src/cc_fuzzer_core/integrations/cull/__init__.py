@@ -48,6 +48,8 @@ DEFAULTS = {
     "per_function": True,
     # full scan: cull's position divided by queue.boost (call chain, confidence, weak tiers)
     "entry_boost": True,
+    # delta: one candidate per function first inside each diff band (queue.band_spread)
+    "delta_spread": True,
     # delta, once the sweep is complete: the best candidate of each class with at
     # most rare_class_max candidates goes first (queue.rare_first)
     "rare_after_sweep": True,

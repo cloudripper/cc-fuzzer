@@ -2,6 +2,10 @@
 
 Each entry says who notices: **host** (a program embedding the core, see `docs/EMBEDDING.md`), **plugin** (an interactive Claude Code user, see `README.md`), or both. Versions before 0.32.0 are in the git history.
 
+## 0.48.0 (2026-10-25)
+
+- **host:** delta mode (`queue.order(..., delta=True)`, `cull.delta_spread`, default on): inside each diff band the order is spread over functions, as a full scan's is over the whole queue (`queue.band_spread`): each function's best candidate in the band first, then the band's rest, and a repeat of the same (function, line, family) under another path is dropped. The bands keep their order. A large diff puts a thousand in-diff lines in a few functions, and a CPV in another changed function sat behind them. On cull 0.4.4's scans of the 38 delta databases, reranked with each task's own diff (70 CPVs with a candidate), the CPVs worked within 3 rounds of 10 cards go 49 to 56, within 10 rounds 56 to 61, and past round 300 2 to 0; 22 earlier, none later (held-out 67: 20 earlier, none later). Full mode is unchanged.
+
 ## 0.47.0 (2026-10-23)
 
 - **host:** full mode (`queue.order`, `cull.entry_boost`, default on): before the per-function spread, each candidate's place is cull's position divided by `queue.boost(c)`, so cull's order holds wherever the boost is equal. The boost is (4 / max(call-chain length, 2)) ** 1.5, not applied to the fuzzer's own harness code; ×2 for cull confidence medium or high; ×0.5 for the fixed-offset and ambiguous-capacity tiers and for CWE-690. On cull 0.4.0's scans of the 16 full-mode survey benchmarks (38 CPVs with a candidate), CPVs in the first 30 queue places go 13 to 16 and the geometric mean of their first places 52 to 37 (at worst ×2.4, one benchmark later). On the 38 delta databases in full order (67 CPVs), the first 30 go 16 to 19 and the first 10 6 to 8. Delta order is unchanged.

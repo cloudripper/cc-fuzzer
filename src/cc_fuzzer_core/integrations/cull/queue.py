@@ -51,13 +51,21 @@ diff and was 88th; it becomes 2nd. Before the sweep completes, nothing moves.
 Delta mode (`delta=True`) asks what the diff introduced. The reached
 candidates nearest the change come first, by `diff_proximity`: in-diff,
 changed-function, diff-flow, near-change, changed-file, then none; position
-breaks ties, then tier. A held none-found candidate
+breaks ties, then tier. Inside each band the order is spread over functions
+(cull.delta_spread, default on), as a full scan is over the whole queue: a
+large diff puts a thousand in-diff lines in a few functions, and a CPV in
+another changed function sat behind them (median 170 cards ahead, 50
+functions). On the 38 delta databases (70 CPVs, cull 0.4.4 reranked with each
+task's diff) the CPVs worked within 3 rounds of 10 cards go 49 -> 56, within
+10 rounds 56 -> 61, past round 300 2 -> 0; 22 earlier, none later (finals
+Q85). The bands keep their order. A held none-found candidate
 is admitted anyway when its label is in-diff, changed-function or diff-flow:
 the call graph that found no path misses edges, and the diff says the code
 changed right there.
 """
 from __future__ import annotations
 
+from itertools import groupby
 from typing import Iterable, Mapping
 
 from cc_fuzzer_core.integrations.cull import settings
@@ -122,6 +130,15 @@ def spread(queue: list, worked: set = frozenset()) -> list:
     return firsts + rest
 
 
+def band_spread(queue: list, worked: set = frozenset()) -> list:
+    """Delta mode: `spread` inside each diff band of a queue in band order;
+    the bands keep their order."""
+    out: list = []
+    for _, grp in groupby(queue, key=_band):
+        out += spread(list(grp), worked)
+    return out
+
+
 def rare_first(queue: list, all_candidates: list, done: set, max_size: int) -> list:
     """The best (cull position) candidate of each class with at most `max_size`
     candidates, first; once per class: a class with a done candidate is not
@@ -161,6 +178,8 @@ def order(candidates: Iterable[Mapping], *, done: Iterable[str] = (),
     none_found = sorted((c for c in cands if c.get("reach_tier") not in REACHED), key=by_rank)
     if not delta and st.get("per_function", True):
         reached, none_found = spread(reached, worked), spread(none_found, worked)
+    elif delta and st.get("delta_spread", True):
+        reached, none_found = band_spread(reached, worked), band_spread(none_found, worked)
     if not reached:
         why = "reached tiers exhausted"
         admit = True
