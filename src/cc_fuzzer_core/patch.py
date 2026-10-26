@@ -705,7 +705,8 @@ def robust_fuzz(binary: str, pov: str, seconds: int, *, corpus: str = "",
             # -seed=0 is libFuzzer's "pick one"; a fixed seed makes reruns comparable.
             subprocess.run([binary, f"-max_total_time={int(seconds)}", f"-seed={int(seed)}",
                             f"-artifact_prefix={art}/", "-print_final_stats=0", str(seeds)],
-                           capture_output=True, timeout=int(seconds) + timeout_pad_s)
+                           capture_output=True, timeout=int(seconds) + timeout_pad_s,
+                           cwd=os.path.dirname(os.path.abspath(binary)) or None)
         except subprocess.TimeoutExpired:
             pass                      # it ran; whatever it wrote still counts
         except OSError as e:

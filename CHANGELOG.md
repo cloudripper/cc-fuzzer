@@ -2,6 +2,10 @@
 
 Each entry says who notices: **host** (a program embedding the core, see `docs/EMBEDDING.md`), **plugin** (an interactive Claude Code user, see `README.md`), or both. Versions before 0.32.0 are in the git history.
 
+## 0.49.1 (2026-10-26)
+
+- **host, plugin:** crash replay (`crash.replay.run_once`: screening, minimization, triage) and the patch fuzz check run the harness from its own directory, as OSS-Fuzz runs harnesses from `$OUT`. Some harnesses need files beside them: nginx's exits unless the directory it runs in has a writable `logs/`. Run from elsewhere, every crash it replayed read as an exit. In ParallaxCRS m88, all ~5,300 fuzzer crash artifacts were screened "exit", and a sample of 25 are all ASan crashes when run from the build directory. Test: `HarnessCwdTest`.
+
 ## 0.49.0 (2026-10-25)
 
 - **host:** a model's first look orders the head of the queue (`queue.order(..., triage={candidate_id: score})`, `queue.triaged`, `cull.triage` default on, `cull.triage_promote` 6, `cull.triage_demote` 0). A card scored 6 or more goes first, highest score first. A card scored 0 goes behind the last scored card. Every other card, including any card that was not scored, keeps its place, and nothing is dropped or held differently. Without `triage` the order is unchanged.

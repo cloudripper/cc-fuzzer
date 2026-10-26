@@ -305,6 +305,36 @@ class LoaderErrorTest(unittest.TestCase):
             self.assertEqual(r.run_once(str(b), str(pov))[0], 127)
 
 
+class HarnessCwdTest(unittest.TestCase):
+    """ParallaxCRS m88 (nginx-full): the harness exits unless the directory it
+    runs in has a writable logs/, as OSS-Fuzz's $OUT does. Replay ran it from
+    the caller's directory, and every crash, real ASan reports included, read
+    as an exit. Replay runs it from the binary's own directory."""
+
+    def test_replay_runs_the_harness_from_its_own_directory(self):
+        import os
+        import tempfile
+        from pathlib import Path
+        from cc_fuzzer_core.crash import replay as r
+        with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as elsewhere:
+            out = Path(td) / "out"
+            (out / "logs").mkdir(parents=True)
+            b = out / "harness"
+            b.write_text("#!/bin/sh\n[ -d logs ] || exit 1\necho '==1==ERROR: AddressSanitizer: "
+                         "heap-buffer-overflow on address 0x1' >&2\nexit 1\n")
+            b.chmod(0o755)
+            pov = Path(td) / "pov"
+            pov.write_bytes(b"x")
+            here = os.getcwd()
+            os.chdir(elsewhere)
+            try:
+                code, text = r.run_once(str(b), str(pov))
+            finally:
+                os.chdir(here)
+            self.assertEqual(code, 1)
+            self.assertIn("heap-buffer-overflow", text)
+
+
 class TrapTest(unittest.TestCase):
     """A trap (ud2, SIGILL) under ASan: OSS-Fuzz's runner reports it as
     "AddressSanitizer: ILL", the signature AIxCC's faad2 cpv_1 is judged by.

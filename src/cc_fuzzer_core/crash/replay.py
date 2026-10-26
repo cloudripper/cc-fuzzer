@@ -222,8 +222,14 @@ def run_once(binary: str, reproducer: str, *, timeout: int = TIMEOUT_S, env=None
     run_env["ASAN_OPTIONS"] = ASAN_OPTIONS
     run_env["UBSAN_OPTIONS"] = UBSAN_OPTIONS
     try:
+        # from the binary's own directory, as OSS-Fuzz runs harnesses from $OUT:
+        # nginx's exits unless the directory it runs in has a writable logs/,
+        # and from elsewhere every crash it replayed read as an exit (ParallaxCRS
+        # m88: ~5,300 fuzzer crash artifacts, real ASan reports among them, all
+        # screened "exit")
         p = subprocess.run([binary, *map(str, args), reproducer], capture_output=True, timeout=timeout,
-                           env=run_env, stdin=subprocess.DEVNULL)
+                           env=run_env, stdin=subprocess.DEVNULL,
+                           cwd=os.path.dirname(os.path.abspath(binary)) or None)
     except subprocess.TimeoutExpired as e:
         # The target can print a complete sanitizer report and then hang in its
         # crash handler instead of aborting (an ASan self-re-exec deadlock seen
