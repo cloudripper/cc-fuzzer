@@ -10,7 +10,7 @@
 # refreshed out of band), so drift there is expected and must not trip the
 # integrity check. The SAST driver (src/cc_fuzzer_core/prescan/sast_scan.py) IS tracked.
 60f3787d730e612373d17ba1a8916386  .claude-plugin/marketplace.json
-36fce9102e2e6030a69f58af37d5f36e  .claude-plugin/plugin.json
+6641b2f34e4fcc7ef6bf6608c345fe7f  .claude-plugin/plugin.json
 c753233cb0fe17d3307ef077128440cb  STATE_SCHEMA.md
 aa905795c58d27abb785b4c5c495cf0e  agents/campaign-planner.md
 4e8fff324c32c9e81cd33ecfe9a05eeb  agents/code-reviewer-deep.md
@@ -148,7 +148,7 @@ e290baf96ab206f60000850d6b4a9891  skills/report/SKILL.md
 165e6d1267fc833d28bfd534ce183ee4  skills/triage/SKILL.md
 5a4c4742d1e773ae1f19ee7cf901146d  skills/validate/SKILL.md
 c5bc3264292c2df34b1bf3fcf195f531  skills/yolo/SKILL.md
-b7a37394eb2b6fd0888b4697e290921e  src/cc_fuzzer_core/__init__.py
+b75f898422c0e380f33d7833e49c6ba5  src/cc_fuzzer_core/__init__.py
 81df487b0971d3b41a1613371d67df65  src/cc_fuzzer_core/__main__.py
 fe3b8d694186b83378094e38a6b18f61  src/cc_fuzzer_core/builders/__init__.py
 9cdf97f5b1fa3e48755cabf5868ef95e  src/cc_fuzzer_core/builders/clang.py
@@ -164,7 +164,7 @@ d6a572ee24ebae69f3429d849fef7c14  src/cc_fuzzer_core/crash/__init__.py
 92a22d5b376c98b068d225b56c7b25d1  src/cc_fuzzer_core/crash/classify.py
 16996fd420eeee27bbf1fd8ea9906bd2  src/cc_fuzzer_core/crash/detect.py
 e9bd9e7fe7d581e1f87a015f996156d7  src/cc_fuzzer_core/crash/pipeline.py
-cbe6cc3a8a6f4e8189e6889a5df296ed  src/cc_fuzzer_core/crash/replay.py
+942c17357c5951e26d6073ad74c614ef  src/cc_fuzzer_core/crash/replay.py
 fa441c29d2bf62b519fdfaaf53cc5f2c  src/cc_fuzzer_core/crash/verifiers/__init__.py
 801c359f838b2557782307b3b64c8cad  src/cc_fuzzer_core/crash/verifiers/command.py
 f1774217b1b8c3afd3e5b8f7ced2b6eb  src/cc_fuzzer_core/crash/verifiers/realism.py
@@ -196,7 +196,7 @@ e70123cfac2ba971526f765f7179f7f6  src/cc_fuzzer_core/loop.py
 bb55e017ba8a659b9c8eccc1b73bec33  src/cc_fuzzer_core/manifest.py
 19b5212f20c49e4ff39c1a57f624338e  src/cc_fuzzer_core/minimize.py
 0d9d5a6b363526c4bba2cdc149ee7852  src/cc_fuzzer_core/models.py
-b931e2c8432da4d57213268a0bc52357  src/cc_fuzzer_core/patch.py
+cf89e588eea18bb399d7c8197a9d2dc5  src/cc_fuzzer_core/patch.py
 e886a95f3444ff5e6fcce0985a0ef253  src/cc_fuzzer_core/paths.py
 a8e96344bbead5cc831262a078e5a489  src/cc_fuzzer_core/prescan/__init__.py
 c3372a3783a7853354357a0f72901ae1  src/cc_fuzzer_core/prescan/code_review_prescan.py
