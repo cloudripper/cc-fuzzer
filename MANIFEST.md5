@@ -10,8 +10,8 @@
 # refreshed out of band), so drift there is expected and must not trip the
 # integrity check. The SAST driver (src/cc_fuzzer_core/prescan/sast_scan.py) IS tracked.
 60f3787d730e612373d17ba1a8916386  .claude-plugin/marketplace.json
-6641b2f34e4fcc7ef6bf6608c345fe7f  .claude-plugin/plugin.json
-c753233cb0fe17d3307ef077128440cb  STATE_SCHEMA.md
+dcef919111057d29c3ae92dd37e034fc  .claude-plugin/plugin.json
+99f89955265c34a41aaf903bb367f3ff  STATE_SCHEMA.md
 aa905795c58d27abb785b4c5c495cf0e  agents/campaign-planner.md
 4e8fff324c32c9e81cd33ecfe9a05eeb  agents/code-reviewer-deep.md
 2ac8e75500155efff720afbabae5fd5d  agents/code-reviewer.md
@@ -124,7 +124,7 @@ b31fd19c17b10ca9c3604e67289155a0  scripts/validate-state.sh
 a7dc0b04ea7777c8acdae764cd238ec0  scripts/write-harness-built.sh
 0084d9a1bababdc76cb8023aff65a0f0  scripts/yolo-route.sh
 767ab4f0522d6d8e429608cc5cb11717  scripts/yolo-state.sh
-ab92fe31f7dd65857e74edaa3656f909  skills/campaign/SKILL.md
+de6355e1a958aa40e17638437dd04496  skills/campaign/SKILL.md
 75b89d0d8054fb0c949c834a9586e2bc  skills/concolic/SKILL.md
 a9fe23066680c4d5d9d0bc0223eb26df  skills/coverage/SKILL.md
 6921411d40454cbceb588de40f6036e7  skills/delta-sweep/SKILL.md
@@ -136,7 +136,7 @@ d1ab61b7664c227eb0c1170fa6596fdb  skills/fuzz-plan/SKILL.md
 b9800e119c7dec14a307b749492bf1ff  skills/fuzz-review/SKILL.md
 491c1d7f2b54c1e8577d4029316e6694  skills/fuzz-run/SKILL.md
 6b21390eaec1354b337a4f2467c9cf67  skills/fuzz-status/SKILL.md
-90683fc9806ee83d7dfcef9ed433bb6c  skills/fuzz-stop/SKILL.md
+ca7340ae141053487c0e9d9667574a30  skills/fuzz-stop/SKILL.md
 42ed68c87fee623bd3e98cfb42baa6c5  skills/harness/SKILL.md
 969293f242dcf1320bd066be0cd7a15f  skills/nix-build/SKILL.md
 5aa564a32446df45049c1768a99f89db  skills/nix-cleanup/SKILL.md
@@ -144,11 +144,11 @@ cdcbc9dec0eb852634133180860905e6  skills/poc/SKILL.md
 e290baf96ab206f60000850d6b4a9891  skills/report/SKILL.md
 7fe0ea1fe202bfaf8bc90b9ba1778cf6  skills/resume-campaign/SKILL.md
 3762914afd19bbfbed0fb362adb70d35  skills/seed/SKILL.md
-9aaea34bd0e09cd12f81e59bbff75740  skills/tick/SKILL.md
+1b2c6c3720540c17772f0fb212c78695  skills/tick/SKILL.md
 165e6d1267fc833d28bfd534ce183ee4  skills/triage/SKILL.md
 5a4c4742d1e773ae1f19ee7cf901146d  skills/validate/SKILL.md
-c5bc3264292c2df34b1bf3fcf195f531  skills/yolo/SKILL.md
-b75f898422c0e380f33d7833e49c6ba5  src/cc_fuzzer_core/__init__.py
+1d3f45991a0eb75e10485c58afa8b944  skills/yolo/SKILL.md
+4ae52232246a273f107aef590915cb87  src/cc_fuzzer_core/__init__.py
 81df487b0971d3b41a1613371d67df65  src/cc_fuzzer_core/__main__.py
 fe3b8d694186b83378094e38a6b18f61  src/cc_fuzzer_core/builders/__init__.py
 9cdf97f5b1fa3e48755cabf5868ef95e  src/cc_fuzzer_core/builders/clang.py
@@ -156,7 +156,7 @@ fe3b8d694186b83378094e38a6b18f61  src/cc_fuzzer_core/builders/__init__.py
 69f8a53ffc6fe2a986db8c684cf968e1  src/cc_fuzzer_core/builders/ossfuzz.py
 20ac54ed256dd5041ecfa708b7a51a90  src/cc_fuzzer_core/builders/script.py
 e9f82154f2827218549d284fe6a331dc  src/cc_fuzzer_core/builders/toolchain.py
-2ac5cefc3cd340ec3dbd8660113ac475  src/cc_fuzzer_core/cli.py
+adfa0861eb3cc87a8de03448432974a6  src/cc_fuzzer_core/cli.py
 b749542267f72f8d13d502718b1e6a7c  src/cc_fuzzer_core/cmplog.py
 546441c1cfd7f30452d96f205b7b8fca  src/cc_fuzzer_core/config.py
 82b020ef6ef7e983722bb0485f8d4d89  src/cc_fuzzer_core/coverage.py
@@ -177,7 +177,7 @@ e52c7574a77357321b02068aeac7f41f  src/cc_fuzzer_core/crs.py
 5fcdb1075b43c3a193d755781fdd3939  src/cc_fuzzer_core/events.py
 cf5e5bc349950a4ddb58e01214a26b46  src/cc_fuzzer_core/features.py
 8ae7971da9c62b26555df0e2e7fc3ee1  src/cc_fuzzer_core/findings.py
-805843bd588274cb2c1a17c8bca105e1  src/cc_fuzzer_core/gate.py
+ed9d3e6583d266dc2255d6bd2688dc0c  src/cc_fuzzer_core/gate.py
 3733c556b7318b3e22503f5b53d0a160  src/cc_fuzzer_core/governor.py
 cdcdc2fc4e23c88c028d715115eabdb4  src/cc_fuzzer_core/hygiene.py
 95e52b507528cc8f268c7bcb82eda50d  src/cc_fuzzer_core/integrations/__init__.py

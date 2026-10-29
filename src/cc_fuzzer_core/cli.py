@@ -88,13 +88,21 @@ def add_raw_verb(verbs, subsystem, name, func, help_text):
     return v
 
 
-def build_parser():
+def build_parser(only=None):
+    """The full parser, or with `only` (a module name) just that subsystem's.
+
+    The full parser imports every subsystem, about 160 ms on a warm cache.
+    A PreToolUse hook runs one verb per tool call, so main() builds only the
+    subsystem the command names when it can (see _single_subsystem)."""
     parser = argparse.ArgumentParser(
         prog="cc-fuzzer",
         description="cc-fuzzer core command line (cc-fuzzer <subsystem> <verb>).",
     )
     parser.add_argument("--version", action="version", version=f"cc-fuzzer {__version__}")
     subparsers = parser.add_subparsers(dest="subsystem", metavar="<subsystem>")
+    if only is not None:
+        importlib.import_module(only).register_cli(subparsers)
+        return parser
     for modname in SUBSYSTEMS:
         importlib.import_module(modname).register_cli(subparsers)
     for modname in OPTIONAL_SUBSYSTEMS:
@@ -107,8 +115,25 @@ def build_parser():
     return parser
 
 
+def _single_subsystem(argv):
+    """A parser holding only argv[0]'s subsystem, or None to build them all.
+
+    Used when argv[0] is a core subsystem whose module is named after it
+    (`gate` -> cc_fuzzer_core.gate) and registers that name; anything else,
+    help and --version included, gets the full parser, so usage and errors
+    read the same either way."""
+    if not argv or argv[0].startswith("-"):
+        return None
+    modname = "cc_fuzzer_core." + argv[0].replace("-", "_")
+    if modname not in SUBSYSTEMS:
+        return None
+    parser = build_parser(only=modname)
+    sub = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
+    return parser if argv[0] in sub.choices else None
+
+
 def main(argv):
-    parser = build_parser()
+    parser = _single_subsystem(argv) or build_parser()
     raw = RAW_VERBS.get(tuple(argv[:2])) if len(argv) >= 2 else None
     if raw is not None:
         args = argparse.Namespace(args=list(argv[2:]))

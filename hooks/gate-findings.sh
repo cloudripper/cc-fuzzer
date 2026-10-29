@@ -34,7 +34,7 @@ INPUT="$(cat 2>/dev/null)" || _allow
 
 . "$(dirname "${BASH_SOURCE[0]}")/../scripts/_lib/root.sh" 2>/dev/null || _allow
 
-# tool<TAB>command<TAB>path  (empty => not a tool we gate)
+# tool<TAB>command<TAB>path<TAB>cwd  (empty => not a tool we gate)
 FIELDS="$(printf '%s' "$INPUT" | python3 -c 'import json,sys
 try: d = json.load(sys.stdin)
 except Exception: raise SystemExit(0)
@@ -43,15 +43,17 @@ if tool not in ("Write", "Edit", "MultiEdit", "Bash"): raise SystemExit(0)
 ti = d.get("tool_input") or {}
 cmd = (ti.get("command") or "").replace("\t", " ").replace("\n", " ")
 path = ti.get("file_path") or ti.get("path") or ""
-sys.stdout.write(f"{tool}\t{cmd}\t{path}")' 2>/dev/null)" || _allow
+cwd = (d.get("cwd") or "").replace("\t", " ")
+sys.stdout.write(f"{tool}\t{cmd}\t{path}\t{cwd}")' 2>/dev/null)" || _allow
 [ -n "$FIELDS" ] || _allow
 
 TOOL="$(printf '%s' "$FIELDS" | cut -f1)"
 CMD="$(printf '%s' "$FIELDS" | cut -f2)"
 TPATH="$(printf '%s' "$FIELDS" | cut -f3)"
+TCWD="$(printf '%s' "$FIELDS" | cut -f4)"
 [ -n "$TOOL" ] || _allow
 
-gate_ask classify-write --tool "$TOOL" --command "$CMD" --path "$TPATH"
+gate_ask classify-write --tool "$TOOL" --command "$CMD" --path "$TPATH" --cwd "$TCWD"
 
 case "$GATE_DECISION" in
   deny)

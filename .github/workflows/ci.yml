@@ -29,13 +29,17 @@ jobs:
           sudo apt-get install -y -q clang jq
           clang --version | head -1
       - name: pytest
+        # The suite runs `python -m cc_fuzzer_core` in subprocesses, which do not
+        # see pytest's own pythonpath setting.
+        env:
+          PYTHONPATH: src
         run: |
           python -m pip install -q pytest
           python -m pytest -q
       - name: rendered agents match their sources
         run: PYTHONPATH=src python -m cc_fuzzer_core prompts check
       - name: MANIFEST.md5 matches the tree (integrity-check.sh reads it)
-        run: PYTHONPATH=src python -m cc_fuzzer_core manifest check
+        run: PYTHONPATH=src python -m cc_fuzzer_core manifest check --include .claude-plugin --include agents --include skills
 
   wheel:
     name: wheel installs and runs with no plugin present

@@ -16,4 +16,4 @@ Under ctxctl the top-level thread cannot run Bash directly. Dispatch **ops-runne
 
 `stop-fuzzer.sh` sends SIGTERM to the fuzzer, waits for it to exit, then SIGKILL if needed. Do not delete state files — the user may want to inspect them or resume with `/cc-fuzzer:resume-campaign`.
 
-A pending `ScheduleWakeup` can't be force-cancelled from a slash command, so at most one more YOLO tick may fire after this — and it's a cheap no-op because it sees YOLO disabled and stops. If the user also started a manual `/loop`, they need to exit it themselves; the YOLO chain itself is just `ScheduleWakeup`, no process to kill.
+A slash command can't cancel the YOLO loop's pending wakeup, so at most one more tick may fire after this — and it's a cheap no-op: it sees YOLO disabled and ends the loop with `ScheduleWakeup(stop: true)`. To stop the loop at once, press Esc while it waits for its next iteration. YOLO is a self-paced `/loop` of `/cc-fuzzer:tick`, so there is no process to kill.

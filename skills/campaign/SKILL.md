@@ -46,7 +46,7 @@ State layout and JSON schemas: `${CLAUDE_PLUGIN_ROOT}/STATE_SCHEMA.md`.
 
 ## After a COLD start: auto-start the YOLO loop
 
-A campaign doesn't drive itself — the fuzzer runs in the background, but LLM ticks only advance when something fires them. If YOLO is enabled (`yolo.enabled: true` in `fuzz/state/fuzz-config.json`, e.g. the user ran `/cc-fuzzer:yolo on` before this) when a COLD start completes, **immediately start the self-loop**: perform one tick now by following the `/cc-fuzzer:tick` flow (dispatch `fuzz-orchestrator` for one WARM tick, then chain via `ScheduleWakeup` per its `YOLO_NEXT:` line). Then tell the user:
+A campaign doesn't drive itself — the fuzzer runs in the background, but LLM ticks only advance when something fires them. If YOLO is enabled (`yolo.enabled: true` in `fuzz/state/fuzz-config.json`, e.g. the user ran `/cc-fuzzer:yolo on` before this) when a COLD start completes, **immediately start the self-loop**: invoke `Skill(skill: "loop", args: "/cc-fuzzer:tick")` with no interval. Its first iteration runs one tick now by following the `/cc-fuzzer:tick` flow (dispatch `fuzz-orchestrator` in the foreground for one WARM tick, then schedule the next iteration via `ScheduleWakeup` per its `YOLO_NEXT:` line). Then tell the user:
 
 > "Campaign started and YOLO `<mode>` is self-driving — first tick ran now, next in ~`<interval>`. It continues unattended until a hard halt (tick / cost / no-progress / crash-storm cap) or `/cc-fuzzer:yolo off` / `/fuzz-stop`."
 

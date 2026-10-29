@@ -333,6 +333,15 @@ class ApiAndHookTest(unittest.TestCase):
                 self.assertEqual(doc["permissionDecision"], "deny")
                 self.assertIn("Run instead:", doc["permissionDecisionReason"])
 
+    def test_the_hook_passes_its_cwd(self):
+        """A relative path is judged where the tool call runs, so the hook
+        hands the gate its input's cwd."""
+        payload = {"tool_name": "Write", "tool_input": {"file_path": "findings/f1/poc.c"}}
+        r = self._hook(dict(payload, cwd="/p/fuzz"))
+        self.assertEqual(json.loads(r.stdout)["hookSpecificOutput"]["permissionDecision"], "deny")
+        r = self._hook(dict(payload, cwd="/p"))
+        self.assertEqual(r.stdout.strip(), "")
+
     def test_the_hook_allows_the_promote_path(self):
         r = self._hook({"tool_name": "Bash", "tool_input": {
             "command": "cc-fuzzer findings promote f001 --driver d --verifier v"}})
@@ -414,6 +423,39 @@ class ConfigurableProtectedDirTest(unittest.TestCase):
                     "cc-fuzzer findings promote f1; mkdir fuzz/findings/f2"):
             with self.subTest(cmd=cmd):
                 self.assertFalse(gate.classify_finding_write(cmd, config=self.CFG).allowed)
+
+    def test_the_default_is_the_campaigns_record_dir_only(self):
+        """The default protects fuzz/findings/, not every `findings` path: with
+        the plugin loaded, a sibling plugin's kfuzz/findings/, a project's own
+        findings/ and docs/findings/ were refused too."""
+        for tool, cmd, path in (
+                ("Write", "", "kfuzz/findings/kf-1/report.txt"),
+                ("Write", "", "/home/u/proj/findings/summary.md"),
+                ("Edit", "", "docs/findings/2026.md"),
+                ("Bash", "cp report.txt kfuzz/findings/kf-1/", ""),
+                ("Bash", "mkdir -p findings/q3", ""),
+                ("Bash", "echo x > docs/findings/notes.md", "")):
+            with self.subTest(target=cmd or path):
+                self.assertTrue(gate.classify_finding_write(cmd, tool=tool, path=path).allowed)
+
+    def test_quoted_prose_is_not_a_path(self):
+        for cmd in ('git commit -m "bundles live in fuzz/findings/f1 -> verified"',
+                    "echo 'see fuzz/findings/ for details' > /tmp/note"):
+            with self.subTest(cmd=cmd):
+                self.assertTrue(gate.classify_finding_write(cmd).allowed)
+
+    def test_relative_paths_resolve_against_cwd_and_cd(self):
+        self.assertFalse(gate.classify_finding_write(
+            "", tool="Write", path="findings/f1/poc.c", cwd="/p/fuzz").allowed)
+        self.assertTrue(gate.classify_finding_write(
+            "", tool="Write", path="findings/f1/poc.c", cwd="/p").allowed)
+        for cmd, cwd in (("cp x findings/f1/", "/p/fuzz"),
+                         ("cd fuzz && cp x findings/f1/", "/p"),
+                         ("cd /p/fuzz; mkdir findings/f2", ""),
+                         ("F=fuzz/findings/f1; cp a $F", ""),
+                         ("make 2>fuzz/findings/f1/log", "")):
+            with self.subTest(cmd=cmd, cwd=cwd):
+                self.assertFalse(gate.classify_finding_write(cmd, cwd=cwd).allowed)
 
     def test_a_neighbouring_name_is_not_a_match(self):
         self.assertTrue(gate.classify_finding_write("cp a /artifacts/povs-old/x",

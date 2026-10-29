@@ -260,27 +260,53 @@ def check_finding_dir(path) -> Verdict:
 
 
 def _dir_re(d: str):
+    # The default protects the campaign's record directory, fuzz/<findings>, and
+    # nothing else: a bare "findings" component would also claim kfuzz/findings,
+    # docs/findings or any project's own findings/ while the plugin is loaded.
+    if d == FINDINGS_DIR:
+        return re.compile(rf"(^|/)fuzz/{re.escape(d)}(/|$)")
     return re.compile(rf"(^|/){re.escape(d)}(/|$)")
 
 
-def _touches(command: str, dirs) -> tuple:
-    """Tokens in `command` that point inside a protected directory."""
+_ASSIGN_PREFIX = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+_REDIR_PREFIX = re.compile(r"^[0-9&]*[<>]+")
+_CD = re.compile(r"(?:^|[;&|(\s])cd\s+(?:--\s+)?([^\s;&|)]+)")
+
+
+def _bases(command: str, cwd: str) -> list:
+    """Directories a relative token may be relative to: the hook's cwd, and
+    each directory the command cd's into (resolved against it)."""
+    bases = [cwd] if cwd else []
+    for target in _CD.findall(command):
+        target = target.strip("'\"")
+        bases.append(target if os.path.isabs(target) else os.path.join(cwd, target))
+    return bases
+
+
+def _touches(command: str, dirs, cwd: str = "") -> tuple:
+    """Path tokens in `command` that point inside a protected directory.
+
+    Only shell words are paths: a word with whitespace in it is quoted prose
+    (a commit message, an echo), so it never matches. A relative word is also
+    tried against `cwd` and against each directory the command cd's into, so
+    `cd fuzz && cp x findings/` is still a write under fuzz/findings/."""
     hits = []
     pats = [_dir_re(d) for d in dirs]
+    bases = _bases(command, cwd)
     for tok in _tokens(command):
-        cleaned = tok.lstrip("<>")
-        if any(p.search(cleaned) for p in pats):
+        cleaned = _ASSIGN_PREFIX.sub("", _REDIR_PREFIX.sub("", tok))
+        if not cleaned or any(c.isspace() for c in cleaned):
+            continue
+        cands = [cleaned]
+        if not os.path.isabs(cleaned):
+            cands += [os.path.join(b, cleaned) for b in bases]
+        if any(p.search(c) for p in pats for c in cands):
             hits.append(tok)
-    if not hits:
-        for d in dirs:
-            if re.search(rf"\b{re.escape(d)}/", command):
-                hits.append(d + "/")
-                break
     return tuple(hits)
 
 
-def _touches_findings(command: str) -> tuple:
-    return _touches(command, (FINDINGS_DIR,))
+def _touches_findings(command: str, cwd: str = "") -> tuple:
+    return _touches(command, (FINDINGS_DIR,), cwd)
 
 
 def _where(d: str) -> str:
@@ -288,7 +314,7 @@ def _where(d: str) -> str:
 
 
 def classify_finding_write(command: str, *, tool: str = "Bash",
-                           path: str = "", config=None) -> Verdict:
+                           path: str = "", config=None, cwd: str = "") -> Verdict:
     """Refuse a write under a protected directory (default fuzz/findings/)
     that does not go through the promote path.
 
@@ -296,11 +322,16 @@ def classify_finding_write(command: str, *, tool: str = "Bash",
     claim that something was verified, so creating one by hand asserts a
     verification that never happened. The same holds for any directory a
     framework submits from; `config` names those (see protected()).
+
+    `cwd` is the directory the tool call runs in (a hook passes its input's
+    `cwd`); relative paths are also checked against it.
     """
     dirs, allow = protected(config)
     if tool in ("Write", "Edit", "MultiEdit"):
         target = path or ""
-        hit = next((d for d in dirs if _dir_re(d).search(target)), None)
+        cands = [target] + ([os.path.join(cwd, target)]
+                            if cwd and target and not os.path.isabs(target) else [])
+        hit = next((d for d in dirs if any(_dir_re(d).search(c) for c in cands)), None)
         if hit is None:
             return Verdict(ALLOW)
         return Verdict(DENY,
@@ -314,11 +345,10 @@ def classify_finding_write(command: str, *, tool: str = "Bash",
         return Verdict(ALLOW)
     if allowed_command(command, allow):
         return Verdict(ALLOW, "the promote path may write findings")
-    hits = _touches(command, dirs)
+    hits = _touches(command, dirs, cwd)
     if not hits or not _WRITE_RE.search(command):
         return Verdict(ALLOW)
-    hit = next((d for d in dirs if any(_dir_re(d).search(h.lstrip("<>")) or h == d + "/"
-                                       for h in hits)), dirs[0])
+    hit = next((d for d in dirs if _touches(command, (d,), cwd)), dirs[0])
     return Verdict(DENY,
                    f"this command writes under {_where(hit)} ({hits[0]}). A finding "
                    f"directory is the claim that a crash was verified; it is created only "
@@ -395,7 +425,8 @@ def _gate_config(a):
 
 def _cmd_classify_write(a):
     command = a.command if a.command is not None else (sys.stdin.read() if not a.path else "")
-    v = classify_finding_write(command, tool=a.tool, path=a.path or "", config=_gate_config(a))
+    v = classify_finding_write(command, tool=a.tool, path=a.path or "", config=_gate_config(a),
+                               cwd=getattr(a, "cwd", "") or "")
     if a.json:
         print(json.dumps(v.as_dict(), indent=2))
     elif not v.allowed:
@@ -431,5 +462,7 @@ def register_cli(subparsers):
                                     "(default: the campaign's)")
     v.add_argument("--tool", default="Bash")
     v.add_argument("--path", default="", help="the target path, for Write/Edit")
+    v.add_argument("--cwd", default="", help="the directory the tool call runs in; "
+                   "relative paths are also checked against it")
     v.add_argument("--json", action="store_true")
     v.set_defaults(func=_guard(_cmd_classify_write))

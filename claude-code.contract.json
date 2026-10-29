@@ -59,16 +59,24 @@
       "Edit",
       "Grep",
       "Glob"
+    ],
+    "main_thread_tool": [
+      "Agent",
+      "Skill",
+      "ScheduleWakeup"
+    ],
+    "agent_input": [
+      "run_in_background"
     ]
   },
   "semantics": {
     "Grep": {
-      "verified": "2.1.285",
-      "meaning": "Platform-dependent: not offered on Linux (2.1.165 and 2.1.285), offered on macOS/Windows. An agent listing it on Linux searches with Bash instead; never write a prompt that needs it."
+      "verified": "2.1.312",
+      "meaning": "Left out of the default tool set on macOS, Linux and WSL (offered on Windows); Claude searches with find/grep through Bash, which reach hooks as Bash calls. It comes back for a subagent only when that subagent lists Grep or Glob and leaves out Bash. Every cc-fuzzer agent lists Bash, so on Linux they search with Bash; never write a prompt that needs Grep."
     },
     "Glob": {
-      "verified": "2.1.285",
-      "meaning": "As Grep: absent on Linux."
+      "verified": "2.1.312",
+      "meaning": "As Grep."
     },
     "SubagentStop": {
       "verified": "2.1.285",
@@ -85,12 +93,24 @@
     "PostToolBatch": {
       "verified": "2.1.285",
       "meaning": "Fires once after all tool calls of one response have finished (input has tool_calls); present since 2.1.165. Duplicate calls in one response run in parallel, their PreToolUse hooks concurrently. hooks/dedup-calls.sh clears its per-response batch here."
+    },
+    "ScheduleWakeup": {
+      "verified": "2.1.312",
+      "meaning": "Sets the next iteration of a self-paced /loop, or ends it with stop: true. YOLO therefore runs as `/loop /cc-fuzzer:tick` started by /cc-fuzzer:yolo on; only the main thread calls it."
+    },
+    "run_in_background": {
+      "verified": "2.1.312",
+      "meaning": "Agent tool input. A subagent spawned from the main conversation runs in the background by default, so the tick skill dispatches the orchestrator with run_in_background: false to get its YOLO_NEXT line in the same turn."
     }
   },
   "history": [
     {
       "version": "2.1.285",
       "note": "first contract, 2026-10-05; the ParallaxCRS images pin the same version"
+    },
+    {
+      "version": "2.1.312",
+      "note": "2026-10-29: YOLO runs as a self-paced /loop (ScheduleWakeup's documented use); the tick skill dispatches the orchestrator with run_in_background: false; Grep/Glob semantics re-verified."
     }
   ]
 }

@@ -426,7 +426,7 @@ When `active=false` the orchestrator treats yolo as off (other fields may be abs
 
 #### The `YOLO_NEXT:` next-action directive (control-flow contract)
 
-Under the ctxctl companion plugin the top-level thread can only call `Agent / Skill / TodoWrite / AskUserQuestion / ExitPlanMode / ScheduleWakeup` — no Bash — and **no cc-fuzzer agent carries `Agent`/`Task` in its `tools:` line, so no subagent can spawn another subagent.** The **main thread is therefore the only context that can dispatch a specialist.** Consequently the orchestrator **cannot delegate**; it can only DECIDE and emit a single next-action directive as the **literal last non-blank line of its return**. The main-thread loop skill (`tick` / `yolo` / `campaign` / `resume-campaign`) parses that line and performs the action, then re-enters the loop. The same directive shape is produced deterministically by `scripts/yolo-route.sh` for fully-state-determined moves (the COLD/RESUME setup chain and WARM no-judgment cases), and read back from `state/next-directive.txt` by `yolo-route.sh read-directive` as a truncation fallback.
+Under the ctxctl companion plugin the top-level thread can only call `Agent / Skill / TodoWrite / AskUserQuestion / ExitPlanMode / ScheduleWakeup` — no Bash — and **no cc-fuzzer agent carries `Agent`/`Task` in its `tools:` line, so no cc-fuzzer subagent spawns another.** That is a design choice, not a platform limit (Claude Code lets a subagent whose `tools` include `Agent` spawn nested subagents, up to three layers by default): decision agents stay cheap and deterministic, and every dispatch is visible in one place. The **main thread is therefore the only context that dispatches a specialist.** Consequently the orchestrator **cannot delegate**; it can only DECIDE and emit a single next-action directive as the **literal last non-blank line of its return**. The main-thread loop skill (`tick` / `yolo` / `campaign` / `resume-campaign`) parses that line and performs the action, then re-enters the loop. The same directive shape is produced deterministically by `scripts/yolo-route.sh` for fully-state-determined moves (the COLD/RESUME setup chain and WARM no-judgment cases), and read back from `state/next-directive.txt` by `yolo-route.sh read-directive` as a truncation fallback.
 
 One directive == one line. Vocabulary:
 
@@ -434,9 +434,9 @@ One directive == one line. Vocabulary:
 |---|---|
 | `YOLO_NEXT: dispatch agent=<agent-type> args="<args>" reason="<why>"` | Dispatch the named specialist subagent via `Agent(subagent_type: "<agent-type>", prompt: "<args + campaign root>")`. The COLD setup chain is a sequence of these (campaign-planner → harness-writer → seed-generator), one per loop step. |
 | `YOLO_NEXT: run script="<script + args>" reason="<why>"` | Dispatch `ops-runner` to run the named bash lever (e.g. `run-fuzzer.sh`, `snapshot-coverage.sh`). ops-runner returns its output; the loop re-enters. |
-| `YOLO_NEXT: schedule delay=<n> prompt=<p> reason="<why>"` | `ScheduleWakeup(delaySeconds=<n>, prompt="<p>", reason="<why>")` — chains the YOLO tick loop (delay clamped to [60, 3600]). |
+| `YOLO_NEXT: schedule delay=<n> prompt=<p> reason="<why>"` | Inside the YOLO self-paced `/loop` (started by `/cc-fuzzer:yolo on`): `ScheduleWakeup(delaySeconds=<n>, prompt=<the loop's prompt>, reason="<why>")` — sets the next iteration (delay clamped to [60, 3600]). On a manual tick outside a loop, report the delay and stop. |
 | `YOLO_NEXT: orchestrator reason="<why>"` | Dispatch the `fuzz-orchestrator` subagent for a decision (WARM ticks; unclassifiable state). |
-| `YOLO_NEXT: halt reason="<why>"` | A hard halt fired (orchestrator already disabled YOLO). Do **not** chain — the loop ends. |
+| `YOLO_NEXT: halt reason="<why>"` | A hard halt fired (orchestrator already disabled YOLO). Do **not** chain — end the loop with `ScheduleWakeup(stop: true)`. |
 | `YOLO_NEXT: done reason="<why>"` | A COLD/RESUME setup step finished and there is nothing to chain right now (the next loop entry re-evaluates). Stop; do not `ScheduleWakeup`. |
 | `YOLO_NEXT: inactive` | YOLO is off. Do **not** chain. |
 

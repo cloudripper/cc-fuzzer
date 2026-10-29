@@ -75,7 +75,7 @@ nix run github:cloudripper/cc-fuzzer#init
 # 3. Launch Claude into that shell and go full autonomous — ONE command.
 #    The prompt arg fires the campaign the moment Claude starts; self_loop
 #    auto-selects a target, builds the harness, and self-drives ticks unattended
-#    (each schedules the next via ScheduleWakeup) until a hard halt or yolo off.
+#    (a self-paced /loop: each tick schedules the next) until a hard halt or yolo off.
 nix run .#claude -- --dangerously-skip-permissions "/cc-fuzzer:yolo on --mode self_loop --no-cap"
 #    Then walk away. Check in any time with /fuzz-status or /cc-fuzzer:report.
 ```
@@ -356,7 +356,7 @@ Each slot gets its own `fuzzer-<slot>.{pid,engine,log}`; the live manifest is `f
 
 `/cc-fuzzer:yolo on [--mode guided|hybrid|self_loop] [--aggressiveness conservative|balanced|aggressive]` opts into a **self-driving loop** (off by default). All modes share hard halt caps (tick / cost / no-progress / crash-storm) and a deterministic per-tick **evaluation** block — cost posture (throttles Opus agents past a soft fraction of the cost cap), a per-agent **redundancy ledger** (suppresses an agent that loops without producing results), and a self-climbing signal.
 
-**Set-and-forget, one command.** `/cc-fuzzer:yolo on` runs a tick immediately and then chains: each tick, the orchestrator recommends the next delay (a `YOLO_NEXT:` line), and the main-thread `/cc-fuzzer:tick` skill calls `ScheduleWakeup` to fire the next one. The chain re-invokes the conversation while it's idle — no `/loop`, no cron, no babysitting — and runs until a hard halt or `/cc-fuzzer:yolo off` / `/fuzz-stop`. (The orchestrator runs as a subagent and can't self-schedule, so the main-thread skill owns the `ScheduleWakeup`; a hard halt simply doesn't reschedule, ending the chain.) If you'd rather drive it yourself, `/loop /cc-fuzzer:tick` works too — but YOLO doesn't need it.
+**Set-and-forget, one command.** `/cc-fuzzer:yolo on` starts a self-paced `/loop /cc-fuzzer:tick` for you and runs the first tick immediately. Each tick, the orchestrator recommends the next delay (a `YOLO_NEXT:` line), and the main-thread `/cc-fuzzer:tick` skill calls `ScheduleWakeup`, the tool Claude Code documents for setting a self-paced loop's next iteration. The loop re-invokes the conversation while it's idle — no cron, no babysitting — and runs until a hard halt or `/cc-fuzzer:yolo off` / `/fuzz-stop` (or Esc while it waits). (The orchestrator runs as a subagent and can't self-schedule, so the main-thread skill owns the `ScheduleWakeup`; a hard halt ends the loop with `stop: true`.)
 
 | Mode | Default posture | Per-tick decision |
 |---|---|---|

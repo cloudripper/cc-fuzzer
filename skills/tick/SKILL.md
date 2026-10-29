@@ -11,7 +11,7 @@ Advances the campaign by exactly one WARM tick. The main thread dispatches the *
 ## Steps
 
 1. **Refresh the campaign-header digest** (so the orchestrator and any specialists see current shared context). Dispatch `Agent(subagent_type: "ops-runner", prompt: "Run ${CLAUDE_PLUGIN_ROOT}/scripts/campaign-header.sh > ${FUZZ_STATE_DIR}/header.txt and report the captured header. If FUZZ_STATE_DIR is unset, the path-anchor resolves it to fuzz/state/.")`.
-2. **Dispatch the orchestrator** for the WARM tick decision. Keep the prompt minimal — the orchestrator reads `fuzz/state/current.json` itself; repeating state in the prompt wastes its context window and causes stalls.
+2. **Dispatch the orchestrator in the foreground** (`run_in_background: false`) for the WARM tick decision: its directive is this tick's next step, and a subagent started from the main conversation otherwise runs in the background, so the directive would arrive later as a notification. Keep the prompt minimal — the orchestrator reads `fuzz/state/current.json` itself; repeating state in the prompt wastes its context window and causes stalls.
 
    Correct:
    ```
@@ -36,19 +36,19 @@ Advances the campaign by exactly one WARM tick. The main thread dispatches the *
 |---|---|
 | `dispatch agent=<type> args="<args>" reason="…"` | The tick's action is to run a specialist. Dispatch it: `Agent(subagent_type: "<type>", prompt: "<args>. Campaign root: <abs-path>.")`. After it returns, **re-enter the loop**: re-run this `/cc-fuzzer:tick` flow from step 1 (the next orchestrator decision will then emit the `schedule` that paces the YOLO cadence, or the next action). For a manual (non-YOLO) tick, performing the one dispatch is the tick — report and stop. |
 | `run script="<script + args>" reason="…"` | The action is a bash lever. Dispatch `Agent(subagent_type: "ops-runner", prompt: "Run ${CLAUDE_PLUGIN_ROOT}/scripts/<script + args> and report the output.")` — or, when the script is a slash skill (e.g. `/fuzz-review`), invoke that skill directly. Then re-enter the loop as for `dispatch`. |
-| `schedule delay=<n> prompt=/cc-fuzzer:tick reason="…"` | See "YOLO self-loop" below — call `ScheduleWakeup`. |
+| `schedule delay=<n> prompt=/cc-fuzzer:tick reason="…"` | Inside the YOLO `/loop`: call `ScheduleWakeup` (see "YOLO self-loop" below). On a manual tick outside a loop: report the suggested delay and stop. |
 | `orchestrator reason="…"` | The next move needs a fresh orchestrator decision — re-run this flow from step 1. (Mostly emitted by `yolo-route.sh`, not the orchestrator itself.) |
-| `halt reason="…"` / `inactive` / `done reason="…"` | Stop. Do **not** reschedule. Surface the reason (for `halt`, the next step e.g. `/cc-fuzzer:report`). |
+| `halt reason="…"` / `inactive` / `done reason="…"` | Stop. Do **not** reschedule; inside the YOLO `/loop`, end it with `ScheduleWakeup(stop: true)` for `halt` and `inactive`. Surface the reason (for `halt`, the next step e.g. `/cc-fuzzer:report`). |
 
 A `dispatch`/`run` directive is an **act** step: perform it, then the loop continues with another orchestrator decision. A `schedule` directive is the **wait/cadence** step that fires the next tick after a delay.
 
 ## YOLO self-loop — chain the next tick
 
-When YOLO is on, the campaign self-drives as a **chain on the main thread**: each orchestrator decision either *acts* (a `dispatch`/`run` directive you perform, then re-enter for the next decision) or *waits* (a `schedule` directive that fires the next tick after a delay). The orchestrator can't schedule or dispatch itself — a wakeup it scheduled would die with it, and it has no `Agent` tool — so it only *decides*; the main thread performs and chains.
+When YOLO is on, the campaign self-drives as a **self-paced `/loop` of this skill on the main thread** (`/cc-fuzzer:yolo on` starts it): each orchestrator decision either *acts* (a `dispatch`/`run` directive you perform, then re-enter for the next decision) or *waits* (a `schedule` directive that fires the next tick after a delay). The orchestrator can't schedule or dispatch itself — a wakeup it scheduled would die with it, and it has no `Agent` tool — so it only *decides*; the main thread performs and chains.
 
-On a `schedule delay=<n> prompt=/cc-fuzzer:tick reason="…"` directive, call `ScheduleWakeup(delaySeconds=<n>, prompt="/cc-fuzzer:tick", reason="<the reason>")`. That re-invokes this conversation when it's idle, firing the next tick — which chains the one after. (Runtime clamps the delay to [60, 3600].) On `halt`/`inactive`/`done`, do **not** reschedule — the chain ends. On `dispatch`/`run`, perform the action then re-enter the flow (see "Performing the directive" above).
+On a `schedule delay=<n> prompt=/cc-fuzzer:tick reason="…"` directive, call `ScheduleWakeup(delaySeconds=<n>, prompt=<the loop's prompt>, reason="<the reason>")`. That is how a self-paced `/loop` sets its next iteration: it re-invokes this conversation when it's idle, firing the next tick — which chains the one after. (Runtime clamps the delay to [60, 3600].) On `halt`/`inactive`, end the loop with `ScheduleWakeup(stop: true)`; on `done`, do not reschedule (Claude Code's fallback wakeup re-checks in about 20 minutes). On `dispatch`/`run`, perform the action then re-enter the flow (see "Performing the directive" above).
 
-That is the entire loop: `decide → act-and-reenter` or `decide → schedule → fire → …` until a halt/inactive/done breaks it. No `/loop`, no cron — `ScheduleWakeup` re-invokes the conversation on its own. The chain runs while the session is idle; a fired tick won't interrupt the user mid-message.
+That is the entire loop: `decide → act-and-reenter` or `decide → schedule → fire → …` until a halt/inactive breaks it. `ScheduleWakeup` sets each next iteration of the self-paced `/loop`; there is no cron. The chain runs while the session is idle; a fired tick won't interrupt the user mid-message.
 
 ### Missing `YOLO_NEXT:` line — recover, don't re-dispatch
 
