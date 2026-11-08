@@ -10,6 +10,14 @@ came into the first 30 (queue.triaged's rule); a repeat run held every high
 score, and with the CPV's fix applied 4 of the 5 cards whose shown code the
 fix changed scored lower.
 
+0.49.1.1 (finals Q109): the question is the whole function, not the sink. A
+card is often a decoy sink in a buggy function: asked about the sink, the
+model rightly scored it low and the function's bug went behind the scored
+head. On the same 16 DBs (cull 0.4.5, 35 CPVs with a card), CPVs in the first
+10 / 30 go 13 / 17 -> 16 / 20, the median place 38 -> 15, and no CPV has all
+its scored cards demoted (was 2). Giving each card its function's best score
+was measured too and rejected: sibling cards crowd the head.
+
 This module builds the windows and parses the replies; it makes no model call
 (the host does, through its own gateway). The scores only order the queue
 (queue.order's `triage`): nothing is dropped, and nothing is fed back to cull.
@@ -33,7 +41,8 @@ by the source of the function that holds it.
 
 Give each candidate a preliminary score: how likely is it that some input from the
 fuzz harness makes the program crash under AddressSanitizer or UndefinedBehaviorSanitizer
-at or near this sink? Most candidates are false positives: the access is bounded by a
+in this function: at this sink, or anywhere else in the code shown? The sink is only
+where the analyser looked; judge the whole function. Most candidates are false positives: the access is bounded by a
 check, the values cannot come from the input, or the path is not reachable. Judge from
 the code shown; you cannot run anything.
 

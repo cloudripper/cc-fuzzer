@@ -2,6 +2,12 @@
 
 Each entry says who notices: **host** (a program embedding the core, see `docs/EMBEDDING.md`), **plugin** (an interactive Claude Code user, see `README.md`), or both. Versions before 0.32.0 are in the git history.
 
+## 0.49.1.1 (2026-11-08)
+
+Built on 0.49.1 for ParallaxCRS finals, without 0.49.2.
+
+- **host:** the card sweep's prompt (`cull.triage.PROMPT`) asks about the whole function, not only the sink: "in this function: at this sink, or anywhere else in the code shown?". A card is often a decoy sink in a buggy function, and asked about the sink the model rightly scored it low, so the function's bug fell behind the scored head (ParallaxCRS finals Q109: libtiff, pcre2 x2 and nginx misses). On 16 full-mode DBs (cull 0.4.5, 35 CPVs with a card), CPVs in the first 10 / 30 go 13 / 17 -> 16 / 20, the median place 38 -> 15, and no CPV has every scored card demoted (was 2). Giving each card its function's best score was measured and rejected: sibling cards crowd the head. The windows, parsing and queue rule are unchanged.
+
 ## 0.49.1 (2026-10-26)
 
 - **host, plugin:** crash replay (`crash.replay.run_once`: screening, minimization, triage) and the patch fuzz check run the harness from its own directory, as OSS-Fuzz runs harnesses from `$OUT`. Some harnesses need files beside them: nginx's exits unless the directory it runs in has a writable `logs/`. Run from elsewhere, every crash it replayed read as an exit. In ParallaxCRS m88, all ~5,300 fuzzer crash artifacts were screened "exit", and a sample of 25 are all ASan crashes when run from the build directory. Test: `HarnessCwdTest`.

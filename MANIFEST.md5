@@ -10,7 +10,7 @@
 # refreshed out of band), so drift there is expected and must not trip the
 # integrity check. The SAST driver (src/cc_fuzzer_core/prescan/sast_scan.py) IS tracked.
 60f3787d730e612373d17ba1a8916386  .claude-plugin/marketplace.json
-6641b2f34e4fcc7ef6bf6608c345fe7f  .claude-plugin/plugin.json
+986bcd6a3ad38c5e5db1e0ad54960d33  .claude-plugin/plugin.json
 c753233cb0fe17d3307ef077128440cb  STATE_SCHEMA.md
 aa905795c58d27abb785b4c5c495cf0e  agents/campaign-planner.md
 4e8fff324c32c9e81cd33ecfe9a05eeb  agents/code-reviewer-deep.md
@@ -148,7 +148,7 @@ e290baf96ab206f60000850d6b4a9891  skills/report/SKILL.md
 165e6d1267fc833d28bfd534ce183ee4  skills/triage/SKILL.md
 5a4c4742d1e773ae1f19ee7cf901146d  skills/validate/SKILL.md
 c5bc3264292c2df34b1bf3fcf195f531  skills/yolo/SKILL.md
-b75f898422c0e380f33d7833e49c6ba5  src/cc_fuzzer_core/__init__.py
+45ad9ceab7a49ab390b02ab825c7f7eb  src/cc_fuzzer_core/__init__.py
 81df487b0971d3b41a1613371d67df65  src/cc_fuzzer_core/__main__.py
 fe3b8d694186b83378094e38a6b18f61  src/cc_fuzzer_core/builders/__init__.py
 9cdf97f5b1fa3e48755cabf5868ef95e  src/cc_fuzzer_core/builders/clang.py
@@ -189,7 +189,7 @@ e010ffca97598769e5ffdb5da905ddc2  src/cc_fuzzer_core/integrations/cull/feedback.
 025c1d215b35007e3d04f355525fbab2  src/cc_fuzzer_core/integrations/cull/hints.py
 6ab00be8d8d5974cc4b2976b00d1924b  src/cc_fuzzer_core/integrations/cull/intake.py
 4f495a6732b2feefbe10d997db82f3ed  src/cc_fuzzer_core/integrations/cull/queue.py
-f2e0ba6b058ea6ae9702a48a23bb7f24  src/cc_fuzzer_core/integrations/cull/triage.py
+38fbe9eb540c3bb294d82b393cd2d037  src/cc_fuzzer_core/integrations/cull/triage.py
 3fb5e51b572f8fa2153edfb168927ad4  src/cc_fuzzer_core/ledger.py
 e70123cfac2ba971526f765f7179f7f6  src/cc_fuzzer_core/loop.py
 1faf7bca188ba4d66fd455759e5070f0  src/cc_fuzzer_core/macroarg.py

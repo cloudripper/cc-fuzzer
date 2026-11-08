@@ -445,6 +445,19 @@ class QueueTest(unittest.TestCase):
         self.assertNotIn("n1", self.ids(r))
         self.assertEqual([x["candidate_id"] for x in r["held"]], ["n1"])
 
+    def test_triage_prompt_judges_the_whole_function(self):
+        """0.49.1.1 (finals Q109): a decoy sink in a buggy function scored low
+        when the model was asked about the sink alone. The prompt asks about
+        the function, keeps the 0-10 scale and the one-JSON-line reply that
+        parse() reads, and no longer asks about the sink alone."""
+        from cc_fuzzer_core.integrations.cull import triage
+        p = triage.PROMPT
+        self.assertIn("in this function: at this sink, or anywhere else in the code shown?", p)
+        self.assertIn("judge the whole function", p)
+        self.assertNotIn("at or near this sink?", p)
+        self.assertIn('{"card": <number>, "score": <0-10>, "why": "<at most 20 words>"}', p)
+        self.assertEqual(triage.parse('{"card": 2, "score": 7, "why": "x"}', [1, 2]), {2: 7.0})
+
     def test_triage_windows_and_parse(self):
         from cc_fuzzer_core.integrations.cull import triage
         with tempfile.TemporaryDirectory() as d:
